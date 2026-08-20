@@ -10,9 +10,10 @@ Premium Classy Pilates website with a Barry's-inspired booking flow, central boo
 - Availability, sold-out and waitlist states
 - Returning-client and first-class flows
 - Central D1-ready booking API with capacity protection and duplicate-booking protection
+- Credit-backed booking flow: a central booking consumes one credit, cancellation returns it
 - Central cancellation flow that automatically releases capacity
 - Network-first frontend: central API when configured, safe browser fallback while infrastructure is not connected
-- “Meine Buchungen” lookup by email
+- “Meine Buchungen” lookup by email with credit balance
 - Optional transactional booking/cancellation emails via Resend
 - Protected booking operations panel at `/admin.html`
 - Webshop at `/shop.html`
@@ -22,7 +23,7 @@ Premium Classy Pilates website with a Barry's-inspired booking flow, central boo
 - Apple Pay and Google Pay through Stripe when eligible/configured
 - Card payments, Link, Klarna and SEPA through Stripe account payment-method settings
 - Separate PayPal checkout + secure server-side capture
-- Stripe webhook verification and automatic credit fulfillment
+- Stripe webhook verification and automatic credit fulfillment only after confirmed payment
 - D1 order, order item and credit ledger model
 - Idempotency-ready order references and provider request keys
 
@@ -43,7 +44,12 @@ Create a D1 database and bind it to the Pages project as:
 
 - Binding name: `DB`
 
-Apply `cloudflare/schema.sql` to the database. It creates locations, classes, customers, bookings, waitlist, products, orders, order items, credit ledger and capacity-protection triggers.
+Apply, in order:
+
+1. `cloudflare/schema.sql`
+2. `cloudflare/migrations/0002_booking_credit_guard.sql`
+
+The schema creates locations, classes, customers, bookings, waitlist, products, orders, order items, credit ledger and capacity-protection triggers. The credit migration makes live bookings consume one available credit atomically and returns that credit on cancellation.
 
 The booking-capacity trigger makes the final capacity check at database level, so two concurrent requests cannot simply overbook the same class through the normal booking endpoint.
 
