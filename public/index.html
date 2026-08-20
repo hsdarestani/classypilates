@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#151513">
+  <meta name="description" content="Classy Pilates Frankfurt – Reformer, Powerformer, Mat Pilates und Barre. Sechs Studios, ein schneller Buchungsflow.">
+  <title>Classy Pilates Frankfurt — Move with intention.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="announcement"><span class="live-dot"></span> 6 Studios in Frankfurt <i></i> Reformer · Powerformer · Mat · Barre</div>
+
+  <header class="header" id="header">
+    <a class="logo" href="#top" aria-label="Classy Pilates Startseite">
+      <span class="logo-cp">CP</span>
+      <span><b>CLASSY</b><small>PILATES</small></span>
+    </a>
+    <nav class="desktop-nav" aria-label="Hauptnavigation">
+      <a href="#schedule">Schedule</a>
+      <a href="#studios">Studios</a>
+      <a href="#classes">Classes</a>
+      <a href="#passes">Preise</a>
+      <a href="#about">Über uns</a>
+    </nav>
+    <div class="header-actions">
+      <button class="link-btn desktop-only" id="openBookings" type="button">Meine Buchungen</button>
+      <a class="primary-btn compact" href="#schedule">Kurs buchen</a>
+      <button class="menu-btn" id="menuBtn" type="button" aria-label="Menü öffnen"><span></span><span></span></button>
+    </div>
+  </header>
+
+  <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
+    <a href="#schedule">Schedule</a><a href="#studios">Studios</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="#about">Über uns</a>
+    <button id="openBookingsMobile" type="button">Meine Buchungen</button>
+  </div>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-image"></div>
+      <div class="hero-shade"></div>
+      <div class="hero-copy">
+        <p class="eyebrow light">FRANKFURT · 6 STUDIOS</p>
+        <h1>Move with<br><em>intention.</em></h1>
+        <p class="hero-lead">Exclusive Reformer Pilates, Powerformer, Mat & Barre — präzise geführt, persönlich und kompromisslos hochwertig.</p>
+        <div class="hero-actions">
+          <a class="primary-btn light" href="#schedule">Nächsten Kurs finden</a>
+          <a class="arrow-link light" href="#classes">Classes entdecken <span>↗</span></a>
+        </div>
+      </div>
+      <aside class="hero-card">
+        <div class="hero-card-top"><span class="live-dot"></span><span>LIVE SCHEDULE</span></div>
+        <strong>Heute trainieren?</strong>
+        <p>Finde freie Plätze in allen Studios, ohne Umwege.</p>
+        <a href="#schedule">Verfügbarkeit prüfen <span>→</span></a>
+      </aside>
+      <div class="scroll-mark">SCROLL <span>↓</span></div>
+    </section>
+
+    <section class="manifesto section" id="about">
+      <div class="eyebrow">THE CLASSY METHOD</div>
+      <div class="manifesto-grid">
+        <h2>Strength looks<br><em>different here.</em></h2>
+        <div class="manifesto-copy">
+          <p>Classy Pilates verbindet die Präzision der klassischen Pilates-Methode mit modernen Trainingskonzepten. Kleine Gruppen, exzellente Coaches und Studios, in denen Training sich genauso gut anfühlt, wie es aussieht.</p>
+          <div class="numbers">
+            <div><b>6</b><span>Studios</span></div>
+            <div><b>50</b><span>Minuten</span></div>
+            <div><b>4</b><span>Concepts</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="schedule-section" id="schedule">
+      <div class="schedule-title section-x">
+        <div>
+          <p class="eyebrow">BOOKING, SIMPLIFIED</p>
+          <h2>Find your next<br><em>class.</em></h2>
+        </div>
+        <div class="trust-box">
+          <span class="shield">✓</span>
+          <div><b>Einfach. Klar. Verlässlich.</b><small>Live-Plätze · Warteliste · Sofortige Bestätigung</small></div>
+        </div>
+      </div>
+
+      <div class="booking-shell">
+        <div class="booking-topline">
+          <div class="booking-tabs" role="tablist">
+            <button class="booking-tab active" data-mode="returning" type="button">Returning client</button>
+            <button class="booking-tab" data-mode="first" type="button">First class</button>
+          </div>
+          <button class="change-location" id="focusLocation" type="button">Change location <span>⌄</span></button>
+        </div>
+
+        <div class="filters">
+          <label><span>STUDIO</span><select id="locationFilter"></select></label>
+          <label><span>CLASS</span><select id="classFilter"><option value="all">Alle Classes</option><option value="Reformer">Reformer</option><option value="Powerformer">Powerformer</option><option value="Mat">Mat Pilates</option><option value="Barre">Barre</option></select></label>
+          <label><span>TIME</span><select id="timeFilter"><option value="all">Alle Zeiten</option><option value="morning">Morning · bis 12</option><option value="afternoon">Afternoon · 12–17</option><option value="evening">Evening · ab 17</option></select></label>
+          <button class="reset" id="resetFilters" type="button">Reset</button>
+        </div>
+
+        <div class="date-wrap"><button class="date-arrow" id="datePrev" type="button" aria-label="Frühere Tage">←</button><div class="date-strip" id="dateStrip"></div><button class="date-arrow" id="dateNext" type="button" aria-label="Spätere Tage">→</button></div>
+
+        <div class="schedule-meta"><span id="resultsLabel">Schedule</span><span class="availability-key"><i></i> Plätze verfügbar</span></div>
+        <div class="class-list" id="classList"></div>
+        <div class="schedule-footer"><span>Keine passende Uhrzeit?</span><button id="notifyBtn" type="button">Benachrichtigung für freie Plätze aktivieren →</button></div>
+      </div>
+    </section>
+
+    <section class="studios section" id="studios">
+      <div class="section-head">
+        <div><p class="eyebrow">SIX PLACES. ONE STANDARD.</p><h2>Find your<br><em>studio.</em></h2></div>
+        <p>Sechs Classy-Spaces in Frankfurt. Buche flexibel dort, wo dein Tag dich hinführt — dein Profil, deine Credits und deine Buchungen bleiben immer zusammen.</p>
+      </div>
+      <div class="studio-grid" id="studioGrid"></div>
+    </section>
+
+    <section class="classes" id="classes">
+      <article class="class-block">
+        <div class="class-img reformer-img"></div>
+        <div class="class-copy"><p>01 · SIGNATURE</p><h3>Reformer</h3><span>ALL LEVELS · 50 MIN</span><p class="body">Controlled strength, posture and full-body definition. Präzise geführt, progressiv und für jedes Level skalierbar.</p><a href="#schedule" data-class-jump="Reformer">Reformer buchen ↗</a></div>
+      </article>
+      <article class="class-block reverse">
+        <div class="class-img power-img"></div>
+        <div class="class-copy"><p>02 · HIGH INTENSITY</p><h3>Powerformer</h3><span>ALL LEVELS · 50 MIN</span><p class="body">Mehr Tempo, mehr Burn, mehr Challenge — gelenkschonend und intensiv für Kraft, Ausdauer, Balance und Core Stability.</p><a href="#schedule" data-class-jump="Powerformer">Powerformer buchen ↗</a></div>
+      </article>
+      <article class="class-block">
+        <div class="class-img mat-img"></div>
+        <div class="class-copy"><p>03 · CONTROL & FLOW</p><h3>Mat & Barre</h3><span>ALL LEVELS · 50 MIN</span><p class="body">Fließende Sequenzen mit Fokus auf Haltung, Balance, Flexibilität und ein starkes, ruhiges Körpergefühl.</p><a href="#schedule" data-class-jump="Mat">Mat & Barre entdecken ↗</a></div>
+      </article>
+    </section>
+
+    <section class="passes section" id="passes">
+      <div class="section-head compact-head">
+        <div><p class="eyebrow">FLEXIBLE BY DESIGN</p><h2>Choose your<br><em>rhythm.</em></h2></div>
+        <p>Einfach auswählen, flexibel trainieren. Bestehende Angebote aus Classy Pilates — ohne unnötige Schritte im Kaufprozess.</p>
+      </div>
+      <div class="pass-grid">
+        <article><span>SINGLE</span><h3>1 Class</h3><b>28 €</b><p>Zum Kennenlernen oder für maximale Flexibilität.</p><button data-pass="1 Class · 28 €" type="button">Auswählen →</button></article>
+        <article class="featured"><span>MOST POPULAR</span><h3>10 Classes</h3><b>219 €</b><p>Für deine feste Pilates-Routine. 21,90 € pro Class.</p><button data-pass="10 Classes · 219 €" type="button">Auswählen →</button></article>
+        <article><span>COMMITTED</span><h3>20 Classes</h3><b>399 €</b><p>Für regelmäßiges Training. 19,95 € pro Class.</p><button data-pass="20 Classes · 399 €" type="button">Auswählen →</button></article>
+      </div>
+      <p class="small-print">Weitere Option: 5 Classes · 119 €</p>
+    </section>
+
+    <section class="final-cta">
+      <div class="final-bg"></div><div class="final-overlay"></div>
+      <div><p class="eyebrow light">YOUR NEXT 50 MINUTES</p><h2>Show up for<br><em>yourself.</em></h2><a class="primary-btn light" href="#schedule">Kurs buchen</a></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-brand"><span class="logo-cp">CP</span><div><b>CLASSY PILATES</b><p>YOU ONLY LIVE ONCE — ACCEPT THE CHALLENGE.</p></div></div>
+    <div class="footer-links"><a href="#studios">Studios</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="mailto:info@classyfitness.de">Kontakt</a></div>
+    <div class="footer-bottom"><span>© 2026 Classy Pilates</span><span>Frankfurt am Main</span><span>Privacy · Imprint · Terms</span></div>
+  </footer>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="booking-drawer" id="bookingDrawer" aria-hidden="true">
+    <div class="drawer-head"><div><p class="eyebrow">RESERVE</p><h3 id="drawerTitle">Your class</h3></div><button class="close-btn" id="closeDrawer" type="button" aria-label="Schließen">×</button></div>
+    <div id="drawerBody"></div>
+  </aside>
+
+  <div class="toast" id="toast"><span>✓</span><div><b id="toastTitle">Saved</b><small id="toastText">Done</small></div></div>
+  <script src="./app.js"></script>
+</body>
+</html>
