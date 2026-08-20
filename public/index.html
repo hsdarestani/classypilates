@@ -12,8 +12,40 @@
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./experience.css">
   <link rel="stylesheet" href="./booking-flow.css">
+  <link rel="stylesheet" href="./entry-gate.css">
 </head>
-<body>
+<body class="gate-open">
+  <section class="experience-gate" id="experienceGate" aria-label="Choose your Classy experience">
+    <div class="experience-gate-bg" aria-hidden="true"></div>
+    <div class="experience-shell" role="dialog" aria-modal="true" aria-labelledby="experienceTitle">
+      <div class="experience-brand"><span class="experience-brand-mark">CP</span><span><b>CLASSY</b><small>FRANKFURT</small></span></div>
+      <div class="experience-intro">
+        <p class="eyebrow">WELCOME TO CLASSY</p>
+        <h2 id="experienceTitle">Choose your experience.</h2>
+        <p>Zwei Trainingswelten. Ein Qualitätsanspruch. Wähle, wie du heute trainieren möchtest.</p>
+      </div>
+      <div class="experience-options">
+        <a class="experience-card fit" href="./classfit.html" data-enter-fit>
+          <div class="experience-card-content">
+            <div class="experience-card-meta"><span>Dynamic training</span><span class="experience-card-icon">↗</span></div>
+            <h3>Class Fit</h3>
+            <p>High-energy small group training with strength, conditioning and focused movement.</p>
+            <div class="experience-card-action"><span>Enter Class Fit</span><i>→</i></div>
+          </div>
+        </a>
+        <button class="experience-card pilates" type="button" data-enter-pilates>
+          <div class="experience-card-content">
+            <div class="experience-card-meta"><span>Reformer · Powerformer · Mat · Barre</span><span class="experience-card-icon">◎</span></div>
+            <h3>Classy Pilates</h3>
+            <p>Premium Pilates sessions across six Frankfurt studios, from precision to power.</p>
+            <div class="experience-card-action"><span>Enter Classy Pilates</span><i>→</i></div>
+          </div>
+        </button>
+      </div>
+      <div class="experience-footer"><span><strong>Frankfurt</strong> · 6 Studios</span><span>Move better. Live beautifully.</span></div>
+    </div>
+  </section>
+
   <div class="announcement"><span class="live-dot"></span> 6 Studios in Frankfurt <i></i> Reformer · Powerformer · Mat · Barre</div>
 
   <header class="header" id="header">
@@ -73,6 +105,6 @@
 
   <div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="booking-drawer" id="bookingDrawer" aria-hidden="true"><div class="drawer-head"><div><p class="eyebrow">RESERVE</p><h3 id="drawerTitle">Your class</h3></div><button class="close-btn" id="closeDrawer" type="button" aria-label="Schließen">×</button></div><div id="drawerBody"></div></aside>
   <div class="toast" id="toast"><span>✓</span><div><b id="toastTitle">Saved</b><small id="toastText">Done</small></div></div>
-  <script src="./app.js"></script><script src="./booking-api.js"></script><script src="./booking-flow.js"></script><script src="./experience.js"></script>
+  <script src="./app.js"></script><script src="./booking-api.js"></script><script src="./booking-flow.js"></script><script src="./experience.js"></script><script src="./entry-gate.js"></script>
 </body>
 </html>
