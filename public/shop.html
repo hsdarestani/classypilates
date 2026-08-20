@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#151513">
+  <meta name="description" content="Classy Pilates Shop – Class Packs kaufen und sicher bezahlen.">
+  <title>Classy Pilates — Shop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./shop.css">
+</head>
+<body>
+  <div class="shop-announcement">SECURE CHECKOUT · APPLE PAY · GOOGLE PAY · PAYPAL · KLARNA · SEPA · CARD</div>
+  <header class="shop-header">
+    <a class="brand" href="./index.html"><span class="brand-mark">CP</span><span><b>CLASSY</b><small>PILATES</small></span></a>
+    <nav>
+      <a href="./index.html#schedule">Schedule</a>
+      <a href="./index.html#studios">Studios</a>
+      <a class="active" href="./shop.html">Shop</a>
+    </nav>
+    <button class="cart-trigger" id="cartTrigger" type="button">Warenkorb <span id="cartCount">0</span></button>
+  </header>
+
+  <main>
+    <section class="shop-hero">
+      <div>
+        <p class="eyebrow">YOUR PRACTICE, YOUR RHYTHM</p>
+        <h1>Choose your<br><em>Classy rhythm.</em></h1>
+      </div>
+      <p>Class Packs für alle Classy Pilates Studios. Nach dem Kauf werden Credits deinem Profil zugeordnet und können direkt für deine nächste Class verwendet werden.</p>
+    </section>
+
+    <section class="benefits">
+      <div><b>6 Studios</b><span>Ein Profil für alle Standorte</span></div>
+      <div><b>Sicher bezahlen</b><span>Wallets, Karte, PayPal, Klarna & SEPA</span></div>
+      <div><b>Sofort verfügbar</b><span>Credits nach bestätigter Zahlung</span></div>
+    </section>
+
+    <section class="products-wrap">
+      <div class="section-title"><p class="eyebrow">CLASS PACKS</p><h2>Train more.<br><em>Pay less.</em></h2></div>
+      <div class="product-grid" id="productGrid"></div>
+    </section>
+
+    <section class="payment-strip">
+      <div><p class="eyebrow">PAY YOUR WAY</p><h2>Everything customers expect<br><em>from a modern webshop.</em></h2></div>
+      <div class="payment-logos">
+        <span>VISA</span><span>Mastercard</span><span>AMEX</span><span>Apple Pay</span><span>G Pay</span><span>PayPal</span><span>Klarna.</span><span>SEPA</span><span>Link</span>
+      </div>
+    </section>
+
+    <section class="trust-section">
+      <article><span>01</span><h3>No card data on Classy servers</h3><p>Kartendaten werden später direkt beim Zahlungsanbieter verarbeitet. Classy speichert keine vollständigen Kartendaten.</p></article>
+      <article><span>02</span><h3>One order, one payment state</h3><p>Jede Bestellung erhält eine eindeutige Referenz. Wiederholte Klicks oder Webhook-Retries erzeugen keine Doppelbuchung.</p></article>
+      <article><span>03</span><h3>Credits only after confirmation</h3><p>Credits werden erst nach bestätigter Zahlung freigeschaltet und mit dem Buchungssystem synchronisiert.</p></article>
+    </section>
+  </main>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="cart-drawer" id="cartDrawer" aria-hidden="true">
+    <div class="drawer-head"><div><p class="eyebrow">CHECKOUT</p><h2 id="drawerTitle">Warenkorb</h2></div><button id="closeDrawer" type="button" aria-label="Schließen">×</button></div>
+    <div class="checkout-progress" id="checkoutProgress"><span class="active">1 Warenkorb</span><span>2 Daten</span><span>3 Zahlung</span></div>
+    <div id="drawerBody"></div>
+  </aside>
+
+  <div class="toast" id="toast"><b id="toastTitle">Gespeichert</b><span id="toastText"></span></div>
+  <script src="./shop.js"></script>
+</body>
+</html>
