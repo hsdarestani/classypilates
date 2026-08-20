@@ -1,72 +1,122 @@
-# Classy Pilates — website & booking prototype
+# Classy Pilates — Website, Booking & Webshop
 
-Premium redesign and booking UX for Classy Pilates Frankfurt.
+Premium Classy Pilates website with a Barry's-inspired booking flow, central booking API, six-location operations panel and a modern multi-payment webshop.
 
-## What is implemented
+## Included now
 
-- Responsive premium website using Classy Pilates' existing visual assets and content direction
-- Barry's-inspired schedule UX, adapted to Classy Pilates instead of copied
-- Six bookable studio spaces:
-  - Bahnhofsviertel · 1. OG
-  - Bahnhofsviertel · Ladies / 2. OG
-  - Sachsenhausen
-  - Bornheim
-  - Mid
-  - Oval
+- Premium responsive website for six Frankfurt studio spaces
 - 7-day schedule with studio, class and time filters
 - Reformer, Powerformer, Mat Pilates and Barre
-- Availability states, sold-out state and waitlist flow
-- Returning-client and first-class booking modes
-- Booking confirmation UI and “My bookings” prototype
-- Current Classy class-pack pricing (1 / 5 / 10 / 20 classes)
-- Mobile-first booking flow
-
-> The current repository is a front-end prototype. The schedule is generated demo data in `public/app.js`. Do not use it for real customer bookings until the production booking API is connected.
+- Availability, sold-out and waitlist states
+- Returning-client and first-class flows
+- Central D1-ready booking API with capacity protection and duplicate-booking protection
+- Central cancellation flow that automatically releases capacity
+- Network-first frontend: central API when configured, safe browser fallback while infrastructure is not connected
+- “Meine Buchungen” lookup by email
+- Optional transactional booking/cancellation emails via Resend
+- Protected booking operations panel at `/admin.html`
+- Webshop at `/shop.html`
+- Class packs: 1 / 5 / 10 / 20 classes
+- Cart, customer data, billing data, checkout and order references
+- Stripe Checkout adapter with automatic payment methods
+- Apple Pay and Google Pay through Stripe when eligible/configured
+- Card payments, Link, Klarna and SEPA through Stripe account payment-method settings
+- Separate PayPal checkout + secure server-side capture
+- Stripe webhook verification and automatic credit fulfillment
+- D1 order, order item and credit ledger model
+- Idempotency-ready order references and provider request keys
 
 ## Cloudflare Pages
 
-Use these settings:
+Current Pages settings:
 
 - Production branch: `main`
 - Framework preset: `None`
 - Build command: leave empty
 - Build output directory: `public`
 
-## Production booking architecture
+Cloudflare Pages Functions are under `functions/` and are deployed with the Pages project.
 
-The owner’s biggest concern is booking disruption. The production system should be designed so that the public website is never the single point of failure.
+## D1 setup
 
-### Recommended stack
+Create a D1 database and bind it to the Pages project as:
 
-- **Frontend:** Cloudflare Pages
-- **Booking API:** separate API service (Django/FastAPI/Node) behind Cloudflare
-- **Database:** managed PostgreSQL with automated backups + point-in-time recovery
-- **Cache/read model:** Cloudflare/KV or Redis for fast schedule reads
-- **Payments:** Stripe with idempotency keys
-- **Email:** transactional provider with retry queue
-- **Monitoring:** uptime + API latency + failed-booking alerts
+- Binding name: `DB`
 
-### Reliability requirements
+Apply `cloudflare/schema.sql` to the database. It creates locations, classes, customers, bookings, waitlist, products, orders, order items, credit ledger and capacity-protection triggers.
 
-1. **Seat locking** — when a customer starts checkout, the seat is held for a short TTL so two people cannot purchase the last place.
-2. **Atomic booking transaction** — capacity check and booking insertion happen in one database transaction.
-3. **Idempotency** — repeated taps, slow mobile networks or payment retries cannot create duplicate bookings or duplicate charges.
-4. **Waitlist queue** — cancellations promote the next eligible client safely; the seat is temporarily reserved before notification expires.
-5. **Read-only fallback** — if the booking API has an incident, the website can still show the last known schedule with a clear status instead of becoming blank.
-6. **Health checks and alerts** — booking API, database and payment webhooks monitored separately.
-7. **Webhook retry + reconciliation** — payments are reconciled even when a webhook arrives late or is delivered more than once.
-8. **Audit trail** — every booking, cancellation, manual admin change and payment state change is logged.
-9. **Backups** — automated database backups and tested restore procedure.
-10. **Controlled rollout** — run the new booking system in parallel with the current provider before full cutover.
+The booking-capacity trigger makes the final capacity check at database level, so two concurrent requests cannot simply overbook the same class through the normal booking endpoint.
 
-## Migration plan with near-zero booking risk
+## Environment variables / secrets
 
-1. Build production backend and admin while the current booking system remains live.
-2. Import locations, classes, coaches, client accounts, passes/credits and future bookings.
-3. Run schedule synchronization and automated parity checks for at least several days.
-4. Let staff test bookings/cancellations in a private production environment.
-5. Soft-launch the new schedule to a limited percentage of traffic.
-6. Keep the old provider available as an operational fallback during the transition.
-7. Switch fully only after booking, payment, cancellation, waitlist and notification metrics are stable.
+Set these in Cloudflare Pages → Settings → Variables and Secrets when connecting the providers:
 
-This staged migration is the important part: the client should not be asked to trust a “big-bang” replacement on day one.
+### Booking admin
+
+- `ADMIN_TOKEN` — strong private token used by `/admin.html`
+
+### Stripe
+
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+
+Stripe webhook endpoint:
+
+`/api/webhooks/stripe`
+
+Recommended Stripe account payment methods for Germany:
+
+- Cards
+- Apple Pay
+- Google Pay
+- Link
+- Klarna
+- SEPA Direct Debit
+
+Actual availability is determined by Stripe, browser/device eligibility, currency, customer and the merchant's enabled payment methods.
+
+### PayPal
+
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_ENV` = `sandbox` or `live`
+
+PayPal orders are approved on PayPal and captured server-side at `/api/checkout/paypal-return` before credits are fulfilled.
+
+### Transactional email
+
+- `RESEND_API_KEY`
+- `MAIL_FROM` — for example `Classy Pilates <booking@classypilates.de>` after the sending domain is verified
+
+Email failure never rolls a successful booking back; booking state remains the source of truth.
+
+## Booking API
+
+- `GET /api/schedule`
+- `GET /api/bookings?email=...`
+- `POST /api/bookings`
+- `DELETE /api/bookings`
+- `POST /api/waitlist`
+- `DELETE /api/waitlist`
+- `GET/POST/DELETE /api/admin/classes`
+
+Until D1 is bound and real classes are entered/imported, the existing generated schedule remains visible as a safe presentation fallback. Once central schedule data exists, `public/booking-api.js` automatically switches the customer flow to the central API.
+
+## Webshop payment flow
+
+1. Customer chooses a Class Pack.
+2. Cart calculates the total from the fixed product catalog.
+3. Customer enters contact/billing details.
+4. Customer chooses payment method.
+5. Stripe methods redirect to Stripe Checkout; PayPal redirects to PayPal approval.
+6. Server-side webhook/capture verifies the payment.
+7. Order changes to `paid`.
+8. Purchased credits are written to `credit_ledger` exactly after confirmed payment.
+
+The frontend never handles raw card numbers.
+
+If payment credentials are not connected yet, the webshop does not fake a successful charge. It stores a prepared local order and clearly states that no debit occurred. This lets the complete UX be tested before live provider credentials are supplied.
+
+## Reliability / migration approach
+
+The client does not need to trust a big-bang replacement. Keep the existing provider live while importing the real schedule, clients, credits and future bookings. Run both systems in parallel, compare capacity/bookings, let staff use `/admin.html`, then switch customer traffic only after booking, cancellation, payment and notification metrics are stable.
