@@ -1,4 +1,4 @@
-const CATALOG={single:{name:'1 Class',price:2800},five:{name:'5 Classes',price:11900},ten:{name:'10 Classes',price:21900},twenty:{name:'20 Classes',price:39900}};
+const CATALOG={single:{name:'1 Class',price:2800,credits:1},five:{name:'5 Classes',price:11900,credits:5},ten:{name:'10 Classes',price:21900,credits:10},twenty:{name:'20 Classes',price:39900,credits:20}};
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||''));
 
@@ -15,7 +15,7 @@ export async function onRequestPost({request,env}){
   items.forEach((item,i)=>{params.set(`line_items[${i}][quantity]`,String(item.qty));params.set(`line_items[${i}][price_data][currency]`,'eur');params.set(`line_items[${i}][price_data][unit_amount]`,String(item.price));params.set(`line_items[${i}][price_data][product_data][name]`,item.name)});
   const stripe=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:`Bearer ${env.STRIPE_SECRET_KEY}`,'content-type':'application/x-www-form-urlencoded','Idempotency-Key':request.headers.get('x-idempotency-key')||reference},body:params});
   const result=await stripe.json().catch(()=>({}));if(!stripe.ok)return json({ok:false,error:'stripe_checkout_failed',details:result?.error?.message||'Unknown Stripe error'},502);
-  if(env.DB){try{await env.DB.prepare(`INSERT OR IGNORE INTO orders(id,reference,email,first_name,last_name,amount_cents,currency,provider,provider_payment_id,payment_method,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),reference,email,String(body?.customer?.firstName||''),String(body?.customer?.lastName||''),total,'eur','stripe',result.id,String(body.paymentMethod||'automatic'),'pending').run()}catch(_){}}
+  if(env.DB){try{const orderId=crypto.randomUUID();const statements=[env.DB.prepare(`INSERT OR IGNORE INTO orders(id,reference,email,first_name,last_name,amount_cents,currency,provider,provider_payment_id,payment_method,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(orderId,reference,email,String(body?.customer?.firstName||''),String(body?.customer?.lastName||''),total,'eur','stripe',result.id,String(body.paymentMethod||'automatic'),'pending')];items.forEach(item=>statements.push(env.DB.prepare(`INSERT INTO order_items(id,order_id,product_id,product_name,quantity,unit_price_cents,credits) VALUES(?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),orderId,item.id,item.name,item.qty,item.price,item.credits)));await env.DB.batch(statements)}catch(_){}}
   return json({ok:true,url:result.url,sessionId:result.id,reference});
 }
 
