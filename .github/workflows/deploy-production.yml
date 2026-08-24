@@ -80,8 +80,12 @@ jobs:
 
           docker compose up -d --build --remove-orphans
 
-          docker compose exec -T api python import_mindbody_schedule.py \
+          # The host is intentionally small. Run the importer as the only API
+          # process so loading SQLAlchemy/OpenPyXL twice cannot trigger the OOM killer.
+          docker compose stop api
+          docker compose run --rm --no-deps api python import_mindbody_schedule.py \
             --source /app/data/mindbody_schedule_2026-04-01_to_2026-08-24.json.gz
+          docker compose up -d api
 
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
@@ -141,12 +145,8 @@ jobs:
           trap - EXIT
 
           configure_nginx() {
-            mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
-            cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX'
-          server {
-              listen 80;
-              listen [::]:80;
-              server_name classy.smarbiz.sbs;
+            mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets
+            cat > /etc/nginx/snippets/classy-routes.conf <<'NGINX_ROUTES'
               root /opt/classypilates/public;
               index index.html;
 
@@ -189,8 +189,38 @@ jobs:
               location / {
                   try_files $uri $uri/ /index.html;
               }
+          NGINX_ROUTES
+
+            if [ -f /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem ] && [ -f /etc/letsencrypt/live/classy.smarbiz.sbs/privkey.pem ]; then
+              cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX_TLS'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name classy.smarbiz.sbs;
+              return 301 https://$host$request_uri;
           }
-          NGINX
+
+          server {
+              listen 443 ssl;
+              listen [::]:443 ssl;
+              http2 on;
+              server_name classy.smarbiz.sbs;
+              ssl_certificate /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/classy.smarbiz.sbs/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              include /etc/nginx/snippets/classy-routes.conf;
+          }
+          NGINX_TLS
+            else
+              cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX_HTTP'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name classy.smarbiz.sbs;
+              include /etc/nginx/snippets/classy-routes.conf;
+          }
+          NGINX_HTTP
+            fi
             ln -sfn /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs
             nginx -t
             systemctl reload nginx || nginx -s reload
@@ -225,6 +255,22 @@ jobs:
 
           if command -v certbot >/dev/null 2>&1 && command -v nginx >/dev/null 2>&1; then
             certbot --nginx -d classy.smarbiz.sbs --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+          fi
+
+          if command -v nginx >/dev/null 2>&1; then
+            if [ -f /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem ]; then
+              VERIFY_URL="https://classy.smarbiz.sbs"
+              VERIFY_RESOLVE=(--resolve classy.smarbiz.sbs:443:127.0.0.1)
+            else
+              VERIFY_URL="http://127.0.0.1"
+              VERIFY_RESOLVE=(-H "Host: classy.smarbiz.sbs")
+            fi
+            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login" | grep -q 'ONE LOGIN'
+            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account" | grep -q 'MEIN BEREICH'
+            LOGIN_HTML_CODE=$(curl -ksS -o /dev/null -w '%{http_code}' "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login.html")
+            ACCOUNT_HTML_CODE=$(curl -ksS -o /dev/null -w '%{http_code}' "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account.html")
+            test "$LOGIN_HTML_CODE" = "301"
+            test "$ACCOUNT_HTML_CODE" = "301"
           fi
 
           docker compose ps
