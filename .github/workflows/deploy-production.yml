@@ -89,7 +89,7 @@ jobs:
           # The importer uses SQLAlchemy Core only, so it can safely run beside
           # the API without loading the full application a second time.
           docker compose exec -T api python import_mindbody_schedule.py \
-            --source /app/data/mindbody_schedule_2026-04-01_to_2026-09-28.json.gz </dev/null
+            --source /app/data/mindbody_schedule_2026-04-01_to_2027-08-24.json.gz </dev/null
           curl -fsS http://127.0.0.1:8787/api/health
 
           EMAIL_ONLY_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com')

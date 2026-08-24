@@ -30,7 +30,7 @@ Available permission keys:
 ## Schedule upload
 CSV and XLSX files can be imported from the staff portal. Recommended columns: `Datum`, `Uhrzeit`, `Studio`, `Kurs`, `Coach`, `Anzahl der Plätze`. PDF is accepted and stored for manual processing.
 
-The sanitized Mindbody schedule export for `2026-04-01` through `2026-09-28` is bundled under `server/data/` and imported idempotently during deployment. The source report was requested through `2027-03-03`, but Mindbody returned schedule rows only through `2026-09-28`. It contains studios, coaches, class definitions, sessions and aggregated booking counts. Customer names, phone numbers, birth dates, medical notes and individual booking records are deliberately excluded from the public repository.
+The sanitized Mindbody schedule export for `2026-04-01` through `2027-08-24` is bundled under `server/data/` and imported idempotently during deployment. It combines the attendance export, which supplies aggregate booking counts, with the trainer-availability export, which supplies scheduled classes even when they have no bookings. It contains studios, coaches, class definitions, sessions and aggregate booking counts. Customer names, phone numbers, email addresses, birth dates, medical notes and individual booking records are deliberately excluded from the public repository.
 
 The public pages consume the import through `/api/schedule`, `/api/public/overview`, `/api/public/coaches` and `/api/public/classes`. Aggregated Mindbody occupancy is linked to each session so real capacity is visible without publishing customer identities.
 

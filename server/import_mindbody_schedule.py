@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import MetaData, Table, create_engine, inspect, select, text
 
 
-DEFAULT_SOURCE = Path(__file__).parent / "data" / "mindbody_schedule_2026-04-01_to_2026-09-28.json.gz"
+DEFAULT_SOURCE = Path(__file__).parent / "data" / "mindbody_schedule_2026-04-01_to_2027-08-24.json.gz"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/classy.db")
 
