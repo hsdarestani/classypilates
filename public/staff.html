@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#151513">
   <title>Classy Pilates — Control Center</title>
@@ -7,7 +7,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/staff.css?v=20260824-4">
   <link rel="stylesheet" href="/staff-fix.css?v=20260824-6">
-</head>
+<link rel="stylesheet" href="/brand-logo.css?v=20260824-1"></head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
     <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
@@ -22,33 +22,32 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
   </svg>
   <section class="auth-screen" id="authScreen">
-    <div class="auth-visual"><div class="auth-brand"><span>CP</span><b>CLASSY PILATES</b></div><div><p>STAFF EXPERIENCE</p><h1>One team.<br><em>One control center.</em></h1><small>Bookings, classes, coaches, finance and operations across all Frankfurt studios.</small></div></div>
+    <div class="auth-visual"><div class="auth-brand"><img class="brand-logo-img" src="/Logo_BW_Trans-300x234.png" alt="Classy Pilates"></div><div><p>STAFF EXPERIENCE</p><h1>One team.<br><em>One control center.</em></h1><small>Bookings, classes, coaches, finance and operations across all Frankfurt studios.</small></div></div>
     <div class="auth-card">
-      <a href="/" class="back-site">← Zur Website</a>
-      <form id="loginBox"><p class="kicker">SECURE ACCESS</p><h2>Team Login</h2><p class="muted">Für Administration und Coaches.</p><label>E-Mail<input id="loginEmail" type="email" autocomplete="username" placeholder="name@classypilates.de" required></label><label>Passwort<input id="loginPassword" type="password" autocomplete="current-password" required></label><label class="password-toggle"><input id="showPassword" type="checkbox"> Passwort anzeigen</label><button id="loginBtn" type="submit">Einloggen</button><div class="msg" id="loginMsg" aria-live="polite"></div></form>
-      <div id="setupBox" hidden><p class="kicker">FIRST SETUP</p><h2>Ersten Admin erstellen</h2><p class="muted">Dieser Schritt ist nur möglich, solange noch kein Benutzer existiert.</p><label>Vorname<input id="setupFirst" value="Admin"></label><label>E-Mail<input id="setupEmail" type="email" placeholder="admin@classypilates.de"></label><label>Passwort<input id="setupPassword" type="password" placeholder="Mindestens 10 Zeichen"></label><button id="setupBtn">Admin erstellen</button><div class="msg" id="setupMsg"></div></div>
+      <a href="/" class="back-site">← Back to website</a>
+      <form id="loginBox"><p class="kicker">SECURE ACCESS</p><h2>Team Login</h2><p class="muted">For administrators and coaches.</p><label>Email<input id="loginEmail" type="email" autocomplete="username" placeholder="name@classypilates.de" required></label><label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label><label class="password-toggle"><input id="showPassword" type="checkbox"> Show password</label><button id="loginBtn" type="submit">Sign in</button><div class="msg" id="loginMsg" aria-live="polite"></div></form>
+      <div id="setupBox" hidden><p class="kicker">FIRST SETUP</p><h2>Create the first admin</h2><p class="muted">This step is only available while no user exists.</p><label>First name<input id="setupFirst" value="Admin"></label><label>Email<input id="setupEmail" type="email" placeholder="admin@classypilates.de"></label><label>Password<input id="setupPassword" type="password" placeholder="At least 10 characters"></label><button id="setupBtn">Create admin</button><div class="msg" id="setupMsg"></div></div>
     </div>
   </section>
 
   <div class="app" id="app" hidden>
     <aside class="sidebar">
-      <a class="side-brand" href="/"><span>CP</span><div><b>CLASSY</b><small>CONTROL CENTER</small></div></a>
+      <a class="side-brand" href="/"><img class="brand-logo-img" src="/Logo_BW_Trans-300x234.png" alt="Classy Pilates"></a>
       <nav id="nav">
-        <button data-view="dashboard" data-perm="dashboard.view" class="active"><svg><use href="#i-grid"/></svg><span>Übersicht</span></button>
-        <button data-view="bookings" data-perm="bookings.view"><svg><use href="#i-calendar"/></svg><span>Reservierungen</span></button>
-        <button data-view="customers" data-perm="customers.view"><svg><use href="#i-users"/></svg><span>Kunden</span></button>
-        <button data-view="classes" data-perm="classes.view"><svg><use href="#i-classes"/></svg><span>Klassen & Schedule</span></button>
+        <button data-view="dashboard" data-perm="dashboard.view" class="active"><svg><use href="#i-grid"/></svg><span>Overview</span></button>
+        <button data-view="bookings" data-perm="bookings.view"><svg><use href="#i-calendar"/></svg><span>Bookings</span></button>
+        <button data-view="customers" data-perm="customers.view"><svg><use href="#i-users"/></svg><span>Customers</span></button>
+        <button data-view="classes" data-perm="classes.view"><svg><use href="#i-classes"/></svg><span>Classes & schedule</span></button>
         <button data-view="coaches" data-perm="coaches.view"><svg><use href="#i-users"/></svg><span>Coaches</span></button>
-        <button data-view="finance" data-perm="finance.view"><svg><use href="#i-wallet"/></svg><span>Finanzen</span></button>
-        <button data-view="roles" data-perm="roles.manage"><svg><use href="#i-shield"/></svg><span>Rollen & Zugriffe</span></button>
-        <button data-view="uploads" data-perm="schedules.upload"><svg><use href="#i-upload"/></svg><span>Plan hochladen</span></button>
-        <button data-view="marketing" data-perm="pro.view"><svg><use href="#i-mail"/></svg><span>E-Mail Marketing</span><span class="pro">PRO</span></button>
+        <button data-view="finance" data-perm="finance.view"><svg><use href="#i-wallet"/></svg><span>Finance</span></button>
+        <button data-view="roles" data-perm="roles.manage"><svg><use href="#i-shield"/></svg><span>Roles & access</span></button>
+        <button data-view="uploads" data-perm="schedules.upload"><svg><use href="#i-upload"/></svg><span>Upload schedule</span></button>
         <button data-view="procenter" data-perm="pro.view"><svg><use href="#i-sparkles"/></svg><span>Pro Center</span><span class="pro">PRO</span></button>
       </nav>
-      <div class="side-user"><div class="avatar" id="sideAvatar">CP</div><div><b id="sideName">—</b><small id="sideRole">—</small></div><button id="logout" title="Abmelden">↗</button></div>
+      <div class="side-user"><div class="avatar" id="sideAvatar">CP</div><div><b id="sideName">—</b><small id="sideRole">—</small></div><button id="logout" title="Sign out">↗</button></div>
     </aside>
     <main class="main">
-      <header class="main-top"><button class="mobile-nav" id="mobileNav">☰</button><div><p id="pageEyebrow">OPERATIONS</p><h1 id="pageTitle">Übersicht</h1></div><div class="top-right"><span class="live"><i></i> LIVE</span><a href="/">Website <svg><use href="#i-external"/></svg></a></div></header>
+      <header class="main-top"><button class="mobile-nav" id="mobileNav">☰</button><div><p id="pageEyebrow">OPERATIONS</p><h1 id="pageTitle">Overview</h1></div><div class="top-right"><span class="live"><i></i> LIVE</span><a href="/">Website <svg><use href="#i-external"/></svg></a></div></header>
       <section id="view"></section>
     </main>
   </div>

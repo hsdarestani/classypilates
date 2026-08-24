@@ -31,7 +31,7 @@
   const navLinks=$$('.desktop-nav a[href^="#"]');const sections=navLinks.map(a=>$(a.getAttribute('href'))).filter(Boolean);if(sections.length){const sio=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){navLinks.forEach(a=>a.classList.toggle('is-active',a.getAttribute('href')==='#'+entry.target.id))}}),{rootMargin:'-28% 0px -58%',threshold:0});sections.forEach(s=>sio.observe(s))}
 
   // Floating schedule action appears only after the hero, keeping first screen clean.
-  if(hero){const floating=document.createElement('a');floating.className='floating-book';floating.href='#schedule';floating.innerHTML='<i></i><span>Kurs buchen</span><b>↗</b>';document.body.appendChild(floating);const fio=new IntersectionObserver(([entry])=>floating.classList.toggle('show',!entry.isIntersecting),{threshold:.15});fio.observe(hero)}
+  if(hero){const floating=document.createElement('a');floating.className='floating-book';floating.href='#schedule';floating.innerHTML='<i></i><span>Book a class</span><b>↗</b>';document.body.appendChild(floating);const fio=new IntersectionObserver(([entry])=>floating.classList.toggle('show',!entry.isIntersecting),{threshold:.15});fio.observe(hero)}
 
   // Shop cart feedback when cart count changes.
   const count=$('#cartCount'),cart=$('#cartTrigger');if(count&&cart){let old=count.textContent;new MutationObserver(()=>{if(count.textContent===old)return;old=count.textContent;cart.classList.remove('cart-bump');void cart.offsetWidth;cart.classList.add('cart-bump')}).observe(count,{childList:true,characterData:true,subtree:true})}

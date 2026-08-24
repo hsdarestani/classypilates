@@ -11,7 +11,7 @@
   gate.querySelector('[data-enter-fit]')?.addEventListener('click',()=>remember('fit'));
 
   const switcher=document.createElement('button');
-  switcher.type='button';switcher.className='experience-switch';switcher.textContent='Switch experience';switcher.setAttribute('aria-label','Class Fit oder Classy Pilates wählen');
+  switcher.type='button';switcher.className='experience-switch';switcher.textContent='Switch experience';switcher.setAttribute('aria-label','Choose Class Fit or Classy Pilates');
   switcher.addEventListener('click',()=>{try{sessionStorage.removeItem('cpExperienceChoice')}catch(_){}open()});
   body.appendChild(switcher);
 
@@ -34,6 +34,6 @@
 
   const footerLinks=document.querySelector('.footer-links');
   if(footerLinks&&!footerLinks.querySelector('[data-team-login]')){
-    const team=document.createElement('a');team.href='./staff.html';team.textContent='Team Login';team.dataset.teamLogin='1';footerLinks.appendChild(team);
+    const team=document.createElement('a');team.href='/login';team.textContent='Login';team.dataset.teamLogin='1';footerLinks.appendChild(team);
   }
 })();

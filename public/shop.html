@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#151513">
-  <meta name="description" content="Classy Pilates Shop – Class Packs kaufen und sicher bezahlen.">
+  <meta name="description" content="Classy Pilates Shop — buy Class Packs and pay securely.">
   <title>Classy Pilates — Shop</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,26 +12,26 @@
   <link rel="stylesheet" href="./shop.css">
   <link rel="stylesheet" href="./experience.css">
   <link rel="stylesheet" href="/site-fix.css?v=20260824-1">
-</head>
+<link rel="stylesheet" href="/brand-logo.css?v=20260824-1"></head>
 <body>
   <div class="shop-announcement">SECURE CHECKOUT · APPLE PAY · GOOGLE PAY · PAYPAL · KLARNA · SEPA · CARD</div>
   <header class="shop-header">
-    <a class="brand" href="/"><span class="brand-mark">CP</span><span><b>CLASSY</b><small>PILATES</small></span></a>
+    <a class="brand" href="/"><img class="brand-logo-img brand-logo-dark" src="/Logo_BW_Trans-300x234.png" alt="Classy Pilates"></a>
     <nav><a href="/#schedule">Schedule</a><a href="/#studios">Studios</a><a class="active" href="/shop">Shop</a><a href="/login">Login</a></nav>
-    <button class="cart-trigger" id="cartTrigger" type="button">Warenkorb <span id="cartCount">0</span></button>
+    <button class="cart-trigger" id="cartTrigger" type="button">Cart <span id="cartCount">0</span></button>
   </header>
 
   <main>
-    <section class="shop-hero"><div><p class="eyebrow">YOUR PRACTICE, YOUR RHYTHM</p><h1>Choose your<br><em>Classy rhythm.</em></h1></div><p>Class Packs für alle Classy Pilates Studios. Nach dem Kauf werden Credits deinem Profil zugeordnet und können direkt für deine nächste Class verwendet werden.</p></section>
-    <section class="benefits"><div><b>6 Studios</b><span>Ein Profil für alle Standorte</span></div><div><b>Sicher bezahlen</b><span>Wallets, Karte, PayPal, Klarna & SEPA</span></div><div><b>Sofort verfügbar</b><span>Credits nach bestätigter Zahlung</span></div></section>
+    <section class="shop-hero"><div><p class="eyebrow">YOUR PRACTICE, YOUR RHYTHM</p><h1>Choose your<br><em>Classy rhythm.</em></h1></div><p>Class Packs for every Classy Pilates studio. After purchase, credits are added to your profile and can be used for your next class.</p></section>
+    <section class="benefits"><div><b>6 Studios</b><span>One profile for every location</span></div><div><b>Secure payments</b><span>Wallets, cards, PayPal, Klarna and SEPA</span></div><div><b>Available instantly</b><span>Credits after confirmed payment</span></div></section>
     <section class="products-wrap"><div class="section-title"><p class="eyebrow">CLASS PACKS</p><h2>Train more.<br><em>Pay less.</em></h2></div><div class="product-grid" id="productGrid"></div></section>
     <section class="payment-strip"><div><p class="eyebrow">PAY YOUR WAY</p><h2>Everything customers expect<br><em>from a modern webshop.</em></h2></div><div class="payment-logos"><span>VISA</span><span>Mastercard</span><span>AMEX</span><span>Apple Pay</span><span>G Pay</span><span>PayPal</span><span>Klarna.</span><span>SEPA</span><span>Link</span></div></section>
-    <section class="trust-section"><article><span>01</span><h3>No card data on Classy servers</h3><p>Kartendaten werden später direkt beim Zahlungsanbieter verarbeitet. Classy speichert keine vollständigen Kartendaten.</p></article><article><span>02</span><h3>One order, one payment state</h3><p>Jede Bestellung erhält eine eindeutige Referenz. Wiederholte Klicks oder Webhook-Retries erzeugen keine Doppelbuchung.</p></article><article><span>03</span><h3>Credits only after confirmation</h3><p>Credits werden erst nach bestätigter Zahlung freigeschaltet und mit dem Buchungssystem synchronisiert.</p></article></section>
+    <section class="trust-section"><article><span>01</span><h3>No card data on Classy servers</h3><p>Card data is processed directly by the payment provider. Classy never stores complete card details.</p></article><article><span>02</span><h3>One order, one payment state</h3><p>Every order receives a unique reference. Repeated clicks or webhook retries cannot create duplicate purchases.</p></article><article><span>03</span><h3>Credits only after confirmation</h3><p>Credits are released only after confirmed payment and are synchronised with the booking system.</p></article></section>
   </main>
 
   <footer class="shop-legal"><span>© 2026 Classy Pilates · Frankfurt am Main</span><nav aria-label="Legal"><a href="/imprint">Imprint</a><a href="/data-privacy">Privacy</a><a href="/terms-conditions">Terms</a><a href="/studio-rules">Studio Rules</a></nav></footer>
 
-  <div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="cart-drawer" id="cartDrawer" aria-hidden="true"><div class="drawer-head"><div><p class="eyebrow">CHECKOUT</p><h2 id="drawerTitle">Warenkorb</h2></div><button id="closeDrawer" type="button" aria-label="Schließen">×</button></div><div class="checkout-progress" id="checkoutProgress"><span class="active">1 Warenkorb</span><span>2 Daten</span><span>3 Zahlung</span></div><div id="drawerBody"></div></aside>
+  <div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="cart-drawer" id="cartDrawer" aria-hidden="true"><div class="drawer-head"><div><p class="eyebrow">CHECKOUT</p><h2 id="drawerTitle">Cart</h2></div><button id="closeDrawer" type="button" aria-label="Close">×</button></div><div class="checkout-progress" id="checkoutProgress"><span class="active">1 Cart</span><span>2 Details</span><span>3 Payment</span></div><div id="drawerBody"></div></aside>
   <div class="toast" id="toast"><b id="toastTitle">Gespeichert</b><span id="toastText"></span></div>
   <script src="./shop.js"></script><script src="./experience.js"></script>
 </body>

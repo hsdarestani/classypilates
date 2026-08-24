@@ -190,8 +190,8 @@ ALL_PERMISSIONS = [
 DEFAULT_COACH_PERMS = ["dashboard.view", "bookings.view", "classes.view", "classes.create", "classes.edit_own", "schedules.upload"]
 
 STUDIOS = [
-    ("bhf1", "Bahnhofsviertel · 1. OG", "Kaiserstraße 61 · 60329 Frankfurt", 8),
-    ("ladies", "Bahnhofsviertel · Ladies 2. OG", "Kaiserstraße 61 · 60329 Frankfurt", 10),
+    ("bhf1", "Bahnhofsviertel · 1F", "Kaiserstraße 61 · 60329 Frankfurt", 8),
+    ("ladies", "Bahnhofsviertel · Ladies 2F", "Kaiserstraße 61 · 60329 Frankfurt", 10),
     ("sachsen", "Sachsenhausen", "Zum Gipfelhof 5 · 60594 Frankfurt", 12),
     ("bornheim", "Bornheim", "Wiesenstraße 33 · 60385 Frankfurt", 8),
     ("mid", "Mid", "Große Eschenheimer Straße 45 · 60313 Frankfurt", 10),
@@ -207,14 +207,23 @@ def db_session():
 
 def seed():
     with SessionLocal() as db:
-        if not db.scalar(select(Role).where(Role.name == "Administrator")):
-            db.add(Role(name="Administrator", description="Voller Zugriff", permissions_json=json.dumps(["*"]), system=True))
-        if not db.scalar(select(Role).where(Role.name == "Coach")):
-            db.add(Role(name="Coach", description="Standardzugriff für Coaches", permissions_json=json.dumps(DEFAULT_COACH_PERMS), system=True))
-        if not db.scalar(select(Role).where(Role.name == "Customer")):
-            db.add(Role(name="Customer", description="Kundenkonto für Buchungen und Class Credits", permissions_json="[]", system=True))
+        system_roles = (
+            ("Administrator", "Full access", ["*"]),
+            ("Coach", "Standard access for coaches", DEFAULT_COACH_PERMS),
+            ("Customer", "Customer account for bookings and Class Credits", []),
+        )
+        for name, description, permissions in system_roles:
+            role = db.scalar(select(Role).where(Role.name == name))
+            if role:
+                role.description = description
+            else:
+                db.add(Role(name=name, description=description, permissions_json=json.dumps(permissions), system=True))
         for sid, name, address, cap in STUDIOS:
-            if not db.get(Studio, sid):
+            studio = db.get(Studio, sid)
+            if studio:
+                studio.name = name
+                studio.address = address
+            else:
                 db.add(Studio(id=sid, name=name, address=address, capacity=cap))
         db.commit()
 seed()
@@ -896,7 +905,7 @@ async def upload_schedule(file: UploadFile = File(...), user: User = Depends(req
 
 @app.get("/api/staff/marketing")
 def marketing(user: User = Depends(require("pro.view"))):
-    return {"locked": True, "premium": True, "title": "E-Mail Marketing", "message": "Premium-Modul – als nächstes Upgrade verfügbar."}
+    return {"locked": True, "premium": True, "title": "Email Marketing", "message": "Premium module — available as a future upgrade."}
 
 @app.get("/api/public/overview")
 def public_overview(db: Session = Depends(db_session)):

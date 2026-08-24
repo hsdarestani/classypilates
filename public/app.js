@@ -1,5 +1,5 @@
 const studios=[
-{id:'bhf1',name:'Bahnhofsviertel · 1. OG',short:'Bahnhofsviertel 1F',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Bahnhofviertel_01-scaled.jpg'},
+{id:'bhf1',name:'Bahnhofsviertel · 1F',short:'Bahnhofsviertel 1F',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Bahnhofviertel_01-scaled.jpg'},
 {id:'ladies',name:'Bahnhofsviertel · Ladies',short:'Ladies 2F',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer · Ladies only',image:'https://classypilates.de/wp-content/uploads/2026/05/Ladies_02-scaled.jpg'},
 {id:'sachsen',name:'Sachsenhausen',short:'Sachsenhausen',address:'Zum Gipelhof 5 · 60594 Frankfurt',type:'Reformer · Mat',image:'https://classypilates.de/wp-content/uploads/2026/06/IMG_2751-scaled.jpeg'},
 {id:'bornheim',name:'Bornheim',short:'Bornheim',address:'Wiesenstraße 33 · 60385 Frankfurt',type:'Reformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Bornheim_07-scaled.jpg'},
@@ -29,8 +29,8 @@ const LIVE_DATA_ONLY=true;
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
 const state={dateOffset:0,selectedDay:0,location:'all',classType:'all',time:'all',mode:'returning',selectedClass:null};
-const dayNames=['SO','MO','DI','MI','DO','FR','SA'];
-const monthNames=['JAN','FEB','MÄR','APR','MAI','JUN','JUL','AUG','SEP','OKT','NOV','DEZ'];
+const dayNames=['SUN','MON','TUE','WED','THU','FRI','SAT'];
+const monthNames=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 const memoryStore={};
 
 function safeGet(key,fallback='[]'){
@@ -49,7 +49,7 @@ function dateAt(index){const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDa
 function isoDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function seedFor(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return Math.abs(h)}
 function studioById(id){return studios.find(s=>s.id===id)}
-function formatFullDate(d){return new Intl.DateTimeFormat('de-DE',{weekday:'long',day:'2-digit',month:'long'}).format(d)}
+function formatFullDate(d){return new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'2-digit',month:'long'}).format(d)}
 function bookingRef(){return 'CP-'+cryptoSafeToken(6)}
 function cryptoSafeToken(len){
   const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -68,11 +68,11 @@ function adjustSeats(classId,delta){
 
 function renderLocations(){
   const sel=$('#locationFilter'); if(!sel)return;
-  sel.innerHTML='<option value="all">Alle 6 Studios</option>'+studios.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  sel.innerHTML='<option value="all">All 6 studios</option>'+studios.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
 }
 function renderStudios(){
   const grid=$('#studioGrid'); if(!grid)return;
-  grid.innerHTML=studios.map((s,i)=>`<article class="studio-card" data-studio="${s.id}" tabindex="0" role="button" aria-label="Schedule für ${esc(s.name)} öffnen"><div class="studio-photo" style="background-image:url('${s.image}')"></div><span class="studio-arrow">↗</span><div class="studio-info"><span>0${i+1} · ${esc(s.type)}</span><h3>${esc(s.name)}</h3><p>${esc(s.address)}</p></div></article>`).join('');
+  grid.innerHTML=studios.map((s,i)=>`<article class="studio-card" data-studio="${s.id}" tabindex="0" role="button" aria-label="Open schedule for ${esc(s.name)}"><div class="studio-photo" style="background-image:url('${s.image}')"></div><span class="studio-arrow">↗</span><div class="studio-info"><span>0${i+1} · ${esc(s.type)}</span><h3>${esc(s.name)}</h3><p>${esc(s.address)}</p></div></article>`).join('');
   $$('.studio-card').forEach(card=>{
     const open=()=>{state.location=card.dataset.studio;$('#locationFilter').value=state.location;renderSchedule();$('#schedule').scrollIntoView({behavior:'smooth'})};
     card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}})
@@ -80,7 +80,7 @@ function renderStudios(){
 }
 function renderDates(){
   const strip=$('#dateStrip'); if(!strip)return;
-  strip.innerHTML=Array.from({length:7},(_,i)=>{const d=dateAt(i);const today=isoDate(d)===isoDate(new Date());return `<button class="date-btn ${i===state.selectedDay?'active':''}" type="button" data-day="${i}"><span class="dow">${today?'HEUTE':dayNames[d.getDay()]}</span><b>${String(d.getDate()).padStart(2,'0')}</b><small>${monthNames[d.getMonth()]}</small></button>`}).join('');
+  strip.innerHTML=Array.from({length:7},(_,i)=>{const d=dateAt(i);const today=isoDate(d)===isoDate(new Date());return `<button class="date-btn ${i===state.selectedDay?'active':''}" type="button" data-day="${i}"><span class="dow">${today?'TODAY':dayNames[d.getDay()]}</span><b>${String(d.getDate()).padStart(2,'0')}</b><small>${monthNames[d.getMonth()]}</small></button>`}).join('');
   $$('.date-btn').forEach(btn=>btn.addEventListener('click',()=>{state.selectedDay=Number(btn.dataset.day);renderDates();renderSchedule()}));
 }
 function generateSchedule(){
@@ -106,10 +106,10 @@ function renderSchedule(){
   const rows=all.filter(r=>(state.location==='all'||r.studio===state.location)&&(state.classType==='all'||r.type===state.classType)&&timeMatches(r.time,state.time));
   const date=dateAt(state.selectedDay);if($('#resultsLabel'))$('#resultsLabel').textContent=`${formatFullDate(date)} · ${rows.length} Classes`;
   const list=$('#classList'); if(!list)return;
-  if(!rows.length){list.innerHTML='<div class="empty-state"><h4>Keine echten Classes für diesen Tag.</h4><p>Der Schedule zeigt ausschließlich importierte Mindbody-Termine. Wähle einen anderen Tag oder Filter.</p></div>';return}
+  if(!rows.length){list.innerHTML='<div class="empty-state"><h4>No live classes for this day.</h4><p>The schedule only shows imported Mindbody sessions. Choose another day or filter.</p></div>';return}
   list.innerHTML=rows.map(r=>{
     const studio=studioById(r.studio);
-    const availability=r.spots===0?{label:'Ausgebucht',cls:'full',btn:'Waitlist',bcls:'waitlist'}:r.spots<=3?{label:`Nur ${r.spots} Plätze`,cls:'low',btn:'Reserve',bcls:''}:{label:`${r.spots} Plätze`,cls:'',btn:'Reserve',bcls:''};
+    const availability=r.spots===0?{label:'Sold out',cls:'full',btn:'Waitlist',bcls:'waitlist'}:r.spots<=3?{label:`Only ${r.spots} spots`,cls:'low',btn:'Reserve',bcls:''}:{label:`${r.spots} spots`,cls:'',btn:'Reserve',bcls:''};
     return `<article class="class-row"><div class="class-time"><b>${r.time}</b><small>${r.duration} MIN</small></div><div class="class-name"><b>${esc(r.name)}</b><span>${esc(r.type.toUpperCase())} · ALL LEVELS</span></div><div class="class-coach"><span>COACH</span><b>${esc(r.coach)}</b></div><div class="class-location"><span>STUDIO</span><b>${esc(studio.short)}</b></div><div class="reserve-wrap"><span class="spots ${availability.cls}">${availability.label}</span><button class="reserve-btn ${availability.bcls}" data-reserve="${r.id}" type="button">${availability.btn}</button></div></article>`
   }).join('');
   $$('[data-reserve]').forEach(btn=>btn.addEventListener('click',()=>{const item=all.find(r=>String(r.id)===btn.dataset.reserve);if(item)openClass(item)}));
@@ -125,65 +125,65 @@ function selectedSummary(r){const s=studioById(r.studio);return `<div class="sel
 function openClass(r){
   state.selectedClass=r;const full=r.spots===0;$('#drawerTitle').textContent=full?'Join the waitlist':'Reserve your spot';
   if(full){
-    $('#drawerBody').innerHTML=selectedSummary(r)+`<div class="drawer-step"><h4>Wir sagen dir Bescheid, wenn etwas frei wird.</h4><p>Trage deine E-Mail ein. Du kannst die Warteliste jederzeit unter „Meine Buchungen“ wieder entfernen.</p><label class="field"><span>E-MAIL</span><input id="waitEmail" type="email" autocomplete="email" placeholder="name@email.de"></label><button class="drawer-action" id="joinWaitlist" type="button">Warteliste aktivieren</button><button class="drawer-action secondary" id="cancelBooking" type="button">Abbrechen</button></div>`;
+    $('#drawerBody').innerHTML=selectedSummary(r)+`<div class="drawer-step"><h4>We will let you know when a spot opens.</h4><p>Enter your email. You can leave the waitlist at any time under “My bookings”.</p><label class="field"><span>EMAIL</span><input id="waitEmail" type="email" autocomplete="email" placeholder="name@email.de"></label><button class="drawer-action" id="joinWaitlist" type="button">Join waitlist</button><button class="drawer-action secondary" id="cancelBooking" type="button">Cancel</button></div>`;
     openDrawer();$('#cancelBooking')?.addEventListener('click',closeDrawer);$('#joinWaitlist')?.addEventListener('click',()=>joinWaitlist(r));return;
   }
-  $('#drawerBody').innerHTML=selectedSummary(r)+`<div class="drawer-step"><h4>${state.mode==='first'?'Deine erste Class':'Welcome back.'}</h4><p>${state.mode==='first'?'Vorname und E-Mail reichen für diese Reservierung.':'Gib die E-Mail deines Classy-Profils ein.'}</p><label class="field"><span>E-MAIL</span><input id="bookEmail" type="email" autocomplete="email" placeholder="name@email.de"></label>${state.mode==='first'?'<label class="field"><span>VORNAME</span><input id="bookName" type="text" autocomplete="given-name" placeholder="Dein Vorname"></label>':''}<div class="credit-box"><span>${state.mode==='first'?'Single Class':'Reservierung'}</span><b>${state.mode==='first'?'28 €':'1 Platz'}</b></div><button class="drawer-action" id="continueBooking" type="button">Platz reservieren</button><button class="drawer-action secondary" id="cancelBooking" type="button">Abbrechen</button></div>`;
+  $('#drawerBody').innerHTML=selectedSummary(r)+`<div class="drawer-step"><h4>${state.mode==='first'?'Your first class':'Welcome back.'}</h4><p>${state.mode==='first'?'Your first name and email are enough for this booking.':'Enter the email linked to your Classy profile.'}</p><label class="field"><span>EMAIL</span><input id="bookEmail" type="email" autocomplete="email" placeholder="name@email.de"></label>${state.mode==='first'?'<label class="field"><span>FIRST NAME</span><input id="bookName" type="text" autocomplete="given-name" placeholder="Your first name"></label>':''}<div class="credit-box"><span>${state.mode==='first'?'Single Class':'Booking'}</span><b>${state.mode==='first'?'28 €':'1 spot'}</b></div><button class="drawer-action" id="continueBooking" type="button">Reserve spot</button><button class="drawer-action secondary" id="cancelBooking" type="button">Cancel</button></div>`;
   openDrawer();$('#cancelBooking')?.addEventListener('click',closeDrawer);$('#continueBooking')?.addEventListener('click',()=>confirmBooking(r));
 }
 function joinWaitlist(r){
   const input=$('#waitEmail');const email=input?.value.trim().toLowerCase()||'';
-  if(!validEmail(email)){showToast('E-Mail prüfen','Bitte gib eine gültige E-Mail-Adresse ein.');input?.focus();return}
+  if(!validEmail(email)){showToast('Check email','Please enter a valid email address.');input?.focus();return}
   const list=readJson('cpWaitlist',[]);
-  if(list.some(x=>x.classId===r.id&&x.email===email)){showToast('Bereits eingetragen','Diese E-Mail steht schon auf der Warteliste.');return}
+  if(list.some(x=>x.classId===r.id&&x.email===email)){showToast('Already on the list','This email is already on the waitlist.');return}
   list.unshift({id:'W-'+cryptoSafeToken(7),classId:r.id,email,name:r.name,time:r.time,date:r.date,studio:studioById(r.studio).name,createdAt:new Date().toISOString()});writeJson('cpWaitlist',list.slice(0,50));
-  closeDrawer();showToast('Warteliste gespeichert','Der Eintrag ist unter „Meine Buchungen“ sichtbar.');
+  closeDrawer();showToast('Waitlist saved','This entry is visible under “My bookings”.');
 }
 function confirmBooking(r){
   const emailInput=$('#bookEmail');const email=emailInput?.value.trim().toLowerCase()||'';
-  if(!validEmail(email)){showToast('E-Mail prüfen','Bitte gib eine gültige E-Mail-Adresse ein.');emailInput?.focus();return}
-  if(state.mode==='first'){const name=$('#bookName')?.value.trim()||'';if(name.length<2){showToast('Vorname fehlt','Bitte gib deinen Vornamen ein.');$('#bookName')?.focus();return}}
+  if(!validEmail(email)){showToast('Check email','Please enter a valid email address.');emailInput?.focus();return}
+  if(state.mode==='first'){const name=$('#bookName')?.value.trim()||'';if(name.length<2){showToast('First name required','Please enter your first name.');$('#bookName')?.focus();return}}
   const refreshed=generateSchedule().find(x=>x.id===r.id);
-  if(!refreshed||refreshed.spots<=0){showToast('Gerade ausgebucht','Der letzte Platz ist nicht mehr verfügbar.');closeDrawer();renderSchedule();return}
+  if(!refreshed||refreshed.spots<=0){showToast('Just sold out','The last spot is no longer available.');closeDrawer();renderSchedule();return}
   const current=readJson('cpBookings',[]);
   const existing=current.find(b=>b.classId===r.id&&b.email===email&&b.status!=='cancelled');
-  if(existing){showToast('Schon reserviert',`Booking ${existing.ref} ist bereits gespeichert.`);return}
+  if(existing){showToast('Already booked',`Booking ${existing.ref} is already saved.`);return}
   const ref=bookingRef();
   const booking={ref,email,classId:r.id,name:r.name,time:r.time,date:r.date,studio:studioById(r.studio).name,studioId:r.studio,coach:r.coach,status:'reserved',createdAt:new Date().toISOString()};
   current.unshift(booking);writeJson('cpBookings',current.slice(0,50));adjustSeats(r.id,-1);renderSchedule();
-  $('#drawerTitle').textContent='Reservierung gespeichert';
-  $('#drawerBody').innerHTML=`<div class="confirmation"><div class="big-check">✓</div><h4>Dein Platz ist vorgemerkt.</h4><p>Booking <b>${ref}</b> wurde auf diesem Gerät gespeichert. Für den finalen Livebetrieb wird diese Aktion serverseitig bestätigt und synchronisiert.</p><div class="booking-id">BOOKING · ${ref}</div><button class="drawer-action" id="doneBooking" type="button">Fertig</button></div>`;
+  $('#drawerTitle').textContent='Booking saved';
+  $('#drawerBody').innerHTML=`<div class="confirmation"><div class="big-check">✓</div><h4>Your spot is reserved.</h4><p>Booking <b>${ref}</b> was saved on this device. In live operation, this action is confirmed and synchronised by the server.</p><div class="booking-id">BOOKING · ${ref}</div><button class="drawer-action" id="doneBooking" type="button">Done</button></div>`;
   $('#doneBooking')?.addEventListener('click',closeDrawer);
 }
 function cancelBooking(ref){
   const bookings=readJson('cpBookings',[]);const booking=bookings.find(b=>b.ref===ref&&b.status!=='cancelled');if(!booking)return;
-  booking.status='cancelled';booking.cancelledAt=new Date().toISOString();writeJson('cpBookings',bookings);adjustSeats(booking.classId,+1);renderSchedule();showToast('Buchung storniert',`${ref} wurde storniert.`);renderMyBookings();
+  booking.status='cancelled';booking.cancelledAt=new Date().toISOString();writeJson('cpBookings',bookings);adjustSeats(booking.classId,+1);renderSchedule();showToast('Booking cancelled',`${ref} was cancelled.`);renderMyBookings();
 }
 function removeWaitlist(id){
-  const list=readJson('cpWaitlist',[]);writeJson('cpWaitlist',list.filter(x=>x.id!==id));showToast('Warteliste entfernt','Der Eintrag wurde gelöscht.');renderMyBookings();
+  const list=readJson('cpWaitlist',[]);writeJson('cpWaitlist',list.filter(x=>x.id!==id));showToast('Waitlist removed','The entry was removed.');renderMyBookings();
 }
 function renderMyBookings(){
-  $('#drawerTitle').textContent='Meine Buchungen';
+  $('#drawerTitle').textContent='My bookings';
   const bookings=readJson('cpBookings',[]).filter(b=>b.status!=='cancelled');const waitlist=readJson('cpWaitlist',[]);
-  const bookingHtml=bookings.map(b=>`<div class="selected-class"><div class="line"><span>${esc(b.date)} · ${esc(b.time)}</span><b>${esc(b.name)}</b></div><div class="line"><span>Studio</span><b>${esc(b.studio)}</b></div><div class="line"><span>Booking</span><b>${esc(b.ref)}</b></div><button class="drawer-action secondary" data-cancel-ref="${esc(b.ref)}" type="button">Buchung stornieren</button></div>`).join('');
-  const waitHtml=waitlist.map(w=>`<div class="selected-class"><div class="line"><span>Warteliste · ${esc(w.date)} · ${esc(w.time)}</span><b>${esc(w.name)}</b></div><div class="line"><span>Studio</span><b>${esc(w.studio)}</b></div><button class="drawer-action secondary" data-wait-remove="${esc(w.id)}" type="button">Warteliste verlassen</button></div>`).join('');
-  $('#drawerBody').innerHTML=(bookingHtml||waitHtml)?`<div class="drawer-step"><p>Reservierungen und Wartelisten auf diesem Gerät.</p>${bookingHtml}${waitHtml}</div>`:`<div class="confirmation"><div class="big-check" style="background:#d8d0c1;color:#151513">↗</div><h4>Noch keine Buchungen.</h4><p>Wähle eine Class im Schedule und reserviere deinen Platz.</p><button class="drawer-action" id="goSchedule" type="button">Schedule öffnen</button></div>`;
+  const bookingHtml=bookings.map(b=>`<div class="selected-class"><div class="line"><span>${esc(b.date)} · ${esc(b.time)}</span><b>${esc(b.name)}</b></div><div class="line"><span>Studio</span><b>${esc(b.studio)}</b></div><div class="line"><span>Booking</span><b>${esc(b.ref)}</b></div><button class="drawer-action secondary" data-cancel-ref="${esc(b.ref)}" type="button">Cancel booking</button></div>`).join('');
+  const waitHtml=waitlist.map(w=>`<div class="selected-class"><div class="line"><span>Waitlist · ${esc(w.date)} · ${esc(w.time)}</span><b>${esc(w.name)}</b></div><div class="line"><span>Studio</span><b>${esc(w.studio)}</b></div><button class="drawer-action secondary" data-wait-remove="${esc(w.id)}" type="button">Leave waitlist</button></div>`).join('');
+  $('#drawerBody').innerHTML=(bookingHtml||waitHtml)?`<div class="drawer-step"><p>Bookings and waitlists on this device.</p>${bookingHtml}${waitHtml}</div>`:`<div class="confirmation"><div class="big-check" style="background:#d8d0c1;color:#151513">↗</div><h4>No bookings yet.</h4><p>Choose a class in the schedule and reserve your spot.</p><button class="drawer-action" id="goSchedule" type="button">Schedule</button></div>`;
   openDrawer();$('#goSchedule')?.addEventListener('click',()=>{closeDrawer();$('#schedule').scrollIntoView({behavior:'smooth'})});$$('[data-cancel-ref]').forEach(btn=>btn.addEventListener('click',()=>cancelBooking(btn.dataset.cancelRef)));$$('[data-wait-remove]').forEach(btn=>btn.addEventListener('click',()=>removeWaitlist(btn.dataset.waitRemove)));
 }
 function openNotify(){
-  const d=dateAt(state.selectedDay);const studio=state.location==='all'?'Alle Studios':studioById(state.location)?.name||'Alle Studios';const cls=state.classType==='all'?'Alle Classes':state.classType;
-  $('#drawerTitle').textContent='Freie Plätze';
-  $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>Benachrichtigung speichern</h4><p>${esc(formatFullDate(d))} · ${esc(studio)} · ${esc(cls)}</p><label class="field"><span>E-MAIL</span><input id="notifyEmail" type="email" autocomplete="email" placeholder="name@email.de"></label><button class="drawer-action" id="saveNotify" type="button">Benachrichtigung aktivieren</button><button class="drawer-action secondary" id="cancelNotify" type="button">Abbrechen</button></div>`;
+  const d=dateAt(state.selectedDay);const studio=state.location==='all'?'All studios':studioById(state.location)?.name||'All studios';const cls=state.classType==='all'?'All classes':state.classType;
+  $('#drawerTitle').textContent='Available spots';
+  $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>Save notification</h4><p>${esc(formatFullDate(d))} · ${esc(studio)} · ${esc(cls)}</p><label class="field"><span>EMAIL</span><input id="notifyEmail" type="email" autocomplete="email" placeholder="name@email.de"></label><button class="drawer-action" id="saveNotify" type="button">Enable notification</button><button class="drawer-action secondary" id="cancelNotify" type="button">Cancel</button></div>`;
   openDrawer();$('#cancelNotify')?.addEventListener('click',closeDrawer);$('#saveNotify')?.addEventListener('click',()=>{
-    const email=$('#notifyEmail')?.value.trim().toLowerCase()||'';if(!validEmail(email)){showToast('E-Mail prüfen','Bitte gib eine gültige E-Mail-Adresse ein.');return}
+    const email=$('#notifyEmail')?.value.trim().toLowerCase()||'';if(!validEmail(email)){showToast('Check email','Please enter a valid email address.');return}
     const notices=readJson('cpNotices',[]);const key=`${isoDate(d)}|${state.location}|${state.classType}|${state.time}|${email}`;
-    if(!notices.some(n=>n.key===key))notices.unshift({key,email,date:isoDate(d),location:state.location,classType:state.classType,time:state.time,createdAt:new Date().toISOString()});writeJson('cpNotices',notices.slice(0,50));closeDrawer();showToast('Benachrichtigung gespeichert','Deine Auswahl wurde gespeichert.');
+    if(!notices.some(n=>n.key===key))notices.unshift({key,email,date:isoDate(d),location:state.location,classType:state.classType,time:state.time,createdAt:new Date().toISOString()});writeJson('cpNotices',notices.slice(0,50));closeDrawer();showToast('Notification saved','Your selection was saved.');
   });
 }
 function openPass(passKey){
   const pass=PASSES[passKey];if(!pass){window.open(BUY_URL,'_blank','noopener');return}
   $('#drawerTitle').textContent='Class Pass';
-  $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>${esc(pass.name)}</h4><div class="credit-box"><span>Preis</span><b>${esc(pass.price)}</b></div><p>Der Kauf läuft aktuell über die bestehende Classy-Pilates-Verkaufsseite, damit Zahlungen während der Umstellung nicht unterbrochen werden.</p><button class="drawer-action" id="buyPass" type="button">Sicher weiter zum Kauf ↗</button><button class="drawer-action secondary" id="cancelPass" type="button">Abbrechen</button></div>`;
+  $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>${esc(pass.name)}</h4><div class="credit-box"><span>Price</span><b>${esc(pass.price)}</b></div><p>Purchases currently continue through the existing Classy Pilates sales page so payments remain uninterrupted during the transition.</p><button class="drawer-action" id="buyPass" type="button">Continue securely to purchase ↗</button><button class="drawer-action secondary" id="cancelPass" type="button">Cancel</button></div>`;
   openDrawer();$('#cancelPass')?.addEventListener('click',closeDrawer);$('#buyPass')?.addEventListener('click',()=>{window.open(BUY_URL,'_blank','noopener');closeDrawer()});
 }
 function showToast(title,text){
@@ -197,7 +197,7 @@ function initEvents(){
   $('#focusLocation')?.addEventListener('click',()=>$('#locationFilter')?.focus());
   $('#datePrev')?.addEventListener('click',()=>{state.dateOffset-=7;renderDates();renderSchedule()});
   $('#dateNext')?.addEventListener('click',()=>{state.dateOffset+=7;renderDates();renderSchedule()});
-  $$('.booking-tab').forEach(btn=>btn.addEventListener('click',()=>{$$('.booking-tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.mode=btn.dataset.mode;showToast(state.mode==='first'?'First class':'Returning client',state.mode==='first'?'Flow für neue Kundinnen und Kunden aktiv.':'Flow für bestehende Kundinnen und Kunden aktiv.')}));
+  $$('.booking-tab').forEach(btn=>btn.addEventListener('click',()=>{$$('.booking-tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.mode=btn.dataset.mode;showToast(state.mode==='first'?'First class':'Returning client',state.mode==='first'?'New customer flow active.':'Returning customer flow active.')}));
   $$('[data-class-jump]').forEach(a=>a.addEventListener('click',()=>{state.classType=a.dataset.classJump;$('#classFilter').value=state.classType;renderSchedule()}));
   $$('[data-pass]').forEach(btn=>btn.addEventListener('click',()=>openPass(btn.dataset.pass)));
   $('#notifyBtn')?.addEventListener('click',openNotify);

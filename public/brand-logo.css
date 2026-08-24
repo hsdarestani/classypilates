@@ -1,0 +1,52 @@
+.brand-logo-img {
+  display: block;
+  width: 112px;
+  height: auto;
+  object-fit: contain;
+}
+
+.brand-logo-dark {
+  filter: brightness(0);
+}
+
+.header .brand-logo-img {
+  width: 108px;
+  max-height: 72px;
+}
+
+.header.scrolled .brand-logo-img {
+  filter: brightness(0);
+}
+
+.experience-brand .brand-logo-img,
+.footer-brand .brand-logo-img {
+  width: 128px;
+}
+
+.login-brand .brand-logo-img,
+.auth-brand .brand-logo-img {
+  width: 132px;
+}
+
+.account-brand .brand-logo-img,
+.side-brand .brand-logo-img {
+  width: 104px;
+}
+
+.shop-header .brand-logo-img,
+.legal-header .brand-logo-img,
+.fit-header .brand-logo-img {
+  width: 106px;
+}
+
+.legal-footer .brand-logo-img {
+  width: 100px;
+}
+
+@media (max-width: 780px) {
+  .header .brand-logo-img,
+  .shop-header .brand-logo-img,
+  .fit-header .brand-logo-img {
+    width: 88px;
+  }
+}
