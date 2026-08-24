@@ -24,6 +24,7 @@ const PASSES={
   '20 Classes · 399 €':{name:'20 Classes',price:'399 €'}
 };
 const BUY_URL='https://classypilates.de/buy-classes/';
+const LIVE_DATA_ONLY=true;
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -83,6 +84,7 @@ function renderDates(){
   $$('.date-btn').forEach(btn=>btn.addEventListener('click',()=>{state.selectedDay=Number(btn.dataset.day);renderDates();renderSchedule()}));
 }
 function generateSchedule(){
+  if(LIVE_DATA_ONLY)return [];
   const day=dateAt(state.selectedDay);const dateKey=isoDate(day);const rows=[];
   studios.forEach((studio,si)=>{
     const seed=seedFor(dateKey+studio.id);const times=timeSets[seed%timeSets.length];const baseClasses=classTypes[studio.id];
@@ -104,7 +106,7 @@ function renderSchedule(){
   const rows=all.filter(r=>(state.location==='all'||r.studio===state.location)&&(state.classType==='all'||r.type===state.classType)&&timeMatches(r.time,state.time));
   const date=dateAt(state.selectedDay);if($('#resultsLabel'))$('#resultsLabel').textContent=`${formatFullDate(date)} · ${rows.length} Classes`;
   const list=$('#classList'); if(!list)return;
-  if(!rows.length){list.innerHTML='<div class="empty-state"><h4>Keine Classes für diese Filter.</h4><p>Ändere Studio, Class oder Uhrzeit — oder aktiviere eine Benachrichtigung.</p></div>';return}
+  if(!rows.length){list.innerHTML='<div class="empty-state"><h4>Keine echten Classes für diesen Tag.</h4><p>Der Schedule zeigt ausschließlich importierte Mindbody-Termine. Wähle einen anderen Tag oder Filter.</p></div>';return}
   list.innerHTML=rows.map(r=>{
     const studio=studioById(r.studio);
     const availability=r.spots===0?{label:'Ausgebucht',cls:'full',btn:'Waitlist',bcls:'waitlist'}:r.spots<=3?{label:`Nur ${r.spots} Plätze`,cls:'low',btn:'Reserve',bcls:''}:{label:`${r.spots} Plätze`,cls:'',btn:'Reserve',bcls:''};

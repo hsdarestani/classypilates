@@ -71,6 +71,8 @@ def import_schedule(source: Path, dry_run: bool = False) -> dict[str, int]:
         "sessions_created": 0,
         "sessions_existing": 0,
         "sessions_skipped": 0,
+        "booking_rows_linked": 0,
+        "active_seats_linked": 0,
     }
 
     with SessionLocal() as db:
@@ -100,6 +102,15 @@ def import_schedule(source: Path, dry_run: bool = False) -> dict[str, int]:
                 continue
 
             source_starts_at = starts_at(str(row["date"]), str(row["start_time"]))
+            source_total = max(0, int(row.get("bookings_total") or 0))
+            source_active = max(
+                0,
+                int(row.get("attended_count") or 0)
+                + int(row.get("absent_count") or 0)
+                + int(row.get("reserved_count") or 0),
+            )
+            counters["booking_rows_linked"] += source_total
+            counters["active_seats_linked"] += source_active
             existing = db.scalar(
                 select(ClassSession).where(
                     ClassSession.studio_id == target_studio_id,
@@ -111,11 +122,15 @@ def import_schedule(source: Path, dry_run: bool = False) -> dict[str, int]:
             if existing is not None:
                 if existing.coach_id is None and coach_id is not None:
                     existing.coach_id = coach_id
+                existing.imported_bookings = source_active
+                existing.source_bookings_total = source_total
+                if source_active > existing.capacity:
+                    existing.capacity = source_active
                 counters["sessions_existing"] += 1
                 continue
 
             studio = db.get(Studio, target_studio_id)
-            capacity = class_row.get("capacity") or studio.capacity
+            capacity = max(int(class_row.get("capacity") or studio.capacity), source_active)
             duration = row.get("duration_minutes") or class_row.get("default_duration_minutes") or 50
             db.add(
                 ClassSession(
@@ -126,6 +141,8 @@ def import_schedule(source: Path, dry_run: bool = False) -> dict[str, int]:
                     starts_at=source_starts_at,
                     duration=max(15, int(duration)),
                     capacity=max(1, int(capacity)),
+                    imported_bookings=source_active,
+                    source_bookings_total=source_total,
                     status="active",
                 )
             )

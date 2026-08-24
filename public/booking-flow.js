@@ -3,22 +3,8 @@
   const PRESENTATION_PAYMENT=true;
   const PHONE='+4915253816033';
   const INSTAGRAM='https://www.instagram.com/classypilates.de/';
-  const coachPhotos={
-    Anna:'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=180&q=82',
-    Andrea:'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=180&q=82',
-    Christina:'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=180&q=82',
-    Gabriella:'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=180&q=82',
-    Ida:'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?auto=format&fit=crop&w=180&q=82',
-    Jessi:'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?auto=format&fit=crop&w=180&q=82',
-    Kimberley:'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?auto=format&fit=crop&w=180&q=82',
-    Melina:'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=180&q=82',
-    Nathalie:'https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=180&q=82',
-    Sani:'https://images.unsplash.com/photo-1548142813-c348350df52b?auto=format&fit=crop&w=180&q=82',
-    Zora:'https://images.unsplash.com/photo-1524250502761-1ac6f2e30d43?auto=format&fit=crop&w=180&q=82',
-    Laetitia:'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=180&q=82'
-  };
-  const fallbackPhotos=Object.values(coachPhotos);
-  const photoFor=name=>coachPhotos[name]||fallbackPhotos[Math.abs(seedFor(String(name||'coach')))%fallbackPhotos.length];
+  const coachPhotos={};
+  const photoFor=name=>{const initials=String(name||'CP').split(/\s+/).map(part=>part[0]||'').join('').slice(0,2).toUpperCase();const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#24231f"/><stop offset="1" stop-color="#b89f79"/></linearGradient></defs><rect width="180" height="180" fill="url(#g)"/><text x="90" y="108" text-anchor="middle" font-family="Arial,sans-serif" font-size="58" fill="white">${initials}</text></svg>`;return coachPhotos[name]||`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`};
   const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch(_){return f}};
   const write=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(_){}};
   const safe=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -57,7 +43,7 @@
   function startWizard(r){wizard={class:r,spot:null,payment:'card',details:read('cpWizardCustomer',{}),mode:state.mode};renderClassStep()}
   function renderClassStep(){const r=wizard.class;const available=Math.max(0,Number(r.spots)||0);setDrawer('Reserve your class',`${classSummary(r)}<div class="wizard-panel"><div class="wizard-kicker">YOUR SESSION</div><h4>Deine Class ist ausgewählt.</h4><p>Prüfe Coach, Studio und Zeit. Im nächsten Schritt wählst du deinen bevorzugten Platz im Studio.</p><div class="class-facts"><div><span>LEVEL</span><b>All Levels</b></div><div><span>AVAILABLE</span><b>${available} Plätze</b></div><div><span>ARRIVE</span><b>10 Min. früher</b></div></div><button class="drawer-action" id="goSpot">Weiter · Platz wählen</button><button class="drawer-action secondary" id="cancelV2">Abbrechen</button></div>`,1);$('#goSpot')?.addEventListener('click',renderSpotStep);$('#cancelV2')?.addEventListener('click',closeDrawer)}
 
-  function seatState(index,r){const h=seedFor(`${r.id}-${index}`);if(index===1+(seedFor(r.id)%Math.max(1,r.capacity)))return'recommended';return h%7===0?'taken':'available'}
+  function seatState(index,r){const occupied=Math.min(Number(r.capacity)||0,Math.max(0,Number(r.reserved)||0));if(index<=occupied)return'taken';if(index===Math.min((Number(r.capacity)||1),occupied+1))return'recommended';return'available'}
   function spotLabel(i,r){if(r.type==='Mat')return`Matte ${String(i).padStart(2,'0')}`;if(r.type==='Barre')return`Position ${String(i).padStart(2,'0')}`;return`Reformer ${String(i).padStart(2,'0')}`}
   function renderSpotStep(){
     const r=wizard.class;const cap=Math.max(6,Number(r.capacity)||10);const seats=Array.from({length:cap},(_,x)=>x+1).map(i=>{const st=seatState(i,r),selected=wizard.spot===i;return `<button type="button" class="studio-spot ${st} ${selected?'selected':''}" data-spot="${i}" ${st==='taken'?'disabled':''} aria-label="${spotLabel(i,r)} ${st==='taken'?'belegt':'verfügbar'}"><span class="spot-bed"><i></i></span><b>${String(i).padStart(2,'0')}</b>${st==='recommended'?'<small>BEST</small>':''}</button>`}).join('');

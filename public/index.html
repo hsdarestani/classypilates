@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="./experience.css">
   <link rel="stylesheet" href="./booking-flow.css">
   <link rel="stylesheet" href="./entry-gate.css">
+  <link rel="stylesheet" href="./real-data.css?v=20260824-1">
   <link rel="stylesheet" href="/site-fix.css?v=20260824-1">
 </head>
 <body class="gate-open">
@@ -51,11 +52,11 @@
 
   <header class="header" id="header">
     <a class="logo" href="#top" aria-label="Classy Pilates Startseite"><span class="logo-cp">CP</span><span><b>CLASSY</b><small>PILATES</small></span></a>
-    <nav class="desktop-nav" aria-label="Hauptnavigation"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="/shop">Shop</a></nav>
-    <div class="header-actions"><a class="link-btn desktop-only" href="/login">Login</a><a class="primary-btn compact" href="#schedule">Kurs buchen</a><button class="menu-btn" id="menuBtn" type="button" aria-label="Menü öffnen"><span></span><span></span></button></div>
+    <nav class="desktop-nav" aria-label="Hauptnavigation"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#coaches">Coaches</a><a href="#classCatalog">Kursplan</a><a href="#passes">Preise</a><a href="/shop">Shop</a></nav>
+    <div class="header-actions"><button class="link-btn desktop-only" id="openBookings" type="button">Meine Buchungen</button><a class="link-btn desktop-only" href="/login">Login</a><a class="primary-btn compact" href="#schedule">Kurs buchen</a><button class="menu-btn" id="menuBtn" type="button" aria-label="Menü öffnen"><span></span><span></span></button></div>
   </header>
 
-  <div class="mobile-menu" id="mobileMenu" aria-hidden="true"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="/shop">Shop</a><a href="/login">Login</a></div>
+  <div class="mobile-menu" id="mobileMenu" aria-hidden="true"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#coaches">Coaches</a><a href="#classCatalog">Kursplan</a><a href="#passes">Preise</a><a href="/shop">Shop</a><button id="openBookingsMobile" type="button">Meine Buchungen</button><a href="/login">Login</a></div>
 
   <main id="top">
     <section class="hero">
@@ -69,6 +70,11 @@
       <div class="scroll-mark">SCROLL <span>↓</span></div>
     </section>
 
+    <section class="real-overview section" id="realOverview" aria-label="Echte Mindbody-Daten">
+      <div class="real-overview-copy"><p class="eyebrow">ECHTE MINDBODY-DATEN</p><h2>Der echte Classy<br><em>Trainingsbetrieb.</em></h2><p id="realDataRange">Daten werden geladen …</p></div>
+      <div class="real-metrics" id="realMetrics"><article><span>STUDIOS</span><b>—</b></article><article><span>COACHES</span><b>—</b></article><article><span>TERMINE</span><b>—</b></article><article><span>BUCHUNGEN</span><b>—</b></article></div>
+    </section>
+
     <section class="studios section" id="studios"><div class="section-head"><div><p class="eyebrow">START HERE · SIX PLACES. ONE STANDARD.</p><h2>Find your<br><em>studio.</em></h2></div><p>Wähle zuerst deinen Classy-Space in Frankfurt. Mit einem Tap springst du direkt in den gefilterten Schedule — dein Profil, deine Credits und deine Buchungen bleiben standortübergreifend zusammen.</p></div><div class="studio-grid" id="studioGrid"></div></section>
 
     <section class="schedule-section" id="schedule">
@@ -77,7 +83,7 @@
         <div class="booking-topline"><div class="booking-tabs" role="tablist"><button class="booking-tab active" data-mode="returning" type="button">Returning client</button><button class="booking-tab" data-mode="first" type="button">First class</button></div><button class="change-location" id="focusLocation" type="button">Change location <span>⌄</span></button></div>
         <div class="filters"><label><span>STUDIO</span><select id="locationFilter"></select></label><label><span>CLASS</span><select id="classFilter"><option value="all">Alle Classes</option><option value="Reformer">Reformer</option><option value="Powerformer">Powerformer</option><option value="Mat">Mat Pilates</option><option value="Barre">Barre</option></select></label><label><span>TIME</span><select id="timeFilter"><option value="all">Alle Zeiten</option><option value="morning">Morning · bis 12</option><option value="afternoon">Afternoon · 12–17</option><option value="evening">Evening · ab 17</option></select></label><button class="reset" id="resetFilters" type="button">Reset</button></div>
         <div class="date-wrap"><button class="date-arrow" id="datePrev" type="button" aria-label="Frühere Tage">←</button><div class="date-strip" id="dateStrip"></div><button class="date-arrow" id="dateNext" type="button" aria-label="Spätere Tage">→</button></div>
-        <div class="schedule-meta"><span id="resultsLabel">Schedule</span><span class="availability-key"><i></i> Plätze verfügbar</span></div><div class="class-list" id="classList"></div>
+        <div class="schedule-meta"><span id="resultsLabel">Schedule</span><span class="availability-key"><i></i> Plätze verfügbar</span></div><div class="schedule-source" id="scheduleSource">Mindbody-Daten werden geladen …</div><div class="class-list" id="classList"></div>
         <div class="schedule-footer"><span>Keine passende Uhrzeit?</span><button id="notifyBtn" type="button">Benachrichtigung für freie Plätze aktivieren →</button></div>
       </div>
     </section>
@@ -87,6 +93,17 @@
       <article class="class-block reverse"><div class="class-img power-img"></div><div class="class-copy"><p>02 · HIGH INTENSITY</p><h3>Powerformer</h3><span>ALL LEVELS · 50 MIN · MID & OVAL</span><p class="body">Ein hochintensives und zugleich gelenkschonendes Ganzkörpertraining für Kraft, Ausdauer, Balance und Core-Stabilität. Langsame, kontrollierte Bewegungen aktivieren die Muskulatur tief und stärken sie nachhaltig.</p><a href="#schedule" data-class-jump="Powerformer">Powerformer buchen ↗</a></div></article>
       <article class="class-block"><div class="class-img mat-img"></div><div class="class-copy"><p>03 · CONTROL & FLOW</p><h3>Mat Pilates</h3><span>ALL LEVELS · 50 MIN · SACHSENHAUSEN</span><p class="body">Klassisches Pilates-Mattentraining mit ruhigen, präzisen Bewegungen. Es fördert Haltung, Flexibilität, Muskeldefinition und Körperwahrnehmung und verbindet fließende Abläufe mit gezielter Kräftigung.</p><a href="#schedule" data-class-jump="Mat">Mat Pilates buchen ↗</a></div></article>
       <article class="class-block reverse"><div class="class-img" style="background-image:url('https://classypilates.de/wp-content/uploads/2026/05/Ladies_08-scaled.jpg')"></div><div class="class-copy"><p>04 · BALANCE & PRECISION</p><h3>Barre</h3><span>MOST LEVELS · 50 MIN · BAHNHOFSVIERTEL LADIES</span><p class="body">Pilates trifft auf elegante Barre-Elemente. Fließende Bewegungen und gezielte Kräftigung schaffen ein harmonisches Training für Haltung, Balance, Flexibilität und Körperkontrolle. Nicht für pränatale Teilnehmerinnen geeignet.</p><a href="#schedule" data-class-jump="Barre">Barre buchen ↗</a></div></article>
+    </section>
+
+    <section class="coach-roster section" id="coaches">
+      <div class="section-head compact-head"><div><p class="eyebrow">DAS ECHTE TEAM</p><h2>Meet your<br><em>coaches.</em></h2></div><p>Alle Coaches stammen direkt aus dem Mindbody-Export. Die Aktivität zeigt ihre tatsächlich geleiteten Termine und Buchungen im importierten Zeitraum.</p></div>
+      <div class="coach-grid" id="coachGrid"><div class="real-loading">Coach-Profile werden geladen …</div></div>
+      <button class="real-more" id="showAllCoaches" type="button" hidden>Alle Coaches anzeigen</button>
+    </section>
+
+    <section class="class-catalog section" id="classCatalog">
+      <div class="section-head compact-head"><div><p class="eyebrow">ECHTER KURSKATALOG</p><h2>Every class.<br><em>Real numbers.</em></h2></div><p>Alle Kursnamen, Standorte, Coaches und Buchungszahlen basieren auf den importierten Mindbody-Daten – ohne Beispieltermine.</p></div>
+      <div class="catalog-grid" id="catalogGrid"><div class="real-loading">Kursdaten werden geladen …</div></div>
     </section>
 
     <section class="passes section" id="passes">
@@ -102,6 +119,6 @@
 
   <div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="booking-drawer" id="bookingDrawer" aria-hidden="true"><div class="drawer-head"><div><p class="eyebrow">RESERVE</p><h3 id="drawerTitle">Your class</h3></div><button class="close-btn" id="closeDrawer" type="button" aria-label="Schließen">×</button></div><div id="drawerBody"></div></aside>
   <div class="toast" id="toast"><span>✓</span><div><b id="toastTitle">Saved</b><small id="toastText">Done</small></div></div>
-  <script src="./app.js"></script><script src="/booking-api.js?v=20260824-privacy1"></script><script src="/booking-flow.js?v=20260824-account1"></script><script src="./experience.js"></script><script src="./entry-gate.js"></script>
+  <script src="./app.js"></script><script src="/booking-api.js?v=20260824-real2"></script><script src="/booking-flow.js?v=20260824-real2"></script><script src="./real-data.js?v=20260824-2"></script><script src="./experience.js"></script><script src="./entry-gate.js"></script>
 </body>
 </html>

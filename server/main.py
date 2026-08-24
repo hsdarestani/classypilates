@@ -4,19 +4,20 @@ import json
 import os
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import jwt
 from dateutil import parser as date_parser
-from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openpyxl import load_workbook
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, func, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/classy.db")
@@ -103,6 +104,8 @@ class ClassSession(Base):
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     duration: Mapped[int] = mapped_column(Integer, default=50)
     capacity: Mapped[int] = mapped_column(Integer, default=10)
+    imported_bookings: Mapped[int] = mapped_column(Integer, default=0)
+    source_bookings_total: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(30), default="active")
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     coach: Mapped[Optional[Coach]] = relationship()
@@ -160,6 +163,20 @@ class ScheduleUpload(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 Base.metadata.create_all(engine)
+
+
+def migrate_schema():
+    """Keep the lightweight deployment schema compatible without a migration service."""
+    columns = {column["name"] for column in inspect(engine).get_columns("classes")}
+    if "imported_bookings" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE classes ADD COLUMN imported_bookings INTEGER NOT NULL DEFAULT 0"))
+    if "source_bookings_total" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE classes ADD COLUMN source_bookings_total INTEGER NOT NULL DEFAULT 0"))
+
+
+migrate_schema()
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
@@ -266,12 +283,19 @@ def user_dict(user: User):
     }
 
 def class_dict(c: ClassSession, db: Session):
-    reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
+    live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
+    imported_reserved = max(0, int(c.imported_bookings or 0))
+    reserved = min(c.capacity, imported_reserved + live_reserved)
+    starts_at = c.starts_at
+    if starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=ZoneInfo("Europe/Berlin"))
     return {
         "id": c.id, "studio": c.studio_id, "studio_name": c.studio.name if c.studio else c.studio_id,
         "name": c.title, "type": c.class_type, "coach": c.coach.display_name if c.coach else "Classy Coach",
-        "coach_id": c.coach_id, "starts_at": c.starts_at.isoformat(), "duration": c.duration,
-        "capacity": c.capacity, "reserved": reserved, "spots": max(0, c.capacity - reserved), "status": c.status
+        "coach_id": c.coach_id, "starts_at": starts_at.isoformat(), "duration": c.duration,
+        "capacity": c.capacity, "reserved": reserved, "imported_reserved": imported_reserved,
+        "source_bookings_total": int(c.source_bookings_total or 0),
+        "live_reserved": live_reserved, "spots": max(0, c.capacity - reserved), "status": c.status
     }
 
 app = FastAPI(title="Classy Pilates Production API", version="1.1")
@@ -617,11 +641,21 @@ def customer_change_password(data: PasswordChangeIn, user: User = Depends(custom
 def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Depends(db_session)):
     now = datetime.now(timezone.utc)
     class_count = db.scalar(select(func.count(ClassSession.id)).where(ClassSession.starts_at >= now, ClassSession.status == "active")) or 0
-    booking_count = db.scalar(select(func.count(Booking.id)).where(Booking.status == "reserved")) or 0
+    live_booking_count = db.scalar(select(func.count(Booking.id)).where(Booking.status == "reserved")) or 0
+    imported_booking_count = db.scalar(
+        select(func.coalesce(func.sum(ClassSession.imported_bookings), 0)).where(
+            ClassSession.starts_at >= now, ClassSession.status == "active"
+        )
+    ) or 0
+    booking_count = int(live_booking_count) + int(imported_booking_count)
     coach_count = db.scalar(select(func.count(Coach.id)).where(Coach.active == True)) or 0
     paid_cents = db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0
     today_bookings = db.scalar(select(func.count(Booking.id)).where(Booking.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0))) or 0
-    return {"upcoming_classes": class_count, "active_bookings": booking_count, "coaches": coach_count, "revenue_cents": int(paid_cents), "today_bookings": today_bookings}
+    return {
+        "upcoming_classes": class_count, "active_bookings": booking_count,
+        "imported_bookings": int(imported_booking_count), "live_bookings": int(live_booking_count),
+        "coaches": coach_count, "revenue_cents": int(paid_cents), "today_bookings": today_bookings,
+    }
 
 @app.get("/api/staff/finance")
 def finance(user: User = Depends(require("finance.view")), db: Session = Depends(db_session)):
@@ -779,7 +813,12 @@ def staff_bookings(user: User = Depends(require("bookings.view")), db: Session =
     rows = db.scalars(select(Booking).order_by(Booking.created_at.desc()).limit(500)).all()
     if user.coach and not can(user, "bookings.manage"):
         rows = [b for b in rows if b.klass.coach_id == user.coach.id]
-    return {"bookings": [{"id":b.id,"reference":b.reference,"class_id":b.class_id,"class_name":b.klass.title,"starts_at":b.klass.starts_at.isoformat(),"studio":b.klass.studio.name,"customer_name":b.customer_name,"email":b.email,"phone":b.phone,"spot_number":b.spot_number,"status":b.status,"payment_status":b.payment_status,"payment_method":b.payment_method,"amount_cents":b.amount_cents} for b in rows]}
+    imported_total = db.scalar(select(func.coalesce(func.sum(ClassSession.source_bookings_total), 0))) or 0
+    return {
+        "bookings": [{"id":b.id,"reference":b.reference,"class_id":b.class_id,"class_name":b.klass.title,"starts_at":b.klass.starts_at.isoformat(),"studio":b.klass.studio.name,"customer_name":b.customer_name,"email":b.email,"phone":b.phone,"spot_number":b.spot_number,"status":b.status,"payment_status":b.payment_status,"payment_method":b.payment_method,"amount_cents":b.amount_cents} for b in rows],
+        "imported_booking_count": int(imported_total),
+        "imported_booking_mode": "aggregated_without_personal_data",
+    }
 
 @app.patch("/api/staff/bookings/{booking_id}")
 def staff_booking_update(booking_id: int, data: BookingUpdate, user: User = Depends(require("bookings.manage")), db: Session = Depends(db_session)):
@@ -859,13 +898,103 @@ async def upload_schedule(file: UploadFile = File(...), user: User = Depends(req
 def marketing(user: User = Depends(require("pro.view"))):
     return {"locked": True, "premium": True, "title": "E-Mail Marketing", "message": "Premium-Modul – als nächstes Upgrade verfügbar."}
 
+@app.get("/api/public/overview")
+def public_overview(db: Session = Depends(db_session)):
+    latest = db.scalar(select(func.max(ClassSession.starts_at)))
+    earliest = db.scalar(select(func.min(ClassSession.starts_at)))
+    return {
+        "studios": db.scalar(select(func.count(Studio.id))) or 0,
+        "coaches": db.scalar(select(func.count(Coach.id)).where(Coach.active == True)) or 0,
+        "class_formats": db.scalar(select(func.count(func.distinct(ClassSession.title)))) or 0,
+        "sessions": db.scalar(select(func.count(ClassSession.id))) or 0,
+        "bookings": int(db.scalar(select(func.coalesce(func.sum(ClassSession.source_bookings_total), 0))) or 0),
+        "available_from": earliest.isoformat() if earliest else None,
+        "available_to": latest.isoformat() if latest else None,
+        "source": "Mindbody export",
+    }
+
+
+@app.get("/api/public/coaches")
+def public_coaches(db: Session = Depends(db_session)):
+    session_counts = dict(db.execute(
+        select(ClassSession.coach_id, func.count(ClassSession.id))
+        .where(ClassSession.coach_id.is_not(None))
+        .group_by(ClassSession.coach_id)
+    ).all())
+    booking_counts = dict(db.execute(
+        select(ClassSession.coach_id, func.coalesce(func.sum(ClassSession.source_bookings_total), 0))
+        .where(ClassSession.coach_id.is_not(None))
+        .group_by(ClassSession.coach_id)
+    ).all())
+    coach_studios: dict[int, set[str]] = {}
+    for coach_id, studio_name in db.execute(
+        select(ClassSession.coach_id, Studio.name)
+        .join(Studio, Studio.id == ClassSession.studio_id)
+        .where(ClassSession.coach_id.is_not(None))
+        .distinct()
+    ).all():
+        coach_studios.setdefault(coach_id, set()).add(studio_name)
+    coaches = db.scalars(select(Coach).where(Coach.active == True).order_by(Coach.display_name)).all()
+    return {"coaches": [{
+        "id": coach.id,
+        "display_name": coach.display_name,
+        "photo_url": coach.photo_url,
+        "bio": coach.bio,
+        "sessions": int(session_counts.get(coach.id, 0)),
+        "bookings": int(booking_counts.get(coach.id, 0)),
+        "studios": sorted(coach_studios.get(coach.id, set())),
+    } for coach in coaches]}
+
+
+@app.get("/api/public/classes")
+def public_class_catalog(db: Session = Depends(db_session)):
+    rows = db.execute(
+        select(
+            ClassSession.title,
+            ClassSession.class_type,
+            Studio.id,
+            Studio.name,
+            func.count(ClassSession.id),
+            func.coalesce(func.sum(ClassSession.source_bookings_total), 0),
+            func.count(func.distinct(ClassSession.coach_id)),
+        )
+        .join(Studio, Studio.id == ClassSession.studio_id)
+        .group_by(ClassSession.title, ClassSession.class_type, Studio.id, Studio.name)
+        .order_by(ClassSession.title)
+    ).all()
+    return {"classes": [{
+        "name": title, "type": class_type, "studio": studio_id, "studio_name": studio_name,
+        "sessions": int(sessions), "bookings": int(bookings), "coaches": int(coaches),
+    } for title, class_type, studio_id, studio_name, sessions, bookings, coaches in rows]}
+
+
+def berlin_day(value: str, *, end: bool = False) -> datetime:
+    parsed = date.fromisoformat(value)
+    if end:
+        parsed += timedelta(days=1)
+    return datetime.combine(parsed, time.min, tzinfo=ZoneInfo("Europe/Berlin"))
+
+
 @app.get("/api/schedule")
-def public_schedule(from_: Optional[str] = None, to: Optional[str] = None, db: Session = Depends(db_session)):
-    # FastAPI query alias kept simple: booking frontend can omit range if needed.
-    now=datetime.now(timezone.utc)-timedelta(days=1)
-    q=select(ClassSession).where(ClassSession.starts_at>=now,ClassSession.status=="active").order_by(ClassSession.starts_at).limit(500)
+def public_schedule(
+    from_: Optional[str] = Query(default=None, alias="from"),
+    to: Optional[str] = Query(default=None),
+    db: Session = Depends(db_session),
+):
+    try:
+        start = berlin_day(from_) if from_ else datetime.now(ZoneInfo("Europe/Berlin")).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = berlin_day(to, end=True) if to else start + timedelta(days=14)
+    except ValueError:
+        raise HTTPException(422, "invalid_date_range")
+    if end <= start or end - start > timedelta(days=45):
+        raise HTTPException(422, "invalid_date_range")
+    q=select(ClassSession).where(
+        ClassSession.starts_at >= start,
+        ClassSession.starts_at < end,
+        ClassSession.status == "active",
+    ).order_by(ClassSession.starts_at).limit(1200)
     rows=db.scalars(q).all()
-    return {"classes":[class_dict(c,db) for c in rows]}
+    return {"classes":[class_dict(c,db) for c in rows], "from": from_, "to": to}
 
 FALLBACK_COACHES = {"Anna", "Andrea", "Christina", "Gabriella", "Ida", "Jessi", "Kimberley", "Melina", "Nathalie", "Sani", "Zora", "Laetitia"}
 FALLBACK_CLASS_TYPES = {"Reformer", "Powerformer", "Mat", "Barre"}
@@ -919,11 +1048,13 @@ def resolve_public_class(data: PublicBookingIn, user: Optional[User], db: Sessio
 def public_booking(data: PublicBookingIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=resolve_public_class(data,user,db)
     if not c or c.status!="active": raise HTTPException(409,"class_unavailable")
-    reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
+    live_reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
+    reserved=int(c.imported_bookings or 0)+int(live_reserved)
     if reserved>=c.capacity: raise HTTPException(409,"class_full")
     duplicate=db.scalar(select(Booking).where(Booking.class_id==c.id,Booking.email==data.email.lower(),Booking.status=="reserved"))
     if duplicate: raise HTTPException(409,"duplicate_booking")
     if data.spot:
+        if data.spot <= int(c.imported_bookings or 0): raise HTTPException(409,"spot_taken")
         spot_taken=db.scalar(select(Booking).where(Booking.class_id==c.id,Booking.spot_number==data.spot,Booking.status=="reserved"))
         if spot_taken: raise HTTPException(409,"spot_taken")
     ref="CP-"+secrets.token_hex(4).upper()
@@ -952,7 +1083,8 @@ def public_cancel(payload: dict, db: Session = Depends(db_session)):
 def join_waitlist(data: WaitlistIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=db.get(ClassSession,data.classId)
     if not c: raise HTTPException(404,"not_found")
-    reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
+    live_reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
+    reserved=int(c.imported_bookings or 0)+int(live_reserved)
     if reserved<c.capacity: raise HTTPException(409,"spots_available")
     existing=db.scalar(select(Waitlist).where(Waitlist.class_id==c.id,Waitlist.email==data.email.lower()))
     if existing: raise HTTPException(409,"already_waitlisted")
