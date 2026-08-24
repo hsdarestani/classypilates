@@ -302,9 +302,12 @@ def bootstrap(data: BootstrapIn, db: Session = Depends(db_session)):
 
 @app.post("/api/auth/login")
 def login(data: LoginIn, db: Session = Depends(db_session)):
-    user = db.scalar(select(User).where(User.email == data.email.lower()))
+    email = data.email.strip().lower()
+    user = db.scalar(select(User).where(func.lower(User.email) == email))
     if not user or not pwd.verify(data.password, user.password_hash):
         raise HTTPException(401, "invalid_credentials")
+    if not user.is_active:
+        raise HTTPException(403, "inactive_user")
     return {"token": make_token(user), "user": user_dict(user)}
 
 @app.get("/api/auth/me")
