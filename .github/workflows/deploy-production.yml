@@ -80,8 +80,14 @@ jobs:
 
           docker compose up -d --build --remove-orphans
 
-          # The host is intentionally small. Run the importer as the only API
-          # process so loading SQLAlchemy/OpenPyXL twice cannot trigger the OOM killer.
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8787/api/health
+
+          # The host is intentionally small. Initialize the schema first, then
+          # run the lightweight importer while the API process is stopped.
           docker compose stop api
           docker compose run --rm --no-deps api python import_mindbody_schedule.py \
             --source /app/data/mindbody_schedule_2026-04-01_to_2026-08-24.json.gz
@@ -92,6 +98,7 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:8787/api/health
+
           EMAIL_ONLY_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com')
           test "$EMAIL_ONLY_CODE" = "422"
           UNKNOWN_LOOKUP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com&reference=CP-00000000')
