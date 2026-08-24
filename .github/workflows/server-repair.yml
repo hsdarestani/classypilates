@@ -1,0 +1,37 @@
+name: Repair Classy Production Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Repair reverse proxy and verify
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@$HOST 'bash -s' <<'REMOTE'
+          set -e
+
+          if command -v nginx >/dev/null 2>&1; then
+            mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+            ln -sf /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs || true
+            nginx -t && systemctl reload nginx || true
+          fi
+
+          docker compose -f /opt/classypilates/docker-compose.yml up -d --build --remove-orphans || true
+
+          echo '--- containers ---'
+          docker ps
+          echo '--- api ---'
+          curl -fsS http://127.0.0.1:8787/api/health
+          echo '--- public ---'
+          curl -I --max-time 20 http://classy.smarbiz.sbs || true
+          curl -I --max-time 20 https://classy.smarbiz.sbs || true
+          REMOTE
