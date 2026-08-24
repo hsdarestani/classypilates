@@ -1,0 +1,152 @@
+name: Deploy Classy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: classy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deploy tools
+        run: sudo apt-get update && sudo apt-get install -y sshpass rsync
+
+      - name: Upload release
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" 'mkdir -p /opt/classypilates'
+          sshpass -e rsync -az --delete \
+            --exclude='.git' --exclude='.env' --exclude='__pycache__' \
+            -e 'ssh -o StrictHostKeyChecking=no' ./ root@"$HOST":/opt/classypilates/
+
+      - name: Build and start production
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+
+          if ! command -v docker >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update
+              apt-get install -y ca-certificates curl
+              curl -fsSL https://get.docker.com | sh
+            else
+              echo "Docker is required but no supported package manager was found."
+              exit 1
+            fi
+          fi
+
+          if ! docker compose version >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y docker-compose-plugin
+            else
+              echo "Docker Compose plugin is required."
+              exit 1
+            fi
+          fi
+
+          if [ ! -f .env ]; then
+            POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+            JWT_SECRET="$(openssl rand -hex 32)"
+            cat > .env <<EOF
+          POSTGRES_DB=classy
+          POSTGRES_USER=classy
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          JWT_SECRET=${JWT_SECRET}
+          JWT_TTL_HOURS=24
+          EOF
+            chmod 600 .env
+          fi
+
+          docker compose up -d --build --remove-orphans
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8787/api/health
+
+          configure_nginx() {
+            cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name classy.smarbiz.sbs;
+              root /opt/classypilates/public;
+              index index.html;
+
+              location /api/ {
+                  proxy_pass http://127.0.0.1:8787;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  client_max_body_size 12m;
+              }
+
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+          NGINX
+            ln -sfn /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs
+            nginx -t
+            systemctl reload nginx || nginx -s reload
+          }
+
+          if command -v nginx >/dev/null 2>&1; then
+            configure_nginx
+          elif command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
+            if ! grep -q 'classy.smarbiz.sbs' /etc/caddy/Caddyfile; then
+              cat >> /etc/caddy/Caddyfile <<'CADDY'
+
+          classy.smarbiz.sbs {
+              encode zstd gzip
+              root * /opt/classypilates/public
+              handle /api/* {
+                  reverse_proxy 127.0.0.1:8787
+              }
+              try_files {path} /index.html
+              file_server
+          }
+          CADDY
+            fi
+            caddy validate --config /etc/caddy/Caddyfile
+            systemctl reload caddy
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update && apt-get install -y nginx
+            configure_nginx
+          else
+            echo "API is running on 127.0.0.1:8787 but no supported reverse proxy was found."
+            exit 1
+          fi
+
+          if command -v certbot >/dev/null 2>&1 && command -v nginx >/dev/null 2>&1; then
+            certbot --nginx -d classy.smarbiz.sbs --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+          fi
+
+          docker compose ps
+          REMOTE
+
+      - name: Verify public endpoint
+        continue-on-error: true
+        run: |
+          sleep 5
+          curl -I --max-time 20 https://classy.smarbiz.sbs/ || curl -I --max-time 20 http://classy.smarbiz.sbs/
+          curl -fsS --max-time 20 https://classy.smarbiz.sbs/api/health || curl -fsS --max-time 20 http://classy.smarbiz.sbs/api/health
