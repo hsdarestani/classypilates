@@ -14,7 +14,7 @@ const PAYMENT_METHODS=[
   {id:'link',name:'Link',hint:'Stripe Link – faster checkout',badge:'Link'}
 ];
 const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s)];
-const money=cents=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'EUR'}).format(cents/100);
+const money=cents=>new Intl.NumberFormat(document.documentElement.lang==='de'?'de-DE':'en-GB',{style:'currency',currency:'EUR'}).format(cents/100);
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 const state={cart:read('cpCart',[]),step:1,customer:read('cpCustomer',{}),payment:'card'};

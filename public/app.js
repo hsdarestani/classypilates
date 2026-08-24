@@ -49,7 +49,7 @@ function dateAt(index){const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDa
 function isoDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function seedFor(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return Math.abs(h)}
 function studioById(id){return studios.find(s=>s.id===id)}
-function formatFullDate(d){return new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'2-digit',month:'long'}).format(d)}
+function formatFullDate(d){return new Intl.DateTimeFormat(document.documentElement.lang==='de'?'de-DE':'en-GB',{weekday:'long',day:'2-digit',month:'long'}).format(d)}
 function bookingRef(){return 'CP-'+cryptoSafeToken(6)}
 function cryptoSafeToken(len){
   const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

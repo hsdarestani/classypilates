@@ -1,0 +1,10 @@
+.classy-language-toggle{display:inline-flex;align-items:center;gap:2px;padding:3px;border:1px solid rgba(22,22,19,.18);border-radius:999px;background:rgba(255,255,255,.9);box-shadow:0 6px 20px rgba(20,18,14,.06);backdrop-filter:blur(10px);font-family:Manrope,Arial,sans-serif;white-space:nowrap}
+.classy-language-toggle button{width:34px;height:28px;padding:0!important;margin:0!important;border:0!important;border-radius:999px!important;background:transparent!important;color:#6f6a62!important;font:700 9px/1 Manrope,Arial,sans-serif!important;letter-spacing:.08em!important;cursor:pointer!important;box-shadow:none!important;text-transform:uppercase!important}
+.classy-language-toggle button.active{background:#171713!important;color:#fff!important}
+.sidebar .classy-language-toggle{margin:10px 7px 14px;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);box-shadow:none}
+.sidebar .classy-language-toggle button{color:rgba(255,255,255,.62)!important}
+.sidebar .classy-language-toggle button.active{background:#f1e8da!important;color:#171713!important}
+.auth-card>.classy-language-toggle,.login-panel>.classy-language-toggle{position:absolute;top:26px;left:28px}
+.account-top .classy-language-toggle{margin-left:auto}
+.classy-language-floating{position:fixed;top:18px;right:18px;z-index:9999}
+@media(max-width:780px){.classy-language-toggle button{width:31px;height:27px}.header-actions .classy-language-toggle{order:-1}.legal-header .classy-language-toggle{margin-left:auto}.auth-card>.classy-language-toggle,.login-panel>.classy-language-toggle{top:18px;left:18px}}

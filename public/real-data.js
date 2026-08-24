@@ -1,8 +1,9 @@
 (()=>{
   const $=s=>document.querySelector(s);
   const esc=value=>String(value??'').replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
-  const count=value=>new Intl.NumberFormat('en-GB').format(Number(value)||0);
-  const day=value=>value?new Intl.DateTimeFormat('en-GB',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'Europe/Berlin'}).format(new Date(value)):'—';
+  const locale=()=>document.documentElement.lang==='de'?'de-DE':'en-GB';
+  const count=value=>new Intl.NumberFormat(locale()).format(Number(value)||0);
+  const day=value=>value?new Intl.DateTimeFormat(locale(),{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'Europe/Berlin'}).format(new Date(value)):'—';
   const initials=name=>String(name||'CP').split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase();
   const api=async path=>{const response=await fetch(path,{headers:{accept:'application/json'},cache:'no-store'});if(!response.ok)throw new Error(path);return response.json()};
 
