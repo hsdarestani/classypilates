@@ -38,7 +38,7 @@
   function observeDynamicUi(){const list=$('#classList'),grid=$('#studioGrid');if(list){coachAvatars();new MutationObserver(()=>coachAvatars()).observe(list,{childList:true,subtree:true})}if(grid){studioActions();new MutationObserver(()=>studioActions()).observe(grid,{childList:true,subtree:true})}}
 
   function studioName(r){return studioById(r.studio)?.name||r.studio}
-  function classSummary(r){return `<div class="wizard-class-card"><img src="${photoFor(r.coach)}" alt="Coach ${safe(r.coach)}"><div><span>${safe(r.type)} · ${r.duration} MIN</span><h4>${safe(r.name)}</h4><p>${safe(formatFullDate(r.dateObj))} · ${r.time}<br>${safe(studioName(r))}</p></div><div class="coach-chip"><small>COACH</small><b>${safe(r.coach)}</b><em>Selected</em></div></div>`}
+  function classSummary(r){return `<div class="wizard-class-card"><img src="${photoFor(r.coach)}" alt="Coach ${safe(r.coach)}"><div><span>${safe(r.type)} · ${r.duration} MIN</span><h4>${safe(r.name)}</h4>${r.description?`<p>${safe(r.description)}</p>`:''}<p>${safe(formatFullDate(r.dateObj))} · ${r.time}<br>${safe(studioName(r))}</p></div><div class="coach-chip"><small>COACH</small><b>${safe(r.coach)}</b><em>Selected</em></div></div>`}
   function setProgress(step){const labels=['Class','Spot','Details','Payment','Done'];const progress=labels.map((x,i)=>`<span class="${i+1<=step?'done':''} ${i+1===step?'active':''}"><i>${i+1<step?'✓':i+1}</i><b>${x}</b></span>`).join('');return `<div class="booking-progress-v2">${progress}</div>`}
   function setDrawer(title,html,step){$('#drawerTitle').textContent=title;$('#drawerBody').innerHTML=setProgress(step)+html;$('#bookingDrawer')?.classList.add('booking-v2');openDrawer()}
 

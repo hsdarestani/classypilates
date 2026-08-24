@@ -1,0 +1,31 @@
+.voucher-redeem label {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 12px;
+  color: #847b6e;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .13em;
+}
+
+.voucher-redeem input,
+.profile-grid input,
+.security-box input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 54px;
+  padding: 0 15px;
+  border: 1px solid #ddd6ca;
+  border-radius: 8px;
+  background: #fff;
+  color: #181714;
+  font: 500 12px/1.4 Manrope, Arial, sans-serif;
+  outline: none;
+}
+
+.voucher-redeem input:focus,
+.profile-grid input:focus,
+.security-box input:focus {
+  border-color: #9a7a52;
+  box-shadow: 0 0 0 3px rgba(154, 122, 82, .1);
+}

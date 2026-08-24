@@ -103,6 +103,7 @@ class ClassSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     studio_id: Mapped[str] = mapped_column(ForeignKey("studios.id"), index=True)
     title: Mapped[str] = mapped_column(String(180))
+    description: Mapped[str] = mapped_column(Text, default="")
     class_type: Mapped[str] = mapped_column(String(80), default="Reformer")
     coach_id: Mapped[Optional[int]] = mapped_column(ForeignKey("coaches.id", ondelete="SET NULL"), nullable=True)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
@@ -166,6 +167,21 @@ class ScheduleUpload(Base):
     imported_rows: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class ClassPassSale(Base):
+    __tablename__ = "class_pass_sales"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mode: Mapped[str] = mapped_column(String(20))
+    credits: Mapped[int] = mapped_column(Integer, default=10)
+    amount_cents: Mapped[int] = mapped_column(Integer, default=21900)
+    payment_method: Mapped[str] = mapped_column(String(30), default="cash")
+    code: Mapped[Optional[str]] = mapped_column(String(40), unique=True, index=True, nullable=True)
+    customer_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    redeemed_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    redeemed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
 Base.metadata.create_all(engine)
 
 
@@ -178,6 +194,9 @@ def migrate_schema():
     if "source_bookings_total" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE classes ADD COLUMN source_bookings_total INTEGER NOT NULL DEFAULT 0"))
+    if "description" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE classes ADD COLUMN description TEXT NOT NULL DEFAULT ''"))
 
 
 migrate_schema()
@@ -359,7 +378,7 @@ def class_dict(c: ClassSession, db: Session):
         starts_at = starts_at.replace(tzinfo=ZoneInfo("Europe/Berlin"))
     return {
         "id": c.id, "studio": c.studio_id, "studio_name": c.studio.name if c.studio else c.studio_id,
-        "name": c.title, "type": c.class_type, "coach": c.coach.display_name if c.coach else "Classy Coach",
+        "name": c.title, "description": c.description or "", "type": c.class_type, "coach": c.coach.display_name if c.coach else "Classy Coach",
         "coach_id": c.coach_id, "starts_at": starts_at.isoformat(), "duration": c.duration,
         "capacity": c.capacity, "reserved": reserved, "imported_reserved": imported_reserved,
         "source_bookings_total": int(c.source_bookings_total or 0),
@@ -452,11 +471,21 @@ class CustomerAdminUpdate(BaseModel):
 class ClassIn(BaseModel):
     studio_id: str
     title: str
+    description: str = ""
     class_type: str = "Reformer"
     coach_id: Optional[int] = None
     starts_at: datetime
     duration: int = 50
     capacity: int = 10
+    repeat_weeks: int = 1
+
+class ClassPassSaleIn(BaseModel):
+    mode: str
+    customer_id: Optional[int] = None
+    payment_method: str = "cash"
+
+class VoucherRedeemIn(BaseModel):
+    code: str
 
 class BookingUpdate(BaseModel):
     status: Optional[str] = None
@@ -663,7 +692,13 @@ def customer_cancel_booking(reference: str, user: User = Depends(customer_only),
         raise HTTPException(409, "booking_not_active")
     if datetime.now(timezone.utc) >= as_utc(booking.klass.starts_at) - timedelta(hours=12):
         raise HTTPException(409, "cancellation_window_closed")
-    booking.status = "cancelled"; db.commit()
+    booking.status = "cancelled"
+    if booking.payment_method == "class_credit":
+        profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == user.id).with_for_update())
+        if profile:
+            profile.credits += 1
+        booking.payment_method = "class_credit_refunded"
+    db.commit()
     return {"ok": True}
 
 @app.get("/api/customer/waitlist")
@@ -729,6 +764,25 @@ def customer_change_password(data: PasswordChangeIn, user: User = Depends(custom
     user.password_hash = pwd.hash(data.new_password); db.commit()
     return {"ok": True}
 
+@app.post("/api/customer/vouchers/redeem")
+def redeem_class_pass(data: VoucherRedeemIn, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    code = data.code.strip().upper().replace(" ", "")
+    sale = db.scalar(select(ClassPassSale).where(ClassPassSale.code == code).with_for_update())
+    if not sale:
+        raise HTTPException(404, "voucher_not_found")
+    if sale.status != "active" or sale.redeemed_by_user_id:
+        raise HTTPException(409, "voucher_already_redeemed")
+    profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == user.id).with_for_update())
+    if not profile:
+        profile = CustomerProfile(user_id=user.id)
+        db.add(profile); db.flush()
+    profile.credits += sale.credits
+    sale.status = "redeemed"
+    sale.redeemed_by_user_id = user.id
+    sale.redeemed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "credits_added": sale.credits, "credits": profile.credits}
+
 @app.get("/api/staff/dashboard")
 def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Depends(db_session)):
     now = datetime.now(timezone.utc)
@@ -742,20 +796,30 @@ def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Dep
     booking_count = int(live_booking_count) + int(imported_booking_count)
     coach_count = db.scalar(select(func.count(Coach.id)).where(Coach.active == True)) or 0
     paid_cents = db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0
+    pass_cents = db.scalar(select(func.coalesce(func.sum(ClassPassSale.amount_cents), 0))) or 0
     today_bookings = db.scalar(select(func.count(Booking.id)).where(Booking.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0))) or 0
     return {
         "upcoming_classes": class_count, "active_bookings": booking_count,
         "imported_bookings": int(imported_booking_count), "live_bookings": int(live_booking_count),
-        "coaches": coach_count, "revenue_cents": int(paid_cents), "today_bookings": today_bookings,
+        "coaches": coach_count, "revenue_cents": int(paid_cents) + int(pass_cents), "today_bookings": today_bookings,
     }
 
 @app.get("/api/staff/finance")
 def finance(user: User = Depends(require("finance.view")), db: Session = Depends(db_session)):
-    total = int(db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0)
+    booking_total = int(db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0)
+    pass_total = int(db.scalar(select(func.coalesce(func.sum(ClassPassSale.amount_cents), 0))) or 0)
+    total = booking_total + pass_total
     pending = int(db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "pending")) or 0)
     paid_bookings = db.scalar(select(func.count(Booking.id)).where(Booking.payment_status == "paid")) or 0
-    recent = db.scalars(select(Booking).order_by(Booking.created_at.desc()).limit(30)).all()
-    return {"revenue_cents": total, "pending_cents": pending, "paid_bookings": paid_bookings, "rows": [{"reference": b.reference, "email": b.email, "amount_cents": b.amount_cents, "payment_status": b.payment_status, "payment_method": b.payment_method, "created_at": b.created_at.isoformat()} for b in recent]}
+    paid_passes = db.scalar(select(func.count(ClassPassSale.id))) or 0
+    recent_bookings = db.scalars(select(Booking).order_by(Booking.created_at.desc()).limit(30)).all()
+    recent_passes = db.scalars(select(ClassPassSale).order_by(ClassPassSale.created_at.desc()).limit(30)).all()
+    rows = [{"reference": b.reference, "email": b.email, "amount_cents": b.amount_cents, "payment_status": b.payment_status, "payment_method": b.payment_method, "created_at": b.created_at.isoformat()} for b in recent_bookings]
+    for sale in recent_passes:
+        customer = db.get(User, sale.customer_user_id) if sale.customer_user_id else None
+        rows.append({"reference": sale.code or f"PASS-{sale.id:06d}", "email": customer.email if customer else "Gift sale", "amount_cents": sale.amount_cents, "payment_status": "paid", "payment_method": f"on-site {sale.payment_method}", "created_at": sale.created_at.isoformat()})
+    rows.sort(key=lambda row: row["created_at"], reverse=True)
+    return {"revenue_cents": total, "pending_cents": pending, "paid_bookings": int(paid_bookings) + int(paid_passes), "rows": rows[:30]}
 
 @app.get("/api/staff/roles")
 def list_roles(user: User = Depends(current_user), db: Session = Depends(db_session)):
@@ -836,6 +900,44 @@ def update_customer(customer_id: int, data: CustomerAdminUpdate, user: User = De
         customer.is_active = data.is_active
     db.commit()
     return {"ok": True}
+
+@app.get("/api/staff/class-passes")
+def list_class_pass_sales(user: User = Depends(require("customers.view")), db: Session = Depends(db_session)):
+    rows = db.scalars(select(ClassPassSale).order_by(ClassPassSale.created_at.desc()).limit(100)).all()
+    return {"sales": [{
+        "id": row.id, "mode": row.mode, "credits": row.credits, "code": row.code,
+        "amount_cents": row.amount_cents, "payment_method": row.payment_method,
+        "customer_id": row.customer_user_id, "status": row.status,
+        "created_at": row.created_at.isoformat(), "redeemed_at": row.redeemed_at.isoformat() if row.redeemed_at else None,
+    } for row in rows]}
+
+@app.post("/api/staff/class-passes/sell")
+def sell_class_pass(data: ClassPassSaleIn, user: User = Depends(require("customers.manage")), db: Session = Depends(db_session)):
+    mode = data.mode.strip().lower()
+    if mode not in {"account", "gift"}:
+        raise HTTPException(400, "invalid_pass_mode")
+    payment_method = data.payment_method.strip().lower()
+    if payment_method not in {"cash", "card", "bank_transfer", "other"}:
+        raise HTTPException(400, "invalid_payment_method")
+    now = datetime.now(timezone.utc)
+    if mode == "account":
+        customer = db.get(User, data.customer_id) if data.customer_id else None
+        if not customer or not any(role.name == "Customer" for role in customer.roles):
+            raise HTTPException(404, "customer_not_found")
+        profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == customer.id).with_for_update())
+        if not profile:
+            profile = CustomerProfile(user_id=customer.id)
+            db.add(profile); db.flush()
+        profile.credits += 10
+        sale = ClassPassSale(mode="account", credits=10, amount_cents=21900, payment_method=payment_method, customer_user_id=customer.id, redeemed_by_user_id=customer.id, created_by=user.id, status="assigned", redeemed_at=now)
+        db.add(sale); db.commit(); db.refresh(sale)
+        return {"sale":{"id":sale.id,"mode":sale.mode,"credits":10,"customer_id":customer.id,"balance":profile.credits,"status":sale.status}}
+    code = "CLASSY-" + secrets.token_hex(3).upper() + "-" + secrets.token_hex(3).upper()
+    while db.scalar(select(ClassPassSale.id).where(ClassPassSale.code == code)):
+        code = "CLASSY-" + secrets.token_hex(3).upper() + "-" + secrets.token_hex(3).upper()
+    sale = ClassPassSale(mode="gift", credits=10, amount_cents=21900, payment_method=payment_method, code=code, created_by=user.id, status="active")
+    db.add(sale); db.commit(); db.refresh(sale)
+    return {"sale":{"id":sale.id,"mode":sale.mode,"credits":10,"code":sale.code,"status":sale.status}}
 
 @app.post("/api/staff/users")
 def create_staff(data: StaffIn, user: User = Depends(require("users.manage")), db: Session = Depends(db_session)):
@@ -999,9 +1101,23 @@ def create_class(data: ClassIn, user: User = Depends(require("classes.create")),
         coach_id = user.coach.id
     studio = db.get(Studio, data.studio_id)
     if not studio: raise HTTPException(400, "invalid_studio")
-    c = ClassSession(studio_id=data.studio_id, title=data.title, class_type=data.class_type, coach_id=coach_id, starts_at=data.starts_at, duration=max(15, data.duration), capacity=max(1, data.capacity), created_by=user.id)
-    db.add(c); db.commit(); db.refresh(c)
-    return class_dict(c, db)
+    title = data.title.strip()
+    if not 2 <= len(title) <= 180:
+        raise HTTPException(400, "invalid_class_title")
+    description = data.description.strip()[:2000]
+    repeat_weeks = min(52, max(1, data.repeat_weeks))
+    created = []
+    for week in range(repeat_weeks):
+        starts_at = data.starts_at + timedelta(weeks=week)
+        duplicate = db.scalar(select(ClassSession.id).where(ClassSession.studio_id == data.studio_id, ClassSession.title == title, ClassSession.starts_at == starts_at, ClassSession.status == "active"))
+        if duplicate:
+            continue
+        c = ClassSession(studio_id=data.studio_id, title=title, description=description, class_type=data.class_type, coach_id=coach_id, starts_at=starts_at, duration=min(180, max(15, data.duration)), capacity=min(100, max(1, data.capacity)), created_by=user.id)
+        db.add(c); db.flush(); created.append(c)
+    if not created:
+        raise HTTPException(409, "all_recurring_classes_exist")
+    db.commit()
+    return {"class": class_dict(created[0], db), "created_count": len(created), "requested_count": repeat_weeks}
 
 @app.patch("/api/staff/classes/{class_id}")
 def edit_class(class_id: int, data: ClassIn, user: User = Depends(current_user), db: Session = Depends(db_session)):
@@ -1009,7 +1125,10 @@ def edit_class(class_id: int, data: ClassIn, user: User = Depends(current_user),
     if not c: raise HTTPException(404, "not_found")
     if not can(user, "classes.edit"):
         if not (can(user, "classes.edit_own") and user.coach and c.coach_id == user.coach.id): raise HTTPException(403, "permission_denied")
-    c.studio_id=data.studio_id; c.title=data.title; c.class_type=data.class_type; c.starts_at=data.starts_at; c.duration=data.duration; c.capacity=data.capacity
+    title = data.title.strip()
+    if not 2 <= len(title) <= 180:
+        raise HTTPException(400, "invalid_class_title")
+    c.studio_id=data.studio_id; c.title=title; c.description=data.description.strip()[:2000]; c.class_type=data.class_type; c.starts_at=data.starts_at; c.duration=min(180, max(15, data.duration)); c.capacity=min(100, max(1, data.capacity))
     if can(user, "classes.edit"): c.coach_id=data.coach_id
     db.commit(); return class_dict(c, db)
 
@@ -1272,11 +1391,18 @@ def public_booking(data: PublicBookingIn, user: Optional[User] = Depends(optiona
         spot_taken=db.scalar(select(Booking).where(Booking.class_id==c.id,Booking.spot_number==data.spot,Booking.status=="reserved"))
         if spot_taken: raise HTTPException(409,"spot_taken")
     ref="CP-"+secrets.token_hex(4).upper()
-    b=Booking(reference=ref,class_id=c.id,customer_name=(data.firstName+" "+data.lastName).strip(),email=data.email.lower(),phone=data.phone,spot_number=data.spot,payment_method=data.paymentMethod,payment_status="pending",amount_cents=2800 if data.paymentMethod else 0)
+    use_credit = False
+    profile = None
+    if user and portal_for(user) == "/account" and user.email.lower() == data.email.lower():
+        profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == user.id).with_for_update())
+        if profile and profile.credits > 0:
+            profile.credits -= 1
+            use_credit = True
+    b=Booking(reference=ref,class_id=c.id,customer_name=(data.firstName+" "+data.lastName).strip(),email=data.email.lower(),phone=data.phone,spot_number=data.spot,payment_method="class_credit" if use_credit else data.paymentMethod,payment_status="paid" if use_credit else "pending",amount_cents=0 if use_credit else (2800 if data.paymentMethod else 0))
     db.add(b); db.flush()
     if user and portal_for(user) == "/account" and user.email.lower() == data.email.lower():
         db.add(CustomerBookingLink(booking_id=b.id, user_id=user.id))
-    db.commit();return {"booking":{"reference":ref},"payment_status":b.payment_status}
+    db.commit();return {"booking":{"reference":ref},"payment_status":b.payment_status,"credit_used":use_credit,"credits_remaining":profile.credits if profile else None}
 
 @app.get("/api/bookings")
 def public_bookings(email: str, reference: str, db: Session = Depends(db_session)):
@@ -1291,7 +1417,15 @@ def public_cancel(payload: dict, db: Session = Depends(db_session)):
     ref=str(payload.get("reference", "")); email=str(payload.get("email", "")).lower()
     b=db.scalar(select(Booking).where(Booking.reference==ref,Booking.email==email))
     if not b: raise HTTPException(404,"not_found")
-    b.status="cancelled";db.commit();return {"ok":True}
+    if b.status != "reserved": raise HTTPException(409,"booking_not_active")
+    b.status="cancelled"
+    if b.payment_method == "class_credit":
+        link = db.get(CustomerBookingLink, b.id)
+        profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == link.user_id).with_for_update()) if link else None
+        if profile:
+            profile.credits += 1
+        b.payment_method = "class_credit_refunded"
+    db.commit();return {"ok":True}
 
 @app.post("/api/waitlist")
 def join_waitlist(data: WaitlistIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):

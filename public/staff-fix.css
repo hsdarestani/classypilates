@@ -33,7 +33,9 @@
 .panel-head h2 { font-size: 25px; }
 .panel-head p { line-height: 1.55; }
 .primary,.secondary,.danger,.btn { border-radius: 9px; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; }
-.form-grid input,.form-grid select,.auth-card input,.modal input,.modal select,.modal textarea,.coach-profile-form input,.coach-profile-form textarea { border-radius: 9px; border-color: #dfd9cf; }
+.form-grid input,.form-grid select,.form-grid textarea,.auth-card input,.modal input,.modal select,.modal textarea,.coach-profile-form input,.coach-profile-form textarea { width: 100%; min-height: 54px; padding: 0 15px; border: 1px solid #dfd9cf; border-radius: 9px; background: #fff; font-size: 12px; line-height: 1.55; outline: none; }
+.form-grid textarea,.modal textarea { min-height: 112px; padding: 14px 15px; resize: vertical; }
+.form-grid label small { color: #958d82; font-size: 8px; font-weight: 500; letter-spacing: 0; line-height: 1.4; }
 .table { border: 1px solid #ece8e1; border-radius: 12px; }
 .trow { padding: 14px 12px; }
 .trow.head { background: #f7f5f1; }
@@ -115,6 +117,19 @@
 .main,#view,.panel,.table,.trow > * { min-width: 0; }
 .trow > * { overflow-wrap: anywhere; }
 .user-row > * { min-width: 0; overflow-wrap: anywhere; }
+.pass-sale-grid { display: grid; grid-template-columns: 1fr 1fr 1.5fr 1fr auto; gap: 12px; align-items: end; }
+.pass-sale-grid label { display: grid; gap: 7px; color: #777067; font-size: 8px; font-weight: 700; letter-spacing: .11em; }
+.pass-sale-grid select { width: 100%; height: 54px; padding: 0 14px; border: 1px solid #dfd9cf; border-radius: 9px; background: #fff; font-size: 11px; }
+.pass-sale-grid .primary { height: 54px; margin: 0; white-space: nowrap; }
+.pass-summary { min-height: 54px; display: grid; align-content: center; padding: 9px 13px; border-radius: 9px; background: #f3eee6; }
+.pass-summary span,.voucher-result span { color: #99784e; font-size: 7px; font-weight: 800; letter-spacing: .13em; }
+.pass-summary b { margin: 3px 0; font-size: 12px; }.pass-summary small { color: #817a70; font-size: 8px; }
+.voucher-result { margin-top: 16px; padding: 20px; border: 1px solid #dbc9ad; border-radius: 12px; background: #fffaf1; }
+.voucher-result.success { border-color: #cfe0d3; background: #f2f8f3; }
+.voucher-result b { display: block; margin: 7px 0; font: 600 24px/1.1 Manrope,Arial,sans-serif; letter-spacing: .04em; }
+.voucher-result p { margin: 0 0 12px; color: #777067; font-size: 10px; }.voucher-result button { margin: 0; }
+.pass-history { margin-top: 22px; border-top: 1px solid #e5e0d7; padding-top: 16px; }.pass-history h3 { margin: 0 0 10px; font-size: 13px; }
+.pass-history>div { display: grid; grid-template-columns: 130px 1fr auto; gap: 12px; padding: 10px 0; border-top: 1px solid #eee9e1; font-size: 9px; }.pass-history small { color: #817a70; }
 
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
@@ -134,6 +149,7 @@
   .trow > .actions,.trow > div.actions { grid-column: 1/-1; }
   .trow .actions button { flex: 1; }
   .form-grid input,.form-grid select,.form-stack input,.form-stack textarea { width: 100%; min-width: 0; }
+  .pass-sale-grid { grid-template-columns: 1fr; }.pass-sale-grid .primary { width: 100%; }.pass-history>div { grid-template-columns: 1fr; gap: 4px; }
   .user-row { grid-template-columns: minmax(0,1fr) auto; }
   .user-row > button { grid-column: 1/-1; width: 100%; }
   .pro-hero { min-height: 0; padding: 25px 20px; align-items: flex-start; flex-direction: column; gap: 18px; }

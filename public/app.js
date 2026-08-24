@@ -121,7 +121,7 @@ function openDrawer(){
 function closeDrawer(){
   $('#drawerBackdrop')?.classList.remove('open');$('#bookingDrawer')?.classList.remove('open');$('#bookingDrawer')?.setAttribute('aria-hidden','true');document.body.style.overflow='';
 }
-function selectedSummary(r){const s=studioById(r.studio);return `<div class="selected-class"><div class="line"><span>Class</span><b>${esc(r.name)}</b></div><div class="line"><span>Wann</span><b>${esc(formatFullDate(r.dateObj))} · ${r.time}</b></div><div class="line"><span>Studio</span><b>${esc(s.name)}</b></div><div class="line"><span>Coach</span><b>${esc(r.coach)}</b></div></div>`}
+function selectedSummary(r){const s=studioById(r.studio);return `<div class="selected-class"><div class="line"><span>Class</span><b>${esc(r.name)}</b></div>${r.description?`<div class="line"><span>Description</span><b>${esc(r.description)}</b></div>`:''}<div class="line"><span>Wann</span><b>${esc(formatFullDate(r.dateObj))} · ${r.time}</b></div><div class="line"><span>Studio</span><b>${esc(s.name)}</b></div><div class="line"><span>Coach</span><b>${esc(r.coach)}</b></div></div>`}
 function openClass(r){
   state.selectedClass=r;const full=r.spots===0;$('#drawerTitle').textContent=full?'Join the waitlist':'Reserve your spot';
   if(full){
