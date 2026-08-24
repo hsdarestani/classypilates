@@ -112,8 +112,9 @@ jobs:
             -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
             http://127.0.0.1:8787/api/auth/login)
           test "$LOGIN_CODE" = "200"
-          curl -fsS -b /tmp/classy-smoke-cookies http://127.0.0.1:8787/api/auth/me >/dev/null
-          curl -fsS -b /tmp/classy-smoke-cookies http://127.0.0.1:8787/api/staff/dashboard >/dev/null
+          SMOKE_TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/classy-smoke-login.json"))["token"])')
+          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/auth/me >/dev/null
+          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/staff/dashboard >/dev/null
           cleanup_smoke
           trap - EXIT
 
