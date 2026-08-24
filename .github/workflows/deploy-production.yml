@@ -113,7 +113,7 @@ jobs:
             -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
             http://127.0.0.1:8787/api/auth/login)
           test "$LOGIN_CODE" = "200"
-          SMOKE_TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/classy-smoke-login.json"))["token"])')
+          SMOKE_TOKEN=$(docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["token"])' < /tmp/classy-smoke-login.json)
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/auth/me >/dev/null
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/staff/dashboard >/dev/null
           cleanup_smoke
