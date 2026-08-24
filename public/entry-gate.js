@@ -26,4 +26,14 @@
   if(!document.querySelector('script[data-studio-layouts]')){
     const script=document.createElement('script');script.src='./studio-layouts.js?v=20260824-2';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
   }
+
+  /* Production bridge: once the real API is available, selected spots and reservations are synced centrally. */
+  if(!document.querySelector('script[data-production-sync]')){
+    const sync=document.createElement('script');sync.src='./production-sync.js?v=20260824-1';sync.defer=true;sync.dataset.productionSync='1';document.body.appendChild(sync);
+  }
+
+  const footerLinks=document.querySelector('.footer-links');
+  if(footerLinks&&!footerLinks.querySelector('[data-team-login]')){
+    const team=document.createElement('a');team.href='./staff.html';team.textContent='Team Login';team.dataset.teamLogin='1';footerLinks.appendChild(team);
+  }
 })();
