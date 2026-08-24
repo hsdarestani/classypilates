@@ -436,6 +436,15 @@ class PasswordChangeIn(BaseModel):
     current_password: str
     new_password: str
 
+class CoachAccountIn(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: str = ""
+    last_name: str = ""
+
+class PasswordResetIn(BaseModel):
+    new_password: str
+
 class CustomerAdminUpdate(BaseModel):
     credits: Optional[int] = None
     is_active: Optional[bool] = None
@@ -851,10 +860,62 @@ def update_staff(user_id: int, data: StaffUpdate, user: User = Depends(require("
     if data.role_ids is not None: target.roles = list(db.scalars(select(Role).where(Role.id.in_(data.role_ids))).all())
     db.commit(); return user_dict(target)
 
+@app.post("/api/staff/change-password")
+def staff_change_password(data: PasswordChangeIn, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    if any(role.name == "Customer" for role in user.roles) and not user.coach:
+        raise HTTPException(403, "staff_account_required")
+    if not pwd.verify(data.current_password, user.password_hash):
+        raise HTTPException(400, "current_password_invalid")
+    if len(data.new_password) < 8:
+        raise HTTPException(400, "password_too_short")
+    user.password_hash = pwd.hash(data.new_password)
+    db.commit()
+    return {"ok": True}
+
 @app.get("/api/staff/coaches")
 def list_coaches(user: User = Depends(require("coaches.view")), db: Session = Depends(db_session)):
     coaches = db.scalars(select(Coach).order_by(Coach.display_name)).all()
     return {"coaches": [coach_dict(c) for c in coaches]}
+
+@app.post("/api/staff/coaches/{coach_id}/account")
+def create_coach_account(coach_id: int, data: CoachAccountIn, user: User = Depends(require("users.manage")), db: Session = Depends(db_session)):
+    coach = db.get(Coach, coach_id)
+    if not coach:
+        raise HTTPException(404, "coach_not_found")
+    if coach.user_id:
+        raise HTTPException(409, "coach_account_exists")
+    if len(data.password) < 8:
+        raise HTTPException(400, "password_too_short")
+    coach_role = db.scalar(select(Role).where(Role.name == "Coach"))
+    if not coach_role:
+        raise HTTPException(500, "coach_role_missing")
+    account = User(
+        email=data.email.lower(), password_hash=pwd.hash(data.password),
+        first_name=data.first_name.strip(), last_name=data.last_name.strip(),
+        roles=[coach_role],
+    )
+    db.add(account)
+    try:
+        db.flush()
+    except Exception:
+        db.rollback()
+        raise HTTPException(409, "email_exists")
+    coach.user_id = account.id
+    db.commit()
+    return coach_dict(coach)
+
+@app.post("/api/staff/coaches/{coach_id}/reset-password")
+def reset_coach_password(coach_id: int, data: PasswordResetIn, user: User = Depends(require("users.manage")), db: Session = Depends(db_session)):
+    coach = db.get(Coach, coach_id)
+    if not coach:
+        raise HTTPException(404, "coach_not_found")
+    if not coach.user:
+        raise HTTPException(404, "coach_account_not_found")
+    if len(data.new_password) < 8:
+        raise HTTPException(400, "password_too_short")
+    coach.user.password_hash = pwd.hash(data.new_password)
+    db.commit()
+    return {"ok": True}
 
 @app.get("/api/staff/profile")
 def coach_profile(user: User = Depends(current_user)):
