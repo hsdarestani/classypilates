@@ -266,7 +266,7 @@ jobs:
               VERIFY_RESOLVE=(-H "Host: classy.smarbiz.sbs")
             fi
             curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login" | grep -q 'ONE LOGIN'
-            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account" | grep -q 'MEIN BEREICH'
+            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account" | grep -q 'MY CLASSY'
             LOGIN_HTML_CODE=$(curl -ksS -o /dev/null -w '%{http_code}' "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login.html")
             ACCOUNT_HTML_CODE=$(curl -ksS -o /dev/null -w '%{http_code}' "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account.html")
             test "$LOGIN_HTML_CODE" = "301"
