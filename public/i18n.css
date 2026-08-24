@@ -6,8 +6,9 @@
 .sidebar .classy-language-toggle button.active{background:#f1e8da!important;color:#171713!important}
 .auth-card>.classy-language-toggle,.login-panel>.classy-language-toggle{position:absolute;top:26px;left:28px}
 .account-top .classy-language-toggle{margin-left:auto}
+.top-right .classy-language-toggle{flex:0 0 auto}
 .experience-shell>.classy-language-toggle{position:absolute;top:22px;right:22px;z-index:3;background:rgba(10,10,9,.7);border-color:rgba(255,255,255,.2);box-shadow:none}
 .experience-shell>.classy-language-toggle button{color:rgba(255,255,255,.65)!important}
 .experience-shell>.classy-language-toggle button.active{background:#f1e8da!important;color:#171713!important}
 .classy-language-floating{position:fixed;top:18px;right:18px;z-index:9999}
-@media(max-width:780px){.classy-language-toggle button{width:31px;height:27px}.header-actions .classy-language-toggle{order:-1}.legal-header .classy-language-toggle{margin-left:auto}.auth-card>.classy-language-toggle,.login-panel>.classy-language-toggle{top:18px;left:18px}.experience-shell>.classy-language-toggle{top:16px;right:16px}}
+@media(max-width:780px){.classy-language-toggle button{width:31px;height:27px}.header-actions .classy-language-toggle{order:-1}.legal-header .classy-language-toggle{margin-left:auto}.top-right{gap:7px}.top-right .classy-language-toggle{display:inline-flex}.auth-card>.classy-language-toggle,.login-panel>.classy-language-toggle{top:18px;left:18px}.experience-shell>.classy-language-toggle{top:16px;right:16px}}
