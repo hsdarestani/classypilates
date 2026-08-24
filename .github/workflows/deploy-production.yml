@@ -154,6 +154,19 @@ jobs:
               location = /staff.js { try_files /staff.js =404; add_header Cache-Control "no-cache, no-store, must-revalidate"; }
               location = /staff.css { try_files /staff.css =404; add_header Cache-Control "no-cache, no-store, must-revalidate"; }
 
+              location = /imprint { try_files /imprint.html =404; }
+              location = /data-privacy { try_files /data-privacy.html =404; }
+              location = /terms-conditions { try_files /terms-conditions.html =404; }
+              location = /studio-rules { try_files /studio-rules.html =404; }
+              location = /shop { try_files /shop.html =404; }
+              location = /classfit { try_files /classfit.html =404; }
+              location = /imprint.html { return 301 /imprint; }
+              location = /data-privacy.html { return 301 /data-privacy; }
+              location = /terms-conditions.html { return 301 /terms-conditions; }
+              location = /studio-rules.html { return 301 /studio-rules; }
+              location = /shop.html { return 301 /shop; }
+              location = /classfit.html { return 301 /classfit; }
+
               location / {
                   try_files $uri $uri/ /index.html;
               }

@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="./experience.css">
   <link rel="stylesheet" href="./booking-flow.css">
   <link rel="stylesheet" href="./entry-gate.css">
+  <link rel="stylesheet" href="/site-fix.css?v=20260824-1">
 </head>
 <body class="gate-open">
   <section class="experience-gate" id="experienceGate" aria-label="Choose your Classy experience">
@@ -25,7 +26,7 @@
         <p>Zwei Trainingswelten. Ein Qualitätsanspruch. Wähle, wie du heute trainieren möchtest.</p>
       </div>
       <div class="experience-options">
-        <a class="experience-card fit" href="./classfit.html" data-enter-fit>
+        <a class="experience-card fit" href="/classfit" data-enter-fit>
           <div class="experience-card-content">
             <div class="experience-card-meta"><span>Dynamic training</span><span class="experience-card-icon">↗</span></div>
             <h3>Class Fit</h3>
@@ -50,11 +51,11 @@
 
   <header class="header" id="header">
     <a class="logo" href="#top" aria-label="Classy Pilates Startseite"><span class="logo-cp">CP</span><span><b>CLASSY</b><small>PILATES</small></span></a>
-    <nav class="desktop-nav" aria-label="Hauptnavigation"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="./shop.html">Shop</a><a href="#about">Über uns</a></nav>
+    <nav class="desktop-nav" aria-label="Hauptnavigation"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="/shop">Shop</a><a href="#about">Über uns</a></nav>
     <div class="header-actions"><button class="link-btn desktop-only" id="openBookings" type="button">Meine Buchungen</button><a class="primary-btn compact" href="#schedule">Kurs buchen</a><button class="menu-btn" id="menuBtn" type="button" aria-label="Menü öffnen"><span></span><span></span></button></div>
   </header>
 
-  <div class="mobile-menu" id="mobileMenu" aria-hidden="true"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="./shop.html">Shop</a><a href="#about">Über uns</a><button id="openBookingsMobile" type="button">Meine Buchungen</button></div>
+  <div class="mobile-menu" id="mobileMenu" aria-hidden="true"><a href="#studios">Studios</a><a href="#schedule">Schedule</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="/shop">Shop</a><a href="#about">Über uns</a><button id="openBookingsMobile" type="button">Meine Buchungen</button></div>
 
   <main id="top">
     <section class="hero">
@@ -95,13 +96,13 @@
     <section class="passes section" id="passes">
       <div class="section-head compact-head"><div><p class="eyebrow">FLEXIBLE BY DESIGN</p><h2>Choose your<br><em>rhythm.</em></h2></div><p>Einfach auswählen, flexibel trainieren. Class Packs direkt im Classy Webshop kaufen — mit Karte, Apple Pay, Google Pay, PayPal, Klarna, SEPA oder Link.</p></div>
       <div class="pass-grid"><article><span>SINGLE</span><h3>1 Class</h3><b>28 €</b><p>Zum Kennenlernen oder für maximale Flexibilität.</p><button onclick="location.href='./shop.html?product=single'" type="button">Im Shop kaufen →</button></article><article class="featured"><span>MOST POPULAR</span><h3>10 Classes</h3><b>219 €</b><p>Für deine feste Pilates-Routine. 21,90 € pro Class.</p><button onclick="location.href='./shop.html?product=ten'" type="button">Im Shop kaufen →</button></article><article><span>COMMITTED</span><h3>20 Classes</h3><b>399 €</b><p>Für regelmäßiges Training. 19,95 € pro Class.</p><button onclick="location.href='./shop.html?product=twenty'" type="button">Im Shop kaufen →</button></article></div>
-      <p class="small-print">Weitere Option: <a href="./shop.html?product=five">5 Classes · 119 €</a> · <a href="./shop.html">Alle Zahlungsarten ansehen ↗</a></p>
+      <p class="small-print">Weitere Option: <a href="/shop?product=five">5 Classes · 119 €</a> · <a href="/shop">Alle Zahlungsarten ansehen ↗</a></p>
     </section>
 
     <section class="final-cta"><div class="final-bg"></div><div class="final-overlay"></div><div><p class="eyebrow light">YOUR NEXT 50 MINUTES</p><h2>Show up for<br><em>yourself.</em></h2><a class="primary-btn light" href="#schedule">Kurs buchen</a></div></section>
   </main>
 
-  <footer><div class="footer-brand"><span class="logo-cp">CP</span><div><b>CLASSY PILATES</b><p>YOU ONLY LIVE ONCE — ACCEPT THE CHALLENGE.</p></div></div><div class="footer-links"><a href="#studios">Studios</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="./shop.html">Shop</a><a href="mailto:info@classyfitness.de">Kontakt</a></div><div class="footer-bottom"><span>© 2026 Classy Pilates</span><span>Frankfurt am Main</span><span>Privacy · Imprint · Terms</span></div></footer>
+  <footer><div class="footer-brand"><span class="logo-cp">CP</span><div><b>CLASSY PILATES</b><p>YOU ONLY LIVE ONCE — ACCEPT THE CHALLENGE.</p></div></div><div class="footer-links"><a href="#studios">Studios</a><a href="#classes">Classes</a><a href="#passes">Preise</a><a href="/shop">Shop</a><a href="mailto:info@classyfitness.de">Kontakt</a></div><div class="footer-bottom"><span>© 2026 Classy Pilates</span><span>Frankfurt am Main</span><span class="legal-links"><a href="/imprint">Imprint</a> · <a href="/data-privacy">Privacy</a> · <a href="/terms-conditions">Terms</a> · <a href="/studio-rules">Studio Rules</a></span></div></footer>
 
   <div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="booking-drawer" id="bookingDrawer" aria-hidden="true"><div class="drawer-head"><div><p class="eyebrow">RESERVE</p><h3 id="drawerTitle">Your class</h3></div><button class="close-btn" id="closeDrawer" type="button" aria-label="Schließen">×</button></div><div id="drawerBody"></div></aside>
   <div class="toast" id="toast"><span>✓</span><div><b id="toastTitle">Saved</b><small id="toastText">Done</small></div></div>

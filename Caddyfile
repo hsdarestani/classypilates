@@ -7,9 +7,21 @@ classy.smarbiz.sbs {
   redir /admin.html /admin permanent
   redir /coach.html /coach permanent
   redir /staff.html /staff permanent
+  redir /imprint.html /imprint permanent
+  redir /data-privacy.html /data-privacy permanent
+  redir /terms-conditions.html /terms-conditions permanent
+  redir /studio-rules.html /studio-rules permanent
+  redir /shop.html /shop permanent
+  redir /classfit.html /classfit permanent
   rewrite /admin /staff.html
   rewrite /coach /staff.html
   rewrite /staff /staff.html
+  rewrite /imprint /imprint.html
+  rewrite /data-privacy /data-privacy.html
+  rewrite /terms-conditions /terms-conditions.html
+  rewrite /studio-rules /studio-rules.html
+  rewrite /shop /shop.html
+  rewrite /classfit /classfit.html
 
   root * /srv/public
   try_files {path} {path}/ /index.html

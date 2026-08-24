@@ -11,12 +11,13 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./shop.css">
   <link rel="stylesheet" href="./experience.css">
+  <link rel="stylesheet" href="/site-fix.css?v=20260824-1">
 </head>
 <body>
   <div class="shop-announcement">SECURE CHECKOUT · APPLE PAY · GOOGLE PAY · PAYPAL · KLARNA · SEPA · CARD</div>
   <header class="shop-header">
-    <a class="brand" href="./index.html"><span class="brand-mark">CP</span><span><b>CLASSY</b><small>PILATES</small></span></a>
-    <nav><a href="./index.html#schedule">Schedule</a><a href="./index.html#studios">Studios</a><a class="active" href="./shop.html">Shop</a></nav>
+    <a class="brand" href="/"><span class="brand-mark">CP</span><span><b>CLASSY</b><small>PILATES</small></span></a>
+    <nav><a href="/#schedule">Schedule</a><a href="/#studios">Studios</a><a class="active" href="/shop">Shop</a></nav>
     <button class="cart-trigger" id="cartTrigger" type="button">Warenkorb <span id="cartCount">0</span></button>
   </header>
 
@@ -27,6 +28,8 @@
     <section class="payment-strip"><div><p class="eyebrow">PAY YOUR WAY</p><h2>Everything customers expect<br><em>from a modern webshop.</em></h2></div><div class="payment-logos"><span>VISA</span><span>Mastercard</span><span>AMEX</span><span>Apple Pay</span><span>G Pay</span><span>PayPal</span><span>Klarna.</span><span>SEPA</span><span>Link</span></div></section>
     <section class="trust-section"><article><span>01</span><h3>No card data on Classy servers</h3><p>Kartendaten werden später direkt beim Zahlungsanbieter verarbeitet. Classy speichert keine vollständigen Kartendaten.</p></article><article><span>02</span><h3>One order, one payment state</h3><p>Jede Bestellung erhält eine eindeutige Referenz. Wiederholte Klicks oder Webhook-Retries erzeugen keine Doppelbuchung.</p></article><article><span>03</span><h3>Credits only after confirmation</h3><p>Credits werden erst nach bestätigter Zahlung freigeschaltet und mit dem Buchungssystem synchronisiert.</p></article></section>
   </main>
+
+  <footer class="shop-legal"><span>© 2026 Classy Pilates · Frankfurt am Main</span><nav aria-label="Legal"><a href="/imprint">Imprint</a><a href="/data-privacy">Privacy</a><a href="/terms-conditions">Terms</a><a href="/studio-rules">Studio Rules</a></nav></footer>
 
   <div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="cart-drawer" id="cartDrawer" aria-hidden="true"><div class="drawer-head"><div><p class="eyebrow">CHECKOUT</p><h2 id="drawerTitle">Warenkorb</h2></div><button id="closeDrawer" type="button" aria-label="Schließen">×</button></div><div class="checkout-progress" id="checkoutProgress"><span class="active">1 Warenkorb</span><span>2 Daten</span><span>3 Zahlung</span></div><div id="drawerBody"></div></aside>
   <div class="toast" id="toast"><b id="toastTitle">Gespeichert</b><span id="toastText"></span></div>
