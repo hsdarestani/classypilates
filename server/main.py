@@ -13,6 +13,7 @@ import jwt
 from dateutil import parser as date_parser
 from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openpyxl import load_workbook
 from passlib.context import CryptContext
@@ -25,6 +26,9 @@ JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
 JWT_TTL_HOURS = int(os.getenv("JWT_TTL_HOURS", "24"))
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+COACH_PHOTO_DIR = UPLOAD_DIR / "coach-photos"
+COACH_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+MAX_COACH_PHOTO_BYTES = 5 * 1024 * 1024
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
@@ -291,6 +295,61 @@ def user_dict(user: User):
         "portal": portal_for(user)
     }
 
+def coach_dict(coach: Coach):
+    return {
+        "id": coach.id,
+        "display_name": coach.display_name,
+        "photo_url": coach.photo_url,
+        "bio": coach.bio,
+        "active": coach.active,
+        "email": coach.user.email if coach.user else "",
+    }
+
+def coach_photo_format(content: bytes):
+    if content.startswith(b"\xff\xd8\xff"):
+        return ".jpg", "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png", "image/png"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return ".webp", "image/webp"
+    raise HTTPException(400, "unsupported_image")
+
+def managed_coach_photo_path(photo_url: str):
+    prefix = "/api/media/coach-photos/"
+    if not photo_url.startswith(prefix):
+        return None
+    filename = photo_url.removeprefix(prefix)
+    if not re.fullmatch(r"coach-\d+-[a-f0-9]{24}\.(?:jpg|png|webp)", filename):
+        return None
+    path = (COACH_PHOTO_DIR / filename).resolve()
+    return path if path.parent == COACH_PHOTO_DIR.resolve() else None
+
+def remove_managed_coach_photo(photo_url: str):
+    path = managed_coach_photo_path(photo_url or "")
+    if path:
+        path.unlink(missing_ok=True)
+
+async def store_coach_photo(file: UploadFile, coach: Coach, db: Session):
+    content = await file.read(MAX_COACH_PHOTO_BYTES + 1)
+    if not content:
+        raise HTTPException(400, "empty_image")
+    if len(content) > MAX_COACH_PHOTO_BYTES:
+        raise HTTPException(413, "image_too_large")
+    extension, _ = coach_photo_format(content)
+    filename = f"coach-{coach.id}-{secrets.token_hex(12)}{extension}"
+    path = COACH_PHOTO_DIR / filename
+    path.write_bytes(content)
+    old_photo = coach.photo_url
+    coach.photo_url = f"/api/media/coach-photos/{filename}"
+    try:
+        db.commit()
+    except Exception:
+        path.unlink(missing_ok=True)
+        db.rollback()
+        raise
+    remove_managed_coach_photo(old_photo)
+    return coach_dict(coach)
+
 def class_dict(c: ClassSession, db: Session):
     live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
     imported_reserved = max(0, int(c.imported_bookings or 0))
@@ -307,8 +366,18 @@ def class_dict(c: ClassSession, db: Session):
         "live_reserved": live_reserved, "spots": max(0, c.capacity - reserved), "status": c.status
     }
 
-app = FastAPI(title="Classy Pilates Production API", version="1.1")
+app = FastAPI(title="Classy Pilates Production API", version="1.2")
 app.add_middleware(CORSMiddleware, allow_origins=["https://classy.smarbiz.sbs", "http://localhost", "http://127.0.0.1"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+@app.get("/api/media/coach-photos/{filename}")
+def coach_photo_media(filename: str):
+    if not re.fullmatch(r"coach-\d+-[a-f0-9]{24}\.(?:jpg|png|webp)", filename):
+        raise HTTPException(404, "image_not_found")
+    path = (COACH_PHOTO_DIR / filename).resolve()
+    if path.parent != COACH_PHOTO_DIR.resolve() or not path.is_file():
+        raise HTTPException(404, "image_not_found")
+    media_type = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}[path.suffix]
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -349,6 +418,11 @@ class StaffUpdate(BaseModel):
     last_name: Optional[str] = None
     is_active: Optional[bool] = None
     role_ids: Optional[list[int]] = None
+
+class CoachProfileIn(BaseModel):
+    display_name: str
+    bio: str = ""
+    active: Optional[bool] = None
 
 class CustomerProfileIn(BaseModel):
     first_name: str = ""
@@ -780,7 +854,74 @@ def update_staff(user_id: int, data: StaffUpdate, user: User = Depends(require("
 @app.get("/api/staff/coaches")
 def list_coaches(user: User = Depends(require("coaches.view")), db: Session = Depends(db_session)):
     coaches = db.scalars(select(Coach).order_by(Coach.display_name)).all()
-    return {"coaches": [{"id": c.id, "display_name": c.display_name, "photo_url": c.photo_url, "bio": c.bio, "active": c.active, "email": c.user.email if c.user else ""} for c in coaches]}
+    return {"coaches": [coach_dict(c) for c in coaches]}
+
+@app.get("/api/staff/profile")
+def coach_profile(user: User = Depends(current_user)):
+    if not user.coach:
+        raise HTTPException(404, "coach_profile_not_found")
+    return coach_dict(user.coach)
+
+@app.patch("/api/staff/profile")
+def update_coach_profile(data: CoachProfileIn, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    if not user.coach:
+        raise HTTPException(404, "coach_profile_not_found")
+    display_name = data.display_name.strip()
+    if len(display_name) < 2:
+        raise HTTPException(400, "coach_name_required")
+    user.coach.display_name = display_name
+    user.coach.bio = data.bio.strip()[:2000]
+    db.commit()
+    return coach_dict(user.coach)
+
+@app.post("/api/staff/profile/photo")
+async def upload_own_coach_photo(file: UploadFile = File(...), user: User = Depends(current_user), db: Session = Depends(db_session)):
+    if not user.coach:
+        raise HTTPException(404, "coach_profile_not_found")
+    return await store_coach_photo(file, user.coach, db)
+
+@app.delete("/api/staff/profile/photo")
+def delete_own_coach_photo(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    if not user.coach:
+        raise HTTPException(404, "coach_profile_not_found")
+    old_photo = user.coach.photo_url
+    user.coach.photo_url = ""
+    db.commit()
+    remove_managed_coach_photo(old_photo)
+    return coach_dict(user.coach)
+
+@app.patch("/api/staff/coaches/{coach_id}")
+def update_coach(coach_id: int, data: CoachProfileIn, user: User = Depends(require("coaches.manage")), db: Session = Depends(db_session)):
+    coach = db.get(Coach, coach_id)
+    if not coach:
+        raise HTTPException(404, "coach_not_found")
+    display_name = data.display_name.strip()
+    if len(display_name) < 2:
+        raise HTTPException(400, "coach_name_required")
+    coach.display_name = display_name
+    coach.bio = data.bio.strip()[:2000]
+    if data.active is not None:
+        coach.active = data.active
+    db.commit()
+    return coach_dict(coach)
+
+@app.post("/api/staff/coaches/{coach_id}/photo")
+async def upload_coach_photo(coach_id: int, file: UploadFile = File(...), user: User = Depends(require("coaches.manage")), db: Session = Depends(db_session)):
+    coach = db.get(Coach, coach_id)
+    if not coach:
+        raise HTTPException(404, "coach_not_found")
+    return await store_coach_photo(file, coach, db)
+
+@app.delete("/api/staff/coaches/{coach_id}/photo")
+def delete_coach_photo(coach_id: int, user: User = Depends(require("coaches.manage")), db: Session = Depends(db_session)):
+    coach = db.get(Coach, coach_id)
+    if not coach:
+        raise HTTPException(404, "coach_not_found")
+    old_photo = coach.photo_url
+    coach.photo_url = ""
+    db.commit()
+    remove_managed_coach_photo(old_photo)
+    return coach_dict(coach)
 
 @app.get("/api/staff/classes")
 def staff_classes(user: User = Depends(require("classes.view")), db: Session = Depends(db_session)):

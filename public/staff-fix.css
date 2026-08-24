@@ -33,7 +33,7 @@
 .panel-head h2 { font-size: 25px; }
 .panel-head p { line-height: 1.55; }
 .primary,.secondary,.danger,.btn { border-radius: 9px; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; }
-.form-grid input,.form-grid select,.auth-card input,.modal input,.modal select { border-radius: 9px; border-color: #dfd9cf; }
+.form-grid input,.form-grid select,.auth-card input,.modal input,.modal select,.modal textarea,.coach-profile-form input,.coach-profile-form textarea { border-radius: 9px; border-color: #dfd9cf; }
 .table { border: 1px solid #ece8e1; border-radius: 12px; }
 .trow { padding: 14px 12px; }
 .trow.head { background: #f7f5f1; }
@@ -55,6 +55,61 @@
 .pro-module > div:last-child { margin-top: auto; display: flex; align-items: center; justify-content: space-between; }
 .pro-module button { border: 0; background: none; color: #a29a8f; font-size: 8px; text-transform: uppercase; }
 
+.avatar.has-photo { overflow: hidden; padding: 0; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.coach-roster-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.coach-admin-card { display: grid; grid-template-columns: 116px 1fr; gap: 20px; padding: 18px; border: 1px solid #e6e1d8; border-radius: 14px; background: #faf9f6; }
+.coach-photo { position: relative; display: inline-grid; place-items: center; width: 54px; height: 54px; flex: 0 0 auto; overflow: hidden; border-radius: 50%; background: linear-gradient(135deg,#24231f,#b89f79); color: #fff; font-size: 14px; font-weight: 700; }
+.coach-photo.large { width: 116px; height: 116px; font-size: 25px; }
+.coach-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.coach-card-copy { min-width: 0; }
+.coach-card-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.coach-card-title h3 { margin: 4px 0; font-size: 15px; }
+.coach-card-title p,.coach-bio { margin: 0; color: #817a70; font-size: 9px; line-height: 1.6; }
+.coach-bio { min-height: 44px; margin: 11px 0 13px; }
+.primary.compact { min-height: 34px; margin: 0; padding: 9px 12px; }
+.coach-profile-layout { display: grid; grid-template-columns: 230px minmax(0,620px); gap: 42px; align-items: start; }
+.coach-profile-photo { display: grid; justify-items: center; gap: 10px; padding: 22px; border-radius: 14px; background: #f7f4ee; }
+.coach-profile-photo .coach-photo.large { width: 154px; height: 154px; }
+.coach-profile-photo button { width: 100%; margin: 0; }
+.coach-profile-photo small { color: #8a8379; font-size: 8px; text-align: center; }
+.coach-profile-form h2 { margin: 3px 0 8px; font: 500 30px/1.05 'Playfair Display',Georgia,serif; }
+.coach-profile-form > p:not(.kicker) { margin: 0 0 22px; color: #7f786f; font-size: 10px; line-height: 1.6; }
+.coach-profile-form label,.form-stack label { display: grid; gap: 7px; margin-top: 14px; color: #777067; font-size: 8px; font-weight: 700; letter-spacing: .11em; }
+.coach-profile-form input,.coach-profile-form textarea,.form-stack input,.form-stack textarea { width: 100%; border: 1px solid #dfd9cf; background: #fff; padding: 13px; outline: none; font: 11px/1.6 Manrope,Arial,sans-serif; resize: vertical; }
+.coach-profile-form input,.form-stack input { height: 48px; }
+.photo-editor-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgba(13,13,12,.72); backdrop-filter: blur(4px); }
+.photo-editor { width: min(850px,100%); max-height: calc(100vh - 36px); overflow: auto; border-radius: 17px; background: #f7f4ee; box-shadow: 0 28px 90px rgba(0,0,0,.3); }
+.photo-editor-head { display: flex; align-items: center; justify-content: space-between; padding: 22px 24px; border-bottom: 1px solid #ddd7cd; }
+.photo-editor-head h2 { margin: 2px 0 0; font: 500 29px/1 'Playfair Display',Georgia,serif; }
+.photo-editor-head p { margin: 0; }
+.photo-editor-head button { width: 38px; height: 38px; padding: 0; font-size: 18px; }
+.photo-editor-body { display: grid; grid-template-columns: 190px 1fr; gap: 25px; padding: 24px; }
+.photo-current { display: flex; flex-direction: column; align-items: center; gap: 13px; padding: 18px; border-radius: 13px; background: #ede8df; }
+.photo-current > span { align-self: stretch; color: #817a70; font-size: 8px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.photo-current p { margin: 0; color: #777067; font-size: 9px; line-height: 1.65; text-align: center; }
+.crop-workspace { min-width: 0; }
+.photo-picker { display: flex; align-items: center; gap: 10px; padding: 13px; border: 1px dashed #bdb4a7; border-radius: 11px; background: #fff; cursor: pointer; }
+.photo-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.photo-picker span { font-size: 10px; font-weight: 700; }
+.photo-picker small { margin-left: auto; color: #8a8379; font-size: 8px; }
+.crop-stage { position: relative; width: min(100%,360px); aspect-ratio: 1; margin: 18px auto; overflow: hidden; border-radius: 50%; background: #ded8ce; box-shadow: 0 0 0 7px #fff,0 0 0 8px #d9d3c9; touch-action: none; }
+.crop-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.crop-stage canvas:active { cursor: grabbing; }
+.crop-placeholder { position: absolute; inset: 0; display: grid; place-content: center; gap: 5px; text-align: center; pointer-events: none; color: #8b8378; }
+.crop-placeholder b { font-size: 11px; }
+.crop-placeholder span { font-size: 8px; }
+.zoom-control { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; color: #777067; font-size: 8px; font-weight: 700; letter-spacing: .12em; }
+.zoom-control input { accent-color: #171713; }
+.photo-editor-message { min-height: 18px; margin: 9px 0 0; color: #8d3f3a; font-size: 9px; }
+.photo-editor-actions { display: flex; justify-content: space-between; gap: 10px; padding: 18px 24px; border-top: 1px solid #ddd7cd; }
+.photo-editor-actions > div { display: flex; gap: 9px; }
+.photo-editor-actions .primary { margin: 0; }
+.coach-edit-modal { width: min(620px,100%); margin: 0; }
+.form-stack textarea { min-height: 130px; }
+.form-stack .toggle-row { display: flex; align-items: center; gap: 9px; }
+.form-stack .toggle-row input { width: auto; height: auto; }
+
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { width: 264px; }
@@ -63,6 +118,13 @@
   .top-right a { display: none; }
   .metric,.panel { border-radius: 13px; }
   .pro-grid { grid-template-columns: 1fr; }
+  .coach-roster-grid,.coach-profile-layout,.photo-editor-body { grid-template-columns: 1fr; }
+  .coach-admin-card { grid-template-columns: 82px 1fr; }
+  .coach-admin-card .coach-photo.large { width: 82px; height: 82px; }
+  .photo-current { display: none; }
+  .photo-picker { align-items: flex-start; flex-direction: column; }
+  .photo-picker small { margin-left: 0; }
+  .photo-editor-actions { flex-wrap: wrap; }
 }
 
 @media (min-width:761px) and (max-width:1180px) { .pro-grid { grid-template-columns: repeat(2,1fr); } }

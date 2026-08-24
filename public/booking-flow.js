@@ -30,8 +30,10 @@
   }
 
   function coachAvatars(){
-    $$('.class-row').forEach(row=>{const coach=$('.class-coach',row);if(!coach||coach.dataset.portrait)return;const name=$('b',coach)?.textContent.trim()||'Coach';coach.dataset.portrait='1';const img=document.createElement('img');img.className='coach-avatar';img.src=photoFor(name);img.alt=`Coach ${name}`;img.loading='lazy';coach.prepend(img)})
+    $$('.class-row').forEach(row=>{const coach=$('.class-coach',row);if(!coach)return;const name=$('b',coach)?.textContent.trim()||'Coach',src=photoFor(name);let img=$('.coach-avatar',coach);if(!img){img=document.createElement('img');img.className='coach-avatar';img.alt=`Coach ${name}`;img.loading='lazy';coach.prepend(img)}if(img.getAttribute('src')!==src)img.src=src})
   }
+
+  async function loadCoachPhotos(){try{const response=await fetch('/api/public/coaches',{credentials:'same-origin',cache:'no-store'});if(!response.ok)return;const data=await response.json();(data.coaches||[]).forEach(coach=>{if(coach.display_name&&coach.photo_url)coachPhotos[coach.display_name]=coach.photo_url});coachAvatars()}catch(_){}}
 
   function observeDynamicUi(){const list=$('#classList'),grid=$('#studioGrid');if(list){coachAvatars();new MutationObserver(()=>coachAvatars()).observe(list,{childList:true,subtree:true})}if(grid){studioActions();new MutationObserver(()=>studioActions()).observe(grid,{childList:true,subtree:true})}}
 
@@ -83,5 +85,5 @@
   const originalOpenClass=typeof openClass==='function'?openClass:null;
   if(originalOpenClass){openClass=function(r){if(!r)return;if(Number(r.spots)<=0)return originalOpenClass(r);startWizard(r)}}
 
-  moveStudiosBeforeSchedule();addQuickDock();observeDynamicUi();
+  moveStudiosBeforeSchedule();addQuickDock();observeDynamicUi();loadCoachPhotos();
 })();
