@@ -80,6 +80,9 @@ jobs:
 
           docker compose up -d --build --remove-orphans
 
+          docker compose exec -T api python import_mindbody_schedule.py \
+            --source /app/data/mindbody_schedule_2026-04-01_to_2026-08-24.json.gz
+
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
             sleep 2
