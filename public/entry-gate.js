@@ -18,4 +18,12 @@
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!gate.hasAttribute('aria-hidden')){remember('pilates');close()}});
 
   if(current()==='pilates'){gate.setAttribute('aria-hidden','true');body.classList.remove('gate-open')}else{open()}
+
+  /* Booking floor plans: kept as separate assets so the booking wizard stays maintainable. */
+  if(!document.querySelector('link[data-studio-layouts]')){
+    const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css';css.dataset.studioLayouts='1';document.head.appendChild(css);
+  }
+  if(!document.querySelector('script[data-studio-layouts]')){
+    const script=document.createElement('script');script.src='./studio-layouts.js';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+  }
 })();
