@@ -85,6 +85,10 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:8787/api/health
+          EMAIL_ONLY_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com')
+          test "$EMAIL_ONLY_CODE" = "422"
+          UNKNOWN_LOOKUP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com&reference=CP-00000000')
+          test "$UNKNOWN_LOOKUP_CODE" = "404"
 
           SMOKE_EMAIL="smoke-$(openssl rand -hex 6)@classypilates.de"
           SMOKE_PASSWORD="Smoke-$(openssl rand -hex 10)!"

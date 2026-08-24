@@ -551,9 +551,12 @@ def public_booking(data: PublicBookingIn, db: Session = Depends(db_session)):
     db.add(b);db.commit();return {"booking":{"reference":ref},"payment_status":b.payment_status}
 
 @app.get("/api/bookings")
-def public_bookings(email: str, db: Session = Depends(db_session)):
-    rows=db.scalars(select(Booking).where(Booking.email==email.lower()).order_by(Booking.created_at.desc())).all()
-    return {"credits":0,"bookings":[{"reference":b.reference,"status":b.status,"starts_at":b.klass.starts_at.isoformat(),"name":b.klass.title,"studio_name":b.klass.studio.name,"spot_number":b.spot_number} for b in rows]}
+def public_bookings(email: str, reference: str, db: Session = Depends(db_session)):
+    normalized_ref = reference.strip().upper()
+    booking = db.scalar(select(Booking).where(Booking.email == email.strip().lower(), Booking.reference == normalized_ref))
+    if not booking:
+        raise HTTPException(404, "booking_not_found")
+    return {"credits":0,"bookings":[{"reference":booking.reference,"status":booking.status,"starts_at":booking.klass.starts_at.isoformat(),"name":booking.klass.title,"studio_name":booking.klass.studio.name,"spot_number":booking.spot_number}]}
 
 @app.delete("/api/bookings")
 def public_cancel(payload: dict, db: Session = Depends(db_session)):
