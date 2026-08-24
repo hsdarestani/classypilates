@@ -86,17 +86,10 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8787/api/health
 
-          # The host is intentionally small. Initialize the schema first, then
-          # run the lightweight importer while the API process is stopped.
-          docker compose stop api
-          docker compose run -T --rm --no-deps api python import_mindbody_schedule.py \
+          # The importer uses SQLAlchemy Core only, so it can safely run beside
+          # the API without loading the full application a second time.
+          docker compose exec -T api python import_mindbody_schedule.py \
             --source /app/data/mindbody_schedule_2026-04-01_to_2026-08-24.json.gz
-          docker compose up -d api
-
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
-            sleep 2
-          done
           curl -fsS http://127.0.0.1:8787/api/health
 
           EMAIL_ONLY_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com')
@@ -285,11 +278,10 @@ jobs:
 
       - name: Verify public endpoint
         id: public_verify
-        continue-on-error: true
         run: |
           sleep 5
-          curl -I --max-time 20 https://classy.smarbiz.sbs/ || curl -I --max-time 20 http://classy.smarbiz.sbs/
-          curl -fsS --max-time 20 https://classy.smarbiz.sbs/api/health || curl -fsS --max-time 20 http://classy.smarbiz.sbs/api/health
+          curl -fsSIL --max-time 20 https://classy.smarbiz.sbs/ >/dev/null
+          curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/health | grep -q '"ok":true'
 
       - name: Publish deployment heartbeat
         if: always()
