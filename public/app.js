@@ -112,7 +112,7 @@ function renderSchedule(){
     const availability=r.spots===0?{label:'Ausgebucht',cls:'full',btn:'Waitlist',bcls:'waitlist'}:r.spots<=3?{label:`Nur ${r.spots} Plätze`,cls:'low',btn:'Reserve',bcls:''}:{label:`${r.spots} Plätze`,cls:'',btn:'Reserve',bcls:''};
     return `<article class="class-row"><div class="class-time"><b>${r.time}</b><small>${r.duration} MIN</small></div><div class="class-name"><b>${esc(r.name)}</b><span>${esc(r.type.toUpperCase())} · ALL LEVELS</span></div><div class="class-coach"><span>COACH</span><b>${esc(r.coach)}</b></div><div class="class-location"><span>STUDIO</span><b>${esc(studio.short)}</b></div><div class="reserve-wrap"><span class="spots ${availability.cls}">${availability.label}</span><button class="reserve-btn ${availability.bcls}" data-reserve="${r.id}" type="button">${availability.btn}</button></div></article>`
   }).join('');
-  $$('[data-reserve]').forEach(btn=>btn.addEventListener('click',()=>{const item=all.find(r=>r.id===btn.dataset.reserve);if(item)openClass(item)}));
+  $$('[data-reserve]').forEach(btn=>btn.addEventListener('click',()=>{const item=all.find(r=>String(r.id)===btn.dataset.reserve);if(item)openClass(item)}));
 }
 
 function openDrawer(){

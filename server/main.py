@@ -988,8 +988,10 @@ def public_schedule(
         raise HTTPException(422, "invalid_date_range")
     if end <= start or end - start > timedelta(days=45):
         raise HTTPException(422, "invalid_date_range")
+    now = datetime.now(timezone.utc)
+    visible_from = max(as_utc(start), now)
     q=select(ClassSession).where(
-        ClassSession.starts_at >= start,
+        ClassSession.starts_at >= visible_from,
         ClassSession.starts_at < end,
         ClassSession.status == "active",
     ).order_by(ClassSession.starts_at).limit(1200)
@@ -1048,6 +1050,7 @@ def resolve_public_class(data: PublicBookingIn, user: Optional[User], db: Sessio
 def public_booking(data: PublicBookingIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=resolve_public_class(data,user,db)
     if not c or c.status!="active": raise HTTPException(409,"class_unavailable")
+    if as_utc(c.starts_at) <= datetime.now(timezone.utc): raise HTTPException(409,"class_started")
     live_reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
     reserved=int(c.imported_bookings or 0)+int(live_reserved)
     if reserved>=c.capacity: raise HTTPException(409,"class_full")
