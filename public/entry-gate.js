@@ -21,9 +21,9 @@
 
   /* Booking floor plans: kept as separate assets so the booking wizard stays maintainable. */
   if(!document.querySelector('link[data-studio-layouts]')){
-    const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css';css.dataset.studioLayouts='1';document.head.appendChild(css);
+    const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css?v=20260824-2';css.dataset.studioLayouts='1';document.head.appendChild(css);
   }
   if(!document.querySelector('script[data-studio-layouts]')){
-    const script=document.createElement('script');script.src='./studio-layouts.js';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260824-2';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
   }
 })();
