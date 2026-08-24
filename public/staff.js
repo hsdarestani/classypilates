@@ -1,7 +1,7 @@
 (()=>{
   const $=(s,c=document)=>c.querySelector(s), $$=(s,c=document)=>[...c.querySelectorAll(s)];
   const state={token:localStorage.getItem('cpStaffToken')||'',user:null,view:'dashboard',roles:[],permissions:[]};
-  const titles={dashboard:['OPERATIONS','Overview'],bookings:['CUSTOMERS','Reservierungen'],classes:['SCHEDULE','Klassen & Schedule'],coaches:['TEAM','Coaches'],finance:['REVENUE','Finanzen'],roles:['ACCESS CONTROL','Rollen & Zugriffe'],uploads:['IMPORT','Plan hochladen'],marketing:['PREMIUM','E-Mail Marketing']};
+  const titles={dashboard:['OPERATIONS','Übersicht'],bookings:['CUSTOMERS','Reservierungen'],classes:['SCHEDULE','Klassen & Schedule'],coaches:['TEAM','Coaches'],finance:['REVENUE','Finanzen'],roles:['ACCESS CONTROL','Rollen & Zugriffe'],uploads:['IMPORT','Plan hochladen'],marketing:['PREMIUM','E-Mail Marketing']};
   const studios=[['bhf1','Bahnhofsviertel · 1. OG'],['ladies','Bahnhofsviertel · Ladies 2. OG'],['sachsen','Sachsenhausen'],['bornheim','Bornheim'],['mid','Mid'],['oval','Oval']];
   const studioOptions=studios.map(x=>`<option value="${x[0]}">${x[1]}</option>`).join('');
   const toast=t=>{const el=$('#toast');el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)};
