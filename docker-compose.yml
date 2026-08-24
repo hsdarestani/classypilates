@@ -17,6 +17,8 @@ services:
   api:
     build: ./server
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8000"
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-classy}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-classy}
       JWT_SECRET: ${JWT_SECRET}
@@ -28,23 +30,6 @@ services:
       db:
         condition: service_healthy
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./public:/srv/public:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-
 volumes:
   classy_postgres:
   classy_uploads:
-  caddy_data:
-  caddy_config:
