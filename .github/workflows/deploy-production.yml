@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: classy-production
   cancel-in-progress: false
@@ -82,6 +85,7 @@ jobs:
           curl -fsS http://127.0.0.1:8787/api/health
 
           configure_nginx() {
+            mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
             cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX'
           server {
               listen 80;
@@ -145,8 +149,43 @@ jobs:
           REMOTE
 
       - name: Verify public endpoint
+        id: public_verify
         continue-on-error: true
         run: |
           sleep 5
           curl -I --max-time 20 https://classy.smarbiz.sbs/ || curl -I --max-time 20 http://classy.smarbiz.sbs/
           curl -fsS --max-time 20 https://classy.smarbiz.sbs/api/health || curl -fsS --max-time 20 http://classy.smarbiz.sbs/api/health
+
+      - name: Publish deployment heartbeat
+        if: always()
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+          JOB_STATUS: ${{ job.status }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          REMOTE_STATUS="unavailable"
+          API_STATUS="unavailable"
+          if command -v sshpass >/dev/null 2>&1 && [ -n "$HOST" ] && [ -n "$PASS" ]; then
+            export SSHPASS="$PASS"
+            REMOTE_STATUS=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@"$HOST" "cd /opt/classypilates 2>/dev/null && docker compose ps 2>&1 | head -n 20" || true)
+            API_STATUS=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@"$HOST" "curl -fsS --max-time 5 http://127.0.0.1:8787/api/health 2>&1" || true)
+          fi
+          cat > DEPLOYMENT_STATUS.md <<EOF
+          # Classy Production Deployment Status
+
+          - Workflow status: **${JOB_STATUS}**
+          - Commit: \`${COMMIT_SHA}\`
+          - Checked at: \`$(date -u +'%Y-%m-%dT%H:%M:%SZ')\`
+          - Local API health: \`${API_STATUS//$'\n'/ }\`
+
+          ## Remote containers
+          \`\`\`
+          ${REMOTE_STATUS}
+          \`\`\`
+          EOF
+          git config user.name "classy-deploy-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add DEPLOYMENT_STATUS.md
+          git commit -m "chore: update deployment status [skip ci]" || exit 0
+          git push origin HEAD:main
