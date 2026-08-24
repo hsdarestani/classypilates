@@ -108,7 +108,7 @@ jobs:
               waitlist_count = db.scalar(select(func.count(Waitlist.id)).where(func.lower(Waitlist.email) == email)) or 0
               db.execute(delete(Booking).where(func.lower(Booking.email) == email))
               db.execute(delete(Waitlist).where(func.lower(Waitlist.email) == email))
-              db.delete(user)
+              db.execute(delete(User).where(User.id == user.id))
               db.commit()
               print(f"cleanup_deleted_customer=1 bookings={booking_count} waitlist={waitlist_count}")
           PY
