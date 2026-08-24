@@ -38,3 +38,5 @@ Payment-provider credentials are not hardcoded. Bookings can already be stored c
 
 ## Deployment
 The GitHub Actions workflow `.github/workflows/deploy-production.yml` deploys `main` to `/opt/classypilates` using repository secrets `HOST` and `PASS`, preserves the server `.env`, starts PostgreSQL/API containers and configures the domain reverse proxy without taking over ports 80/443 inside Docker.
+
+Deployment trigger: production control center release.
