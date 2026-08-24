@@ -86,33 +86,6 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8787/api/health
 
-          # One-time cleanup requested for the exact test customer.
-          docker compose exec -T api python - <<'PY'
-          from sqlalchemy import delete, func, select
-          from main import Booking, SessionLocal, User, Waitlist
-
-          with SessionLocal() as db:
-              matches = db.scalars(
-                  select(User).where(
-                      func.trim(func.lower(User.first_name)) == "hossein",
-                      func.trim(func.lower(User.last_name)) == "farahani",
-                  )
-              ).all()
-              if len(matches) != 1:
-                  raise SystemExit(f"cleanup_aborted_match_count={len(matches)}")
-              user = matches[0]
-              if not any(role.name == "Customer" for role in user.roles):
-                  raise SystemExit("cleanup_aborted_not_customer")
-              email = user.email.lower()
-              booking_count = db.scalar(select(func.count(Booking.id)).where(func.lower(Booking.email) == email)) or 0
-              waitlist_count = db.scalar(select(func.count(Waitlist.id)).where(func.lower(Waitlist.email) == email)) or 0
-              db.execute(delete(Booking).where(func.lower(Booking.email) == email))
-              db.execute(delete(Waitlist).where(func.lower(Waitlist.email) == email))
-              db.execute(delete(User).where(User.id == user.id))
-              db.commit()
-              print(f"cleanup_deleted_customer=1 bookings={booking_count} waitlist={waitlist_count}")
-          PY
-
           # The importer uses SQLAlchemy Core only, so it can safely run beside
           # the API without loading the full application a second time.
           docker compose exec -T api python import_mindbody_schedule.py \
