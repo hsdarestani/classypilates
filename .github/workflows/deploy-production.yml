@@ -84,6 +84,39 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8787/api/health
 
+          SMOKE_EMAIL="smoke-$(openssl rand -hex 6)@classy.local"
+          SMOKE_PASSWORD="Smoke-$(openssl rand -hex 10)!"
+          docker compose exec -T -e SMOKE_EMAIL -e SMOKE_PASSWORD api python - <<'PY'
+          import os
+          from sqlalchemy import select
+          from main import SessionLocal, User, Role, pwd
+          with SessionLocal() as db:
+              role = db.scalar(select(Role).where(Role.name == "Administrator"))
+              db.add(User(email=os.environ["SMOKE_EMAIL"], password_hash=pwd.hash(os.environ["SMOKE_PASSWORD"]), first_name="Smoke", roles=[role]))
+              db.commit()
+          PY
+          cleanup_smoke() {
+            docker compose exec -T -e SMOKE_EMAIL api python - <<'PY'
+          import os
+          from sqlalchemy import delete
+          from main import SessionLocal, User
+          with SessionLocal() as db:
+              db.execute(delete(User).where(User.email == os.environ["SMOKE_EMAIL"]))
+              db.commit()
+          PY
+            rm -f /tmp/classy-smoke-cookies /tmp/classy-smoke-login.json
+          }
+          trap cleanup_smoke EXIT
+          LOGIN_CODE=$(curl -sS -o /tmp/classy-smoke-login.json -c /tmp/classy-smoke-cookies -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
+            http://127.0.0.1:8787/api/auth/login)
+          test "$LOGIN_CODE" = "200"
+          curl -fsS -b /tmp/classy-smoke-cookies http://127.0.0.1:8787/api/auth/me >/dev/null
+          curl -fsS -b /tmp/classy-smoke-cookies http://127.0.0.1:8787/api/staff/dashboard >/dev/null
+          cleanup_smoke
+          trap - EXIT
+
           configure_nginx() {
             mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
             cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX'
@@ -103,6 +136,15 @@ jobs:
                   proxy_set_header X-Forwarded-Proto $scheme;
                   client_max_body_size 12m;
               }
+
+              location = /admin { try_files /staff.html =404; add_header Cache-Control "no-store"; }
+              location = /coach { try_files /staff.html =404; add_header Cache-Control "no-store"; }
+              location = /staff { try_files /staff.html =404; add_header Cache-Control "no-store"; }
+              location = /admin.html { return 301 /admin; }
+              location = /coach.html { return 301 /coach; }
+              location = /staff.html { return 301 /staff; }
+              location = /staff.js { try_files /staff.js =404; add_header Cache-Control "no-cache, no-store, must-revalidate"; }
+              location = /staff.css { try_files /staff.css =404; add_header Cache-Control "no-cache, no-store, must-revalidate"; }
 
               location / {
                   try_files $uri $uri/ /index.html;

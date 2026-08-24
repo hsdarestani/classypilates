@@ -9,7 +9,7 @@ from typing import Optional
 
 import jwt
 from dateutil import parser as date_parser
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openpyxl import load_workbook
@@ -184,11 +184,12 @@ def make_token(user: User):
     now = datetime.now(timezone.utc)
     return jwt.encode({"sub": str(user.id), "iat": int(now.timestamp()), "exp": int((now + timedelta(hours=JWT_TTL_HOURS)).timestamp())}, JWT_SECRET, algorithm="HS256")
 
-def current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(db_session)):
-    if not credentials:
+def current_user(credentials: HTTPAuthorizationCredentials = Depends(security), cp_session: Optional[str] = Cookie(default=None), db: Session = Depends(db_session)):
+    token = credentials.credentials if credentials else cp_session
+    if not token:
         raise HTTPException(401, "login_required")
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         user = db.get(User, int(payload["sub"]))
     except Exception:
         raise HTTPException(401, "invalid_token")
@@ -290,7 +291,7 @@ def auth_status(db: Session = Depends(db_session)):
     return {"configured": (db.scalar(select(func.count(User.id))) or 0) > 0}
 
 @app.post("/api/auth/bootstrap")
-def bootstrap(data: BootstrapIn, db: Session = Depends(db_session)):
+def bootstrap(data: BootstrapIn, response: Response, db: Session = Depends(db_session)):
     if (db.scalar(select(func.count(User.id))) or 0) > 0:
         raise HTTPException(409, "already_configured")
     if len(data.password) < 10:
@@ -298,17 +299,26 @@ def bootstrap(data: BootstrapIn, db: Session = Depends(db_session)):
     role = db.scalar(select(Role).where(Role.name == "Administrator"))
     user = User(email=data.email.lower(), password_hash=pwd.hash(data.password), first_name=data.first_name, last_name=data.last_name, roles=[role])
     db.add(user); db.commit(); db.refresh(user)
-    return {"token": make_token(user), "user": user_dict(user)}
+    token = make_token(user)
+    response.set_cookie("cp_session", token, max_age=JWT_TTL_HOURS * 3600, httponly=True, secure=True, samesite="lax", path="/")
+    return {"token": token, "user": user_dict(user)}
 
 @app.post("/api/auth/login")
-def login(data: LoginIn, db: Session = Depends(db_session)):
+def login(data: LoginIn, response: Response, db: Session = Depends(db_session)):
     email = data.email.strip().lower()
     user = db.scalar(select(User).where(func.lower(User.email) == email))
     if not user or not pwd.verify(data.password, user.password_hash):
         raise HTTPException(401, "invalid_credentials")
     if not user.is_active:
         raise HTTPException(403, "inactive_user")
-    return {"token": make_token(user), "user": user_dict(user)}
+    token = make_token(user)
+    response.set_cookie("cp_session", token, max_age=JWT_TTL_HOURS * 3600, httponly=True, secure=True, samesite="lax", path="/")
+    return {"token": token, "user": user_dict(user)}
+
+@app.post("/api/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie("cp_session", path="/")
+    return {"ok": True}
 
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user)):

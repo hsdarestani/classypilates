@@ -4,6 +4,13 @@ classy.smarbiz.sbs {
   @api path /api/*
   reverse_proxy @api api:8000
 
+  redir /admin.html /admin permanent
+  redir /coach.html /coach permanent
+  redir /staff.html /staff permanent
+  rewrite /admin /staff.html
+  rewrite /coach /staff.html
+  rewrite /staff /staff.html
+
   root * /srv/public
   try_files {path} {path}/ /index.html
   file_server
