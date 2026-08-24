@@ -3,6 +3,8 @@ name: Deploy Classy Production
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - DEPLOYMENT_STATUS.md
   workflow_dispatch:
 
 permissions:
@@ -84,7 +86,7 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8787/api/health
 
-          SMOKE_EMAIL="smoke-$(openssl rand -hex 6)@classy.local"
+          SMOKE_EMAIL="smoke-$(openssl rand -hex 6)@classypilates.de"
           SMOKE_PASSWORD="Smoke-$(openssl rand -hex 10)!"
           export SMOKE_EMAIL SMOKE_PASSWORD
           docker compose exec -T -e SMOKE_EMAIL -e SMOKE_PASSWORD api python - <<'PY'
@@ -113,7 +115,7 @@ jobs:
             -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
             http://127.0.0.1:8787/api/auth/login)
           test "$LOGIN_CODE" = "200"
-          SMOKE_TOKEN=$(docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["token"])' < /tmp/classy-smoke-login.json)
+          SMOKE_TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/classy-smoke-login.json"))["token"])')
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/auth/me >/dev/null
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/staff/dashboard >/dev/null
           cleanup_smoke
