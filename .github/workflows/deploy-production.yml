@@ -89,7 +89,7 @@ jobs:
           # The host is intentionally small. Initialize the schema first, then
           # run the lightweight importer while the API process is stopped.
           docker compose stop api
-          docker compose run --rm --no-deps api python import_mindbody_schedule.py \
+          docker compose run -T --rm --no-deps api python import_mindbody_schedule.py \
             --source /app/data/mindbody_schedule_2026-04-01_to_2026-08-24.json.gz
           docker compose up -d api
 
