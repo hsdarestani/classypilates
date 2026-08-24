@@ -23,7 +23,7 @@
   $('#logout').onclick=logout;$('#mobileNav').onclick=()=>$('.sidebar').classList.toggle('open');
 
   function showApp(){
-    $('#authScreen').hidden=true;$('#app').hidden=false;
+    $('#authScreen').hidden=true;$('#authScreen').style.display='none';$('#app').hidden=false;$('#app').style.display='grid';
     const n=[state.user.first_name,state.user.last_name].filter(Boolean).join(' ')||state.user.email;
     $('#sideName').textContent=n;$('#sideAvatar').textContent=(state.user.first_name?.[0]||state.user.email[0]).toUpperCase();$('#sideRole').textContent=state.user.roles.map(r=>r.name).join(' · ');
     $$('#nav [data-perm]').forEach(b=>b.hidden=!has(b.dataset.perm));
