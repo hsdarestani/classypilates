@@ -1,8 +1,8 @@
 # Classy Production Deployment Status
 
 - Workflow status: **failure**
-- Commit: `d87db55b42050143606489bde4dc968d3ded066e`
-- Checked at: `2026-08-24T12:25:51Z`
+- Commit: `7c74d4dff8c79587b59959d6eb67b725ae43ed55`
+- Checked at: `2026-08-24T12:26:20Z`
 - Local API health: `{"ok":true,"service":"classy-production"}`
 
 ## Remote containers
