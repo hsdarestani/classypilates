@@ -42,6 +42,18 @@
 .empty::before { content: '—'; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: #eee9e0; color: #847c70; font-size: 16px; }
 .role-card,.permission-grid .perm,.upload-zone { border-radius: 11px; }
 .upload-zone { background: #faf9f6; }
+.pro-hero { min-height: 210px; padding: 34px; display: flex; align-items: flex-end; justify-content: space-between; color: #fff; background: linear-gradient(125deg,#171713,#332e27); border: 0; }
+.pro-hero h2 { margin: 8px 0 12px; font: 500 42px/1 'Playfair Display',Georgia,serif; }
+.pro-hero p:not(.kicker) { max-width: 720px; color: rgba(255,255,255,.58); font-size: 11px; line-height: 1.7; }
+.pro-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 14px; }
+.pro-module { min-height: 255px; padding: 22px; display: flex; flex-direction: column; background: #fff; border: 1px solid #e1ddd5; border-radius: 16px; box-shadow: 0 5px 24px rgba(39,34,27,.035); }
+.pro-module-top { display: flex; align-items: center; justify-content: space-between; }
+.pro-module-top > span { padding: 6px 8px; border-radius: 999px; background: #eee7dc; color: #795f40; font-size: 7px; font-weight: 800; letter-spacing: .12em; }
+.pro-module-top i { color: #b7afa4; font: normal 10px Manrope,Arial,sans-serif; }
+.pro-module h3 { margin: 30px 0 10px; font-size: 17px; }
+.pro-module p { margin: 0; color: #777067; font-size: 10px; line-height: 1.7; }
+.pro-module > div:last-child { margin-top: auto; display: flex; align-items: center; justify-content: space-between; }
+.pro-module button { border: 0; background: none; color: #a29a8f; font-size: 8px; text-transform: uppercase; }
 
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
@@ -50,4 +62,7 @@
   .main-top { min-height: 62px; }
   .top-right a { display: none; }
   .metric,.panel { border-radius: 13px; }
+  .pro-grid { grid-template-columns: 1fr; }
 }
+
+@media (min-width:761px) and (max-width:1180px) { .pro-grid { grid-template-columns: repeat(2,1fr); } }

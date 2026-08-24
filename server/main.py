@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -62,6 +63,18 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     roles: Mapped[list[Role]] = relationship(secondary="user_roles", lazy="selectin")
     coach: Mapped[Optional["Coach"]] = relationship(back_populates="user", uselist=False)
+    customer_profile: Mapped[Optional["CustomerProfile"]] = relationship(back_populates="user", uselist=False)
+
+class CustomerProfile(Base):
+    __tablename__ = "customer_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    phone: Mapped[str] = mapped_column(String(80), default="")
+    birth_date: Mapped[str] = mapped_column(String(20), default="")
+    emergency_contact: Mapped[str] = mapped_column(String(120), default="")
+    marketing_opt_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    credits: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    user: Mapped[User] = relationship(back_populates="customer_profile")
 
 class Studio(Base):
     __tablename__ = "studios"
@@ -111,6 +124,17 @@ class Booking(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     klass: Mapped[ClassSession] = relationship()
 
+class CustomerBookingLink(Base):
+    __tablename__ = "customer_booking_links"
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class PublicClassMap(Base):
+    __tablename__ = "public_class_map"
+    external_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), unique=True)
+
 class Waitlist(Base):
     __tablename__ = "waitlist"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -118,6 +142,12 @@ class Waitlist(Base):
     email: Mapped[str] = mapped_column(String(255), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     klass: Mapped[ClassSession] = relationship()
+
+class CustomerWaitlistLink(Base):
+    __tablename__ = "customer_waitlist_links"
+    waitlist_id: Mapped[int] = mapped_column(ForeignKey("waitlist.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class ScheduleUpload(Base):
     __tablename__ = "schedule_uploads"
@@ -138,7 +168,7 @@ ALL_PERMISSIONS = [
     "dashboard.view", "finance.view", "bookings.view", "bookings.manage",
     "classes.view", "classes.create", "classes.edit", "classes.delete", "classes.edit_own",
     "coaches.view", "coaches.manage", "roles.manage", "users.manage", "schedules.upload",
-    "marketing.view"
+    "marketing.view", "customers.view", "customers.manage", "pro.view"
 ]
 DEFAULT_COACH_PERMS = ["dashboard.view", "bookings.view", "classes.view", "classes.create", "classes.edit_own", "schedules.upload"]
 
@@ -164,6 +194,8 @@ def seed():
             db.add(Role(name="Administrator", description="Voller Zugriff", permissions_json=json.dumps(["*"]), system=True))
         if not db.scalar(select(Role).where(Role.name == "Coach")):
             db.add(Role(name="Coach", description="Standardzugriff für Coaches", permissions_json=json.dumps(DEFAULT_COACH_PERMS), system=True))
+        if not db.scalar(select(Role).where(Role.name == "Customer")):
+            db.add(Role(name="Customer", description="Kundenkonto für Buchungen und Class Credits", permissions_json="[]", system=True))
         for sid, name, address, cap in STUDIOS:
             if not db.get(Studio, sid):
                 db.add(Studio(id=sid, name=name, address=address, capacity=cap))
@@ -179,6 +211,14 @@ def user_permissions(user: User):
 def can(user: User, permission: str):
     perms = user_permissions(user)
     return "*" in perms or permission in perms
+
+def portal_for(user: User):
+    perms = user_permissions(user)
+    if "*" in perms or any(p in perms for p in ALL_PERMISSIONS):
+        if user.coach and "*" not in perms and "roles.manage" not in perms and "users.manage" not in perms:
+            return "/coach"
+        return "/admin"
+    return "/account"
 
 def make_token(user: User):
     now = datetime.now(timezone.utc)
@@ -197,6 +237,17 @@ def current_user(credentials: HTTPAuthorizationCredentials = Depends(security), 
         raise HTTPException(401, "inactive_user")
     return user
 
+def optional_user(credentials: HTTPAuthorizationCredentials = Depends(security), cp_session: Optional[str] = Cookie(default=None), db: Session = Depends(db_session)):
+    token = credentials.credentials if credentials else cp_session
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        user = db.get(User, int(payload["sub"]))
+    except Exception:
+        return None
+    return user if user and user.is_active else None
+
 def require(permission: str):
     def dep(user: User = Depends(current_user)):
         if not can(user, permission):
@@ -210,7 +261,8 @@ def user_dict(user: User):
         "is_active": user.is_active,
         "roles": [{"id": r.id, "name": r.name, "permissions": r.permissions} for r in user.roles],
         "permissions": sorted(user_permissions(user)),
-        "coach": None if not user.coach else {"id": user.coach.id, "display_name": user.coach.display_name, "photo_url": user.coach.photo_url}
+        "coach": None if not user.coach else {"id": user.coach.id, "display_name": user.coach.display_name, "photo_url": user.coach.photo_url},
+        "portal": portal_for(user)
     }
 
 def class_dict(c: ClassSession, db: Session):
@@ -222,12 +274,22 @@ def class_dict(c: ClassSession, db: Session):
         "capacity": c.capacity, "reserved": reserved, "spots": max(0, c.capacity - reserved), "status": c.status
     }
 
-app = FastAPI(title="Classy Pilates Production API", version="1.0")
+app = FastAPI(title="Classy Pilates Production API", version="1.1")
 app.add_middleware(CORSMiddleware, allow_origins=["https://classy.smarbiz.sbs", "http://localhost", "http://127.0.0.1"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: str = ""
+    last_name: str = ""
+    phone: str = ""
+    birth_date: str = ""
+    emergency_contact: str = ""
+    marketing_opt_in: bool = False
 
 class BootstrapIn(BaseModel):
     email: EmailStr
@@ -255,6 +317,22 @@ class StaffUpdate(BaseModel):
     is_active: Optional[bool] = None
     role_ids: Optional[list[int]] = None
 
+class CustomerProfileIn(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    phone: str = ""
+    birth_date: str = ""
+    emergency_contact: str = ""
+    marketing_opt_in: bool = False
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
+class CustomerAdminUpdate(BaseModel):
+    credits: Optional[int] = None
+    is_active: Optional[bool] = None
+
 class ClassIn(BaseModel):
     studio_id: str
     title: str
@@ -270,17 +348,27 @@ class BookingUpdate(BaseModel):
     amount_cents: Optional[int] = None
 
 class PublicBookingIn(BaseModel):
-    classId: int
+    classId: int | str
     email: EmailStr
     firstName: str = ""
     lastName: str = ""
     phone: str = ""
     spot: Optional[int] = None
     paymentMethod: str = ""
+    studioId: str = ""
+    title: str = ""
+    classType: str = ""
+    startsAt: Optional[datetime] = None
+    duration: int = 50
+    capacity: int = 10
+    coachName: str = ""
 
 class WaitlistIn(BaseModel):
     classId: int
     email: EmailStr
+
+class BookingClaimIn(BaseModel):
+    reference: str
 
 @app.get("/api/health")
 def health():
@@ -315,6 +403,43 @@ def login(data: LoginIn, response: Response, db: Session = Depends(db_session)):
     response.set_cookie("cp_session", token, max_age=JWT_TTL_HOURS * 3600, httponly=True, secure=True, samesite="lax", path="/")
     return {"token": token, "user": user_dict(user)}
 
+@app.post("/api/auth/register")
+def register(data: RegisterIn, response: Response, db: Session = Depends(db_session)):
+    email = data.email.strip().lower()
+    if len(data.password) < 8:
+        raise HTTPException(400, "password_too_short")
+    if len(data.first_name.strip()) < 2 or len(data.last_name.strip()) < 2:
+        raise HTTPException(400, "name_required")
+    if db.scalar(select(User).where(func.lower(User.email) == email)):
+        raise HTTPException(409, "email_exists")
+    role = db.scalar(select(Role).where(Role.name == "Customer"))
+    if not role:
+        raise HTTPException(503, "customer_role_missing")
+    user = User(
+        email=email,
+        password_hash=pwd.hash(data.password),
+        first_name=data.first_name.strip(),
+        last_name=data.last_name.strip(),
+        roles=[role],
+    )
+    db.add(user)
+    try:
+        db.flush()
+    except Exception:
+        db.rollback()
+        raise HTTPException(409, "email_exists")
+    db.add(CustomerProfile(
+        user_id=user.id,
+        phone=data.phone.strip(),
+        birth_date=data.birth_date.strip(),
+        emergency_contact=data.emergency_contact.strip(),
+        marketing_opt_in=data.marketing_opt_in,
+    ))
+    db.commit(); db.refresh(user)
+    token = make_token(user)
+    response.set_cookie("cp_session", token, max_age=JWT_TTL_HOURS * 3600, httponly=True, secure=True, samesite="lax", path="/")
+    return {"token": token, "user": user_dict(user)}
+
 @app.post("/api/auth/logout")
 def auth_logout(response: Response):
     response.delete_cookie("cp_session", path="/")
@@ -323,6 +448,170 @@ def auth_logout(response: Response):
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user)):
     return user_dict(user)
+
+def customer_only(user: User = Depends(current_user)):
+    if portal_for(user) != "/account":
+        raise HTTPException(403, "customer_access_required")
+    return user
+
+def get_customer_profile(user: User, db: Session):
+    profile = db.get(CustomerProfile, user.id)
+    if not profile:
+        profile = CustomerProfile(user_id=user.id)
+        db.add(profile); db.commit(); db.refresh(profile)
+    return profile
+
+def as_utc(value: datetime):
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+def customer_booking_dict(booking: Booking):
+    starts_at = as_utc(booking.klass.starts_at)
+    cancellation_deadline = starts_at - timedelta(hours=12)
+    return {
+        "reference": booking.reference,
+        "name": booking.klass.title,
+        "type": booking.klass.class_type,
+        "studio": booking.klass.studio.name,
+        "studio_address": booking.klass.studio.address,
+        "coach": booking.klass.coach.display_name if booking.klass.coach else "Classy Coach",
+        "starts_at": starts_at.isoformat(),
+        "duration": booking.klass.duration,
+        "spot_number": booking.spot_number,
+        "status": booking.status,
+        "payment_status": booking.payment_status,
+        "payment_method": booking.payment_method,
+        "amount_cents": booking.amount_cents,
+        "cancellation_deadline": cancellation_deadline.isoformat(),
+        "can_cancel": booking.status == "reserved" and datetime.now(timezone.utc) < cancellation_deadline,
+    }
+
+@app.get("/api/customer/dashboard")
+def customer_dashboard(user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    profile = get_customer_profile(user, db)
+    rows = db.scalars(
+        select(Booking)
+        .join(CustomerBookingLink, CustomerBookingLink.booking_id == Booking.id)
+        .join(Booking.klass)
+        .where(CustomerBookingLink.user_id == user.id)
+        .order_by(ClassSession.starts_at.desc())
+    ).all()
+    now = datetime.now(timezone.utc)
+    booking_rows = [customer_booking_dict(b) for b in rows]
+    upcoming = [b for b in booking_rows if as_utc(date_parser.parse(b["starts_at"])) >= now and b["status"] == "reserved"]
+    waitlist_count = db.scalar(select(func.count(CustomerWaitlistLink.waitlist_id)).where(CustomerWaitlistLink.user_id == user.id)) or 0
+    return {
+        "profile": {"first_name": user.first_name, "last_name": user.last_name, "email": user.email},
+        "credits": profile.credits,
+        "upcoming_count": len(upcoming),
+        "total_bookings": len(booking_rows),
+        "waitlist_count": waitlist_count,
+        "next_booking": upcoming[-1] if upcoming else None,
+        "recent_bookings": booking_rows[:5],
+    }
+
+@app.get("/api/customer/bookings")
+def customer_bookings(user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    rows = db.scalars(
+        select(Booking)
+        .join(CustomerBookingLink, CustomerBookingLink.booking_id == Booking.id)
+        .where(CustomerBookingLink.user_id == user.id)
+        .order_by(Booking.created_at.desc())
+    ).all()
+    return {"bookings": [customer_booking_dict(b) for b in rows]}
+
+@app.post("/api/customer/bookings/claim")
+def customer_claim_booking(data: BookingClaimIn, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    reference = data.reference.strip().upper()
+    booking = db.scalar(select(Booking).where(Booking.reference == reference, func.lower(Booking.email) == user.email.lower()))
+    if not booking:
+        raise HTTPException(404, "booking_not_found")
+    link = db.get(CustomerBookingLink, booking.id)
+    if link and link.user_id != user.id:
+        raise HTTPException(409, "booking_already_linked")
+    if not link:
+        db.add(CustomerBookingLink(booking_id=booking.id, user_id=user.id)); db.commit()
+    return {"ok": True}
+
+@app.delete("/api/customer/bookings/{reference}")
+def customer_cancel_booking(reference: str, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    booking = db.scalar(
+        select(Booking)
+        .join(CustomerBookingLink, CustomerBookingLink.booking_id == Booking.id)
+        .where(Booking.reference == reference.strip().upper(), CustomerBookingLink.user_id == user.id)
+    )
+    if not booking:
+        raise HTTPException(404, "booking_not_found")
+    if booking.status != "reserved":
+        raise HTTPException(409, "booking_not_active")
+    if datetime.now(timezone.utc) >= as_utc(booking.klass.starts_at) - timedelta(hours=12):
+        raise HTTPException(409, "cancellation_window_closed")
+    booking.status = "cancelled"; db.commit()
+    return {"ok": True}
+
+@app.get("/api/customer/waitlist")
+def customer_waitlist(user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    rows = db.scalars(
+        select(Waitlist)
+        .join(CustomerWaitlistLink, CustomerWaitlistLink.waitlist_id == Waitlist.id)
+        .where(CustomerWaitlistLink.user_id == user.id)
+        .order_by(Waitlist.created_at.desc())
+    ).all()
+    return {"waitlist": [{
+        "id": row.id,
+        "name": row.klass.title,
+        "studio": row.klass.studio.name,
+        "starts_at": as_utc(row.klass.starts_at).isoformat(),
+        "coach": row.klass.coach.display_name if row.klass.coach else "Classy Coach",
+        "created_at": row.created_at.isoformat(),
+    } for row in rows]}
+
+@app.delete("/api/customer/waitlist/{waitlist_id}")
+def customer_leave_waitlist(waitlist_id: int, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    row = db.scalar(
+        select(Waitlist)
+        .join(CustomerWaitlistLink, CustomerWaitlistLink.waitlist_id == Waitlist.id)
+        .where(Waitlist.id == waitlist_id, CustomerWaitlistLink.user_id == user.id)
+    )
+    if not row:
+        raise HTTPException(404, "waitlist_not_found")
+    db.delete(row); db.commit()
+    return {"ok": True}
+
+@app.get("/api/customer/profile")
+def customer_profile(user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    profile = get_customer_profile(user, db)
+    return {
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "phone": profile.phone,
+        "birth_date": profile.birth_date,
+        "emergency_contact": profile.emergency_contact,
+        "marketing_opt_in": profile.marketing_opt_in,
+        "credits": profile.credits,
+    }
+
+@app.patch("/api/customer/profile")
+def customer_profile_update(data: CustomerProfileIn, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    if len(data.first_name.strip()) < 2 or len(data.last_name.strip()) < 2:
+        raise HTTPException(400, "name_required")
+    profile = get_customer_profile(user, db)
+    user.first_name = data.first_name.strip(); user.last_name = data.last_name.strip()
+    profile.phone = data.phone.strip(); profile.birth_date = data.birth_date.strip()
+    profile.emergency_contact = data.emergency_contact.strip(); profile.marketing_opt_in = data.marketing_opt_in
+    db.commit()
+    return {"ok": True}
+
+@app.post("/api/customer/change-password")
+def customer_change_password(data: PasswordChangeIn, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+    if not pwd.verify(data.current_password, user.password_hash):
+        raise HTTPException(400, "current_password_invalid")
+    if len(data.new_password) < 8:
+        raise HTTPException(400, "password_too_short")
+    user.password_hash = pwd.hash(data.new_password); db.commit()
+    return {"ok": True}
 
 @app.get("/api/staff/dashboard")
 def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Depends(db_session)):
@@ -363,9 +652,16 @@ def create_role(data: RoleIn, user: User = Depends(require("roles.manage")), db:
 def update_role(role_id: int, data: RoleIn, user: User = Depends(require("roles.manage")), db: Session = Depends(db_session)):
     role = db.get(Role, role_id)
     if not role: raise HTTPException(404, "not_found")
-    role.name = data.name.strip(); role.description = data.description
-    if not role.system: role.permissions_json = json.dumps([p for p in data.permissions if p in ALL_PERMISSIONS])
-    elif role.name == "Administrator": role.permissions_json = json.dumps(["*"])
+    requested_name = data.name.strip()
+    if role.system and requested_name != role.name:
+        raise HTTPException(400, "system_role_name_locked")
+    role.name = requested_name; role.description = data.description
+    if not role.system or role.name == "Coach":
+        role.permissions_json = json.dumps([p for p in data.permissions if p in ALL_PERMISSIONS])
+    elif role.name == "Administrator":
+        role.permissions_json = json.dumps(["*"])
+    elif role.name == "Customer":
+        role.permissions_json = "[]"
     db.commit(); return {"ok": True}
 
 @app.delete("/api/staff/roles/{role_id}")
@@ -377,7 +673,43 @@ def delete_role(role_id: int, user: User = Depends(require("roles.manage")), db:
 
 @app.get("/api/staff/users")
 def list_users(user: User = Depends(require("users.manage")), db: Session = Depends(db_session)):
-    return {"users": [user_dict(u) for u in db.scalars(select(User).order_by(User.created_at.desc())).all()]}
+    users = db.scalars(select(User).order_by(User.created_at.desc())).all()
+    return {"users": [user_dict(u) for u in users if not any(role.name == "Customer" for role in u.roles)]}
+
+@app.get("/api/staff/customers")
+def list_customers(user: User = Depends(require("customers.view")), db: Session = Depends(db_session)):
+    customers = [u for u in db.scalars(select(User).order_by(User.created_at.desc())).all() if any(role.name == "Customer" for role in u.roles)]
+    rows = []
+    for customer in customers:
+        profile = get_customer_profile(customer, db)
+        booking_count = db.scalar(select(func.count(Booking.id)).where(func.lower(Booking.email) == customer.email.lower())) or 0
+        active_count = db.scalar(select(func.count(Booking.id)).where(func.lower(Booking.email) == customer.email.lower(), Booking.status == "reserved")) or 0
+        rows.append({
+            "id": customer.id,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "email": customer.email,
+            "phone": profile.phone,
+            "credits": profile.credits,
+            "booking_count": booking_count,
+            "active_bookings": active_count,
+            "is_active": customer.is_active,
+            "created_at": customer.created_at.isoformat(),
+        })
+    return {"customers": rows}
+
+@app.patch("/api/staff/customers/{customer_id}")
+def update_customer(customer_id: int, data: CustomerAdminUpdate, user: User = Depends(require("customers.manage")), db: Session = Depends(db_session)):
+    customer = db.get(User, customer_id)
+    if not customer or not any(role.name == "Customer" for role in customer.roles):
+        raise HTTPException(404, "customer_not_found")
+    profile = get_customer_profile(customer, db)
+    if data.credits is not None:
+        profile.credits = max(0, data.credits)
+    if data.is_active is not None:
+        customer.is_active = data.is_active
+    db.commit()
+    return {"ok": True}
 
 @app.post("/api/staff/users")
 def create_staff(data: StaffIn, user: User = Depends(require("users.manage")), db: Session = Depends(db_session)):
@@ -524,7 +856,7 @@ async def upload_schedule(file: UploadFile = File(...), user: User = Depends(req
     db.commit(); return {"ok":True,"status":record.status,"imported_rows":imported}
 
 @app.get("/api/staff/marketing")
-def marketing(user: User = Depends(current_user)):
+def marketing(user: User = Depends(require("pro.view"))):
     return {"locked": True, "premium": True, "title": "E-Mail Marketing", "message": "Premium-Modul – als nächstes Upgrade verfügbar."}
 
 @app.get("/api/schedule")
@@ -535,9 +867,57 @@ def public_schedule(from_: Optional[str] = None, to: Optional[str] = None, db: S
     rows=db.scalars(q).all()
     return {"classes":[class_dict(c,db) for c in rows]}
 
+FALLBACK_COACHES = {"Anna", "Andrea", "Christina", "Gabriella", "Ida", "Jessi", "Kimberley", "Melina", "Nathalie", "Sani", "Zora", "Laetitia"}
+FALLBACK_CLASS_TYPES = {"Reformer", "Powerformer", "Mat", "Barre"}
+
+def resolve_public_class(data: PublicBookingIn, user: Optional[User], db: Session):
+    try:
+        class_id = int(data.classId)
+    except (TypeError, ValueError):
+        class_id = None
+    if class_id is not None:
+        return db.get(ClassSession, class_id)
+
+    external_id = str(data.classId).strip()
+    mapped = db.get(PublicClassMap, external_id)
+    if mapped:
+        return db.get(ClassSession, mapped.class_id)
+    if not user or portal_for(user) != "/account":
+        raise HTTPException(401, "customer_login_required")
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})-(bhf1|ladies|sachsen|bornheim|mid|oval)-(\d{4})", external_id)
+    if not match or data.studioId != match.group(2) or data.classType not in FALLBACK_CLASS_TYPES or not data.startsAt:
+        raise HTTPException(400, "invalid_public_class")
+    starts_at = as_utc(data.startsAt)
+    now = datetime.now(timezone.utc)
+    if starts_at < now - timedelta(hours=1) or starts_at > now + timedelta(days=21):
+        raise HTTPException(400, "invalid_public_class_time")
+    if not (2 <= len(data.title.strip()) <= 180):
+        raise HTTPException(400, "invalid_public_class_title")
+    coach_id = None
+    coach_name = data.coachName.strip()
+    if coach_name in FALLBACK_COACHES:
+        coach = db.scalar(select(Coach).where(func.lower(Coach.display_name) == coach_name.lower()))
+        if not coach:
+            coach = Coach(display_name=coach_name)
+            db.add(coach); db.flush()
+        coach_id = coach.id
+    klass = ClassSession(
+        studio_id=data.studioId,
+        title=data.title.strip(),
+        class_type=data.classType,
+        coach_id=coach_id,
+        starts_at=starts_at,
+        duration=min(120, max(15, data.duration)),
+        capacity=min(30, max(1, data.capacity)),
+        created_by=user.id,
+    )
+    db.add(klass); db.flush()
+    db.add(PublicClassMap(external_id=external_id, class_id=klass.id)); db.flush()
+    return klass
+
 @app.post("/api/bookings")
-def public_booking(data: PublicBookingIn, db: Session = Depends(db_session)):
-    c=db.get(ClassSession,data.classId)
+def public_booking(data: PublicBookingIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
+    c=resolve_public_class(data,user,db)
     if not c or c.status!="active": raise HTTPException(409,"class_unavailable")
     reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
     if reserved>=c.capacity: raise HTTPException(409,"class_full")
@@ -548,7 +928,10 @@ def public_booking(data: PublicBookingIn, db: Session = Depends(db_session)):
         if spot_taken: raise HTTPException(409,"spot_taken")
     ref="CP-"+secrets.token_hex(4).upper()
     b=Booking(reference=ref,class_id=c.id,customer_name=(data.firstName+" "+data.lastName).strip(),email=data.email.lower(),phone=data.phone,spot_number=data.spot,payment_method=data.paymentMethod,payment_status="pending",amount_cents=2800 if data.paymentMethod else 0)
-    db.add(b);db.commit();return {"booking":{"reference":ref},"payment_status":b.payment_status}
+    db.add(b); db.flush()
+    if user and portal_for(user) == "/account" and user.email.lower() == data.email.lower():
+        db.add(CustomerBookingLink(booking_id=b.id, user_id=user.id))
+    db.commit();return {"booking":{"reference":ref},"payment_status":b.payment_status}
 
 @app.get("/api/bookings")
 def public_bookings(email: str, reference: str, db: Session = Depends(db_session)):
@@ -566,13 +949,16 @@ def public_cancel(payload: dict, db: Session = Depends(db_session)):
     b.status="cancelled";db.commit();return {"ok":True}
 
 @app.post("/api/waitlist")
-def join_waitlist(data: WaitlistIn, db: Session = Depends(db_session)):
+def join_waitlist(data: WaitlistIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=db.get(ClassSession,data.classId)
     if not c: raise HTTPException(404,"not_found")
     reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
     if reserved<c.capacity: raise HTTPException(409,"spots_available")
     existing=db.scalar(select(Waitlist).where(Waitlist.class_id==c.id,Waitlist.email==data.email.lower()))
     if existing: raise HTTPException(409,"already_waitlisted")
-    w=Waitlist(class_id=c.id,email=data.email.lower());db.add(w);db.commit()
+    w=Waitlist(class_id=c.id,email=data.email.lower());db.add(w);db.flush()
+    if user and portal_for(user) == "/account" and user.email.lower() == data.email.lower():
+        db.add(CustomerWaitlistLink(waitlist_id=w.id, user_id=user.id))
+    db.commit()
     pos=db.scalar(select(func.count(Waitlist.id)).where(Waitlist.class_id==c.id,Waitlist.created_at<=w.created_at)) or 1
     return {"position":pos}

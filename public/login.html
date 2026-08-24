@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#171713">
+  <meta name="description" content="Classy Pilates Login für Kundinnen, Coaches und Administration.">
+  <title>Login — Classy Pilates</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/login.css?v=20260824-1">
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-visual">
+      <a class="login-brand" href="/"><span>CP</span><div><b>CLASSY PILATES</b><small>FRANKFURT AM MAIN</small></div></a>
+      <div class="visual-copy"><p>ONE LOGIN · YOUR CLASSY SPACE</p><h1>Welcome<br><em>back.</em></h1><span>Ein Zugang für Kundinnen, Coaches und Administration. Nach dem Login öffnen wir automatisch den richtigen Bereich.</span></div>
+      <div class="portal-list"><span>01 · CUSTOMER</span><span>02 · COACH</span><span>03 · ADMIN</span></div>
+    </section>
+    <section class="login-panel">
+      <a class="back-link" href="/">← Zur Website</a>
+      <div class="auth-wrap">
+        <div class="tabs" role="tablist"><button class="active" id="loginTab" type="button">Anmelden</button><button id="registerTab" type="button">Konto erstellen</button></div>
+        <form id="loginForm">
+          <p class="kicker">SECURE ACCESS</p><h2>Dein Login</h2><p class="muted">Für Kunden, Coaches und Administration.</p>
+          <label>E-MAIL<input id="loginEmail" type="email" autocomplete="username" required placeholder="name@email.de"></label>
+          <label>PASSWORT<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+          <label class="check"><input id="showPassword" type="checkbox"><span>Passwort anzeigen</span></label>
+          <button class="submit" id="loginSubmit" type="submit">Einloggen</button>
+          <div class="message" id="loginMessage" aria-live="polite"></div>
+        </form>
+        <form id="registerForm" hidden>
+          <p class="kicker">NEW TO CLASSY</p><h2>Kundenkonto</h2><p class="muted">Buchungen, Credits und Profil an einem Ort.</p>
+          <div class="form-grid"><label>VORNAME<input id="registerFirst" autocomplete="given-name" required></label><label>NACHNAME<input id="registerLast" autocomplete="family-name" required></label></div>
+          <label>E-MAIL<input id="registerEmail" type="email" autocomplete="email" required placeholder="name@email.de"></label>
+          <label>PASSWORT<input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required placeholder="Mindestens 8 Zeichen"></label>
+          <label>MOBILNUMMER <small>OPTIONAL</small><input id="registerPhone" type="tel" autocomplete="tel"></label>
+          <label class="check"><input id="registerTerms" type="checkbox" required><span>Ich akzeptiere <a href="/terms-conditions">AGB</a>, <a href="/data-privacy">Datenschutz</a> und <a href="/studio-rules">Studio Rules</a>.</span></label>
+          <label class="check optional"><input id="registerMarketing" type="checkbox"><span>Ich möchte Classy-News und Studio-Updates erhalten.</span></label>
+          <button class="submit" id="registerSubmit" type="submit">Konto erstellen</button>
+          <div class="message" id="registerMessage" aria-live="polite"></div>
+        </form>
+      </div>
+    </section>
+  </main>
+  <script src="/login.js?v=20260824-1"></script>
+</body>
+</html>

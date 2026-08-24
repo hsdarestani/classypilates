@@ -95,7 +95,9 @@ jobs:
 
           SMOKE_EMAIL="smoke-$(openssl rand -hex 6)@classypilates.de"
           SMOKE_PASSWORD="Smoke-$(openssl rand -hex 10)!"
-          export SMOKE_EMAIL SMOKE_PASSWORD
+          SMOKE_CUSTOMER_EMAIL="customer-smoke-$(openssl rand -hex 6)@classypilates.de"
+          SMOKE_CUSTOMER_PASSWORD="Member-$(openssl rand -hex 10)!"
+          export SMOKE_EMAIL SMOKE_PASSWORD SMOKE_CUSTOMER_EMAIL SMOKE_CUSTOMER_PASSWORD
           docker compose exec -T -e SMOKE_EMAIL -e SMOKE_PASSWORD api python - <<'PY'
           import os
           from sqlalchemy import select
@@ -106,15 +108,15 @@ jobs:
               db.commit()
           PY
           cleanup_smoke() {
-            docker compose exec -T -e SMOKE_EMAIL api python - <<'PY'
+            docker compose exec -T -e SMOKE_EMAIL -e SMOKE_CUSTOMER_EMAIL api python - <<'PY'
           import os
           from sqlalchemy import delete
           from main import SessionLocal, User
           with SessionLocal() as db:
-              db.execute(delete(User).where(User.email == os.environ["SMOKE_EMAIL"]))
+              db.execute(delete(User).where(User.email.in_([os.environ["SMOKE_EMAIL"], os.environ["SMOKE_CUSTOMER_EMAIL"]])))
               db.commit()
           PY
-            rm -f /tmp/classy-smoke-cookies /tmp/classy-smoke-login.json
+            rm -f /tmp/classy-smoke-cookies /tmp/classy-smoke-login.json /tmp/classy-customer-cookies /tmp/classy-customer-register.json
           }
           trap cleanup_smoke EXIT
           LOGIN_CODE=$(curl -sS -o /tmp/classy-smoke-login.json -c /tmp/classy-smoke-cookies -w '%{http_code}' \
@@ -125,6 +127,16 @@ jobs:
           SMOKE_TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/classy-smoke-login.json"))["token"])')
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/auth/me >/dev/null
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/staff/dashboard >/dev/null
+
+          CUSTOMER_CODE=$(curl -sS -o /tmp/classy-customer-register.json -c /tmp/classy-customer-cookies -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$SMOKE_CUSTOMER_EMAIL\",\"password\":\"$SMOKE_CUSTOMER_PASSWORD\",\"first_name\":\"Portal\",\"last_name\":\"Smoke\"}" \
+            http://127.0.0.1:8787/api/auth/register)
+          test "$CUSTOMER_CODE" = "200"
+          CUSTOMER_TOKEN=$(python3 -c 'import json; data=json.load(open("/tmp/classy-customer-register.json")); assert data["user"]["portal"] == "/account"; print(data["token"])')
+          curl -fsS -H "Authorization: Bearer $CUSTOMER_TOKEN" http://127.0.0.1:8787/api/customer/dashboard >/dev/null
+          CUSTOMER_STAFF_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CUSTOMER_TOKEN" http://127.0.0.1:8787/api/staff/dashboard)
+          test "$CUSTOMER_STAFF_CODE" = "403"
           cleanup_smoke
           trap - EXIT
 
@@ -163,12 +175,16 @@ jobs:
               location = /studio-rules { try_files /studio-rules.html =404; }
               location = /shop { try_files /shop.html =404; }
               location = /classfit { try_files /classfit.html =404; }
+              location = /login { try_files /login.html =404; add_header Cache-Control "no-store"; }
+              location = /account { try_files /account.html =404; add_header Cache-Control "no-store"; }
               location = /imprint.html { return 301 /imprint; }
               location = /data-privacy.html { return 301 /data-privacy; }
               location = /terms-conditions.html { return 301 /terms-conditions; }
               location = /studio-rules.html { return 301 /studio-rules; }
               location = /shop.html { return 301 /shop; }
               location = /classfit.html { return 301 /classfit; }
+              location = /login.html { return 301 /login; }
+              location = /account.html { return 301 /account; }
 
               location / {
                   try_files $uri $uri/ /index.html;

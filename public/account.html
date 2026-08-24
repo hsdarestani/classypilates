@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#171713">
+  <meta name="robots" content="noindex,nofollow"><title>Mein Classy — Classy Pilates</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/account.css?v=20260824-1">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="a-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/></symbol>
+    <symbol id="a-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M16 3v4M8 3v4M3 10h18"/></symbol>
+    <symbol id="a-ticket" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4Z"/><path d="M13 6v12"/></symbol>
+    <symbol id="a-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="a-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="a-exit" viewBox="0 0 24 24"><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10"/></symbol>
+  </svg>
+  <div class="account-app" id="accountApp" hidden>
+    <aside class="account-side" id="accountSide">
+      <a class="account-brand" href="/"><span>CP</span><div><b>CLASSY</b><small>MEIN BEREICH</small></div></a>
+      <nav id="accountNav">
+        <button class="active" data-view="overview"><svg><use href="#a-home"/></svg><span>Übersicht</span></button>
+        <button data-view="bookings"><svg><use href="#a-calendar"/></svg><span>Meine Buchungen</span></button>
+        <button data-view="credits"><svg><use href="#a-ticket"/></svg><span>Credits & Pässe</span></button>
+        <button data-view="waitlist"><svg><use href="#a-clock"/></svg><span>Warteliste</span></button>
+        <button data-view="profile"><svg><use href="#a-user"/></svg><span>Profil & Sicherheit</span></button>
+      </nav>
+      <div class="account-person"><div id="accountAvatar">C</div><span><b id="accountName">—</b><small>Kundenkonto</small></span><button id="accountLogout" title="Abmelden"><svg><use href="#a-exit"/></svg></button></div>
+    </aside>
+    <main class="account-main">
+      <header class="account-top"><button class="account-menu" id="accountMenu" type="button">☰</button><div><p id="accountEyebrow">MEIN CLASSY</p><h1 id="accountTitle">Übersicht</h1></div><a href="/#schedule">Neue Class buchen ↗</a></header>
+      <section id="accountView"><div class="account-loading">Wird geladen…</div></section>
+    </main>
+  </div>
+  <div class="account-toast" id="accountToast"></div>
+  <script src="/account.js?v=20260824-2"></script>
+</body>
+</html>
