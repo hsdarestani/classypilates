@@ -61,14 +61,17 @@
       spot.setAttribute('aria-label',`${noun} ${String(i+1).padStart(2,'0')} auswählen`);
     });
     const oldEntry=floor.querySelector('.floor-entry');if(oldEntry)oldEntry.style.display='none';
-    normalizeSpotText(id);
+    normalizeSpotText();
   }
 
-  function normalizeSpotText(id){
+  function normalizeSpotText(){
     const ct=classType();
     const noun=ct.includes('powerformer')?'Powerformer':ct.includes('mat')?'Matte':ct.includes('barre')?'Position':'Reformer';
     document.querySelectorAll('.spot-summary b,.success-grid b,.checkout-mini-summary b').forEach(el=>{
-      if(/^(Reformer|Powerformer|Matte|Position)\s+\d+/i.test(el.textContent.trim()))el.textContent=el.textContent.replace(/^(Reformer|Powerformer|Matte|Position)/i,noun);
+      const current=el.textContent.trim();
+      if(!/^(Reformer|Powerformer|Matte|Position)\s+\d+/i.test(current))return;
+      const next=current.replace(/^(Reformer|Powerformer|Matte|Position)/i,noun);
+      if(next!==current)el.textContent=next;
     });
   }
 
@@ -90,7 +93,17 @@
   }catch(err){console.warn('Studio layout capacity sync skipped',err)}
 
   const root=document.querySelector('#drawerBody')||document.body;
-  const observer=new MutationObserver(()=>{applyRealLayout();normalizeSpotText(studioIdFromText())});
+  let scheduled=false;
+  const refreshLayout=()=>{
+    if(scheduled)return;
+    scheduled=true;
+    requestAnimationFrame(()=>{
+      scheduled=false;
+      applyRealLayout();
+      normalizeSpotText();
+    });
+  };
+  const observer=new MutationObserver(refreshLayout);
   observer.observe(root,{childList:true,subtree:true});
-  applyRealLayout();
+  refreshLayout();
 })();
