@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#151513">
+  <title>Classy Pilates — Control Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./staff.css">
+</head>
+<body>
+  <section class="auth-screen" id="authScreen">
+    <div class="auth-visual"><div class="auth-brand"><span>CP</span><b>CLASSY PILATES</b></div><div><p>STAFF EXPERIENCE</p><h1>One team.<br><em>One control center.</em></h1><small>Bookings, classes, coaches, finance and operations across all Frankfurt studios.</small></div></div>
+    <div class="auth-card">
+      <a href="./index.html" class="back-site">← Zur Website</a>
+      <div id="loginBox"><p class="kicker">SECURE ACCESS</p><h2>Team Login</h2><p class="muted">Für Administration und Coaches.</p><label>E-Mail<input id="loginEmail" type="email" autocomplete="username" placeholder="name@classypilates.de"></label><label>Passwort<input id="loginPassword" type="password" autocomplete="current-password"></label><button id="loginBtn">Einloggen</button><div class="msg" id="loginMsg"></div></div>
+      <div id="setupBox" hidden><p class="kicker">FIRST SETUP</p><h2>Ersten Admin erstellen</h2><p class="muted">Dieser Schritt ist nur möglich, solange noch kein Benutzer existiert.</p><label>Vorname<input id="setupFirst" value="Admin"></label><label>E-Mail<input id="setupEmail" type="email" placeholder="admin@classypilates.de"></label><label>Passwort<input id="setupPassword" type="password" placeholder="Mindestens 10 Zeichen"></label><button id="setupBtn">Admin erstellen</button><div class="msg" id="setupMsg"></div></div>
+    </div>
+  </section>
+
+  <div class="app" id="app" hidden>
+    <aside class="sidebar">
+      <a class="side-brand" href="./index.html"><span>CP</span><div><b>CLASSY</b><small>CONTROL CENTER</small></div></a>
+      <nav id="nav">
+        <button data-view="dashboard" data-perm="dashboard.view" class="active">Overview</button>
+        <button data-view="bookings" data-perm="bookings.view">Reservierungen</button>
+        <button data-view="classes" data-perm="classes.view">Klassen & Schedule</button>
+        <button data-view="coaches" data-perm="coaches.view">Coaches</button>
+        <button data-view="finance" data-perm="finance.view">Finanzen</button>
+        <button data-view="roles" data-perm="roles.manage">Rollen & Zugriffe</button>
+        <button data-view="uploads" data-perm="schedules.upload">Plan hochladen</button>
+        <button data-view="marketing">E-Mail Marketing <span class="pro">PRO</span></button>
+      </nav>
+      <div class="side-user"><div class="avatar" id="sideAvatar">CP</div><div><b id="sideName">—</b><small id="sideRole">—</small></div><button id="logout" title="Abmelden">↗</button></div>
+    </aside>
+    <main class="main">
+      <header class="main-top"><button class="mobile-nav" id="mobileNav">☰</button><div><p id="pageEyebrow">OPERATIONS</p><h1 id="pageTitle">Overview</h1></div><div class="top-right"><span class="live"><i></i> LIVE</span><a href="./index.html">Website ↗</a></div></header>
+      <section id="view"></section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="./staff.js"></script>
+</body></html>
