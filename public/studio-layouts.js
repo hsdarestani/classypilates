@@ -1,12 +1,12 @@
 (()=>{
   const capacities={bhf1:8,ladies:10,sachsen:12,bornheim:8,mid:10,oval:10};
   const layouts={
-    sachsen:{title:'Studio Sachsenhausen',spots:[[18,24,90],[26,24,90],[34,24,90],[42,24,90],[50,24,90],[58,24,90],[52,66,90],[72,24,90],[79,24,90],[86,24,90],[93,24,90],[84,67,0]],features:[['mirror',34,4,44,3,0,'MIRROR'],['mirror',84,91,24,3,0,'MIRROR'],['entrance',4,76,4,16,0,'ENTRANCE'],['stairs',5,31,6,29,0,'STAIRS'],['desk',58,73,15,11,0,'RECEPTION'],['wall',65,47,2,84,0,'']]},
-    ladies:{title:'Studio Bahnhofsviertel · 2nd Floor',spots:[[16,20,0],[16,36,0],[16,52,0],[35,35,90],[56,20,0],[56,36,0],[56,52,0],[80,20,0],[80,36,0],[80,52,0]],features:[['mirror',4,37,3,45,90,'MIRROR'],['mirror',96,37,3,45,90,'MIRROR'],['mirror',42,65,17,3,0,'MIRROR'],['entrance',13,88,12,4,0,'ENTRANCE'],['desk',20,70,14,10,0,'RECEPTION'],['column',34,69,5,5,0,''],['bench',76,78,24,7,0,'SEATING']]},
-    bhf1:{title:'Studio Bahnhofsviertel · 1st Floor',spots:[[17,28,90],[33,28,90],[48,28,90],[66,28,90],[78,28,90],[90,28,90],[72,70,90],[88,70,90]],features:[['mirror',4,36,3,48,90,'MIRROR'],['mirror',76,4,38,3,0,'MIRROR'],['mirror',82,92,27,3,0,'MIRROR'],['entrance',5,84,4,14,0,'ENTRANCE']]},
-    bornheim:{title:'Studio Bornheim',spots:[[20,22,0],[16,66,90],[27,66,90],[38,66,90],[49,66,90],[60,66,90],[71,66,90],[83,66,90]],features:[['mirror',4,27,3,23,90,'MIRROR'],['mirror',49,92,73,3,0,'MIRROR'],['entrance',95,69,4,17,0,'ENTRANCE'],['stairs',93,34,6,22,0,'STAIRS'],['desk',79,24,14,10,0,'RECEPTION']]},
-    oval:{title:'Studio Oval',spots:[[34,24,62],[43,27,62],[52,30,62],[61,33,62],[70,36,62],[79,39,62],[88,42,62],[95,45,62],[77,69,0],[91,69,20]],features:[['mirror',56,4,55,3,0,'MIRROR'],['mirror',84,92,21,3,0,'MIRROR'],['mirror',68,62,3,23,90,'MIRROR'],['desk',10,56,14,9,0,'RECEPTION'],['changing',37,75,40,24,0,'CHANGING ROOM'],['column',18,32,5,5,0,''],['column',26,32,5,5,0,''],['column',97,51,5,5,0,'']]},
-    mid:{title:'Studio Mid',spots:[[11,43,90],[20,43,90],[29,43,90],[43,43,90],[52,43,90],[61,43,90],[75,43,90],[83,43,90],[91,43,90],[98,43,90]],features:[['mirror',18,82,25,3,0,'MIRROR'],['mirror',51,82,24,3,0,'MIRROR'],['mirror',84,82,25,3,0,'MIRROR']]}
+    sachsen:{title:'Studio Sachsenhausen',spots:[[19,21,90],[27,22,90],[35,21,90],[43,23,90],[51,22,90],[59,21,90],[49,62,90],[72,22,90],[80,21,90],[87,23,90],[94,22,90],[84,64,0]],features:[['mirror',38,4,50,3,0,'MIRROR'],['mirror',84,91,25,3,0,'MIRROR'],['entrance',4,72,4,15,0,'ENTRANCE'],['chair',5,17,4,6,90,''],['chair',5,25,4,6,90,''],['chair',5,33,4,6,90,''],['chair',5,41,4,6,90,''],['desk',59,76,13,11,0,'RECEPTION'],['partition',65,48,.7,89,0,'']]},
+    ladies:{title:'Studio Bahnhofsviertel · 2nd Floor',spots:[[16,18,0],[15,35,0],[17,52,0],[34,34,0],[55,18,0],[56,35,0],[57,52,0],[79,19,0],[80,35,0],[81,51,0]],features:[['mirror',4,36,3,45,90,'MIRROR'],['mirror',96,35,3,44,90,'MIRROR'],['mirror',43,68,16,3,0,'MIRROR'],['entrance',15,91,12,4,0,'ENTRANCE'],['desk',23,70,10,7,0,'RECEPTION'],['pillar-square',35,69,4,6,0,''],['chair',71,80,5,6,0,''],['chair',78,80,5,6,0,''],['chair',85,80,5,6,0,'']]},
+    bhf1:{title:'Studio Bahnhofsviertel · 1st Floor',spots:[[16,23,90],[32,25,90],[46,24,90],[66,20,90],[78,21,90],[90,20,90],[70,66,90],[86,68,90]],features:[['mirror',4,35,3,50,90,'MIRROR'],['mirror',76,4,40,3,0,'MIRROR'],['mirror',80,92,30,3,0,'MIRROR'],['entrance',5,84,4,14,0,'ENTRANCE']]},
+    bornheim:{title:'Studio Bornheim',spots:[[20,18,0],[16,63,90],[28,65,90],[39,62,90],[50,64,90],[61,62,90],[72,65,90],[84,63,90]],features:[['mirror',4,24,3,25,90,'MIRROR'],['mirror',49,88,74,3,0,'MIRROR'],['desk',82,18,12,7,0,'RECEPTION'],['chair',93,12,5,6,90,''],['chair',93,19,5,6,90,''],['chair',93,26,5,6,90,''],['entrance',97,34,4,13,0,'ENTRANCE']]},
+    oval:{title:'Studio Oval',spots:[[31,20,69],[38,21,67],[45,23,65],[52,24,63],[59,25,61],[66,26,59],[73,27,57],[81,29,54],[69,67,0],[87,68,19]],features:[['mirror',55,4,58,3,0,'MIRROR'],['mirror',86,92,22,3,0,'MIRROR'],['mirror',76,67,3,24,90,'MIRROR'],['desk',10,49,12,7,0,'RECEPTION'],['chair',10,15,5,6,0,''],['chair',17,15,5,6,0,''],['fixture',7,28,3,8,0,''],['column',13,29,5,5,0,''],['fixture',20,28,3,8,0,''],['column',25,29,5,5,0,''],['changing',39,76,42,27,0,'CHANGING ROOM'],['partition',59,76,.7,27,0,''],['column',97,37,5,5,0,'']]},
+    mid:{title:'Studio Mid',spots:[[10,43,90],[18,45,90],[26,42,90],[42,44,90],[50,42,90],[58,45,90],[70,42,90],[78,44,90],[86,41,90],[94,43,90]],features:[['mirror',18,82,25,3,0,'MIRROR'],['mirror',50,82,23,3,0,'MIRROR'],['mirror',83,82,27,3,0,'MIRROR']]}
   };
 
   function studioIdFromText(){
@@ -40,6 +40,7 @@
     if(!floor||!grid)return;
     if(map.dataset.realLayout===id)return;
     map.dataset.realLayout=id;
+    map.dataset.layoutId=id;
     map.classList.add('real-studio-map');
     grid.classList.add('real-spot-layout');
     grid.dataset.layout=id;

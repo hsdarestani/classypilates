@@ -32,3 +32,22 @@
 
 @media(max-width:720px){.real-spot-layout .reformer-machine .spot-bed{width:59px;height:27px}.real-spot-layout .reformer-machine .spot-bed em{left:19px;top:6px;width:27px;height:14px}.real-spot-layout .reformer-machine .spot-bed u{left:6px;top:7px;width:9px;height:12px}.real-spot-layout .reformer-machine .spot-bed i{top:4px;height:16px}.real-spot-layout .powerformer-machine .spot-bed{width:64px;height:30px}.real-spot-layout .powerformer-machine .spot-bed:before{left:17px;right:17px;top:5px;height:17px;background:repeating-linear-gradient(90deg,#34363a 0 7px,#191a1d 7px 9px)}.real-spot-layout .powerformer-machine .spot-bed i,.real-spot-layout .powerformer-machine .spot-bed em{top:-4px;height:34px;width:11px}.real-spot-layout .powerformer-machine .spot-bed u{right:5px;top:5px;width:9px;height:18px}}
 @media(max-width:460px){.real-spot-layout .reformer-machine .spot-bed{width:49px;height:23px}.real-spot-layout .reformer-machine .spot-bed em{left:16px;top:5px;width:22px;height:12px}.real-spot-layout .reformer-machine .spot-bed u{left:5px;top:6px;width:7px;height:10px}.real-spot-layout .reformer-machine .spot-bed i{right:-5px;top:3px;height:14px;width:7px}.real-spot-layout .powerformer-machine .spot-bed{width:53px;height:25px}.real-spot-layout .powerformer-machine .spot-bed:before{left:14px;right:14px;top:4px;height:14px}.real-spot-layout .powerformer-machine .spot-bed i,.real-spot-layout .powerformer-machine .spot-bed em{height:29px;width:9px}.real-spot-layout .powerformer-machine .spot-bed u{right:4px;top:4px;width:7px;height:15px}}
+
+/* Room-specific proportions and fixed elements follow the supplied plans. */
+.real-studio-map[data-layout-id="sachsen"] .studio-floor{min-height:410px}
+.real-studio-map[data-layout-id="ladies"] .studio-floor{min-height:460px}
+.real-studio-map[data-layout-id="bhf1"] .studio-floor{min-height:650px}
+.real-studio-map[data-layout-id="bornheim"] .studio-floor{min-height:430px}
+.real-studio-map[data-layout-id="oval"] .studio-floor{min-height:450px}
+.real-studio-map[data-layout-id="mid"] .studio-floor{min-height:280px}
+.real-spot-layout .studio-spot{transform:translate(-50%,-50%)!important}
+.real-spot-layout .reformer-machine .spot-bed{transform:rotate(var(--sr)) perspective(240px) rotateX(8deg)}
+.real-spot-layout .powerformer-machine .spot-bed{transform:rotate(var(--sr)) perspective(240px) rotateX(8deg)}
+.real-spot-layout.mat-layout .spot-bed{transform:rotate(var(--sr))}
+.layout-feature.partition{width:max(4px,var(--fw))!important;border-left:1px solid rgba(72,58,41,.52);border-right:1px solid rgba(255,255,255,.35);background:linear-gradient(90deg,#8f7e67,#c8b89f 48%,#8a775f);box-shadow:2px 0 7px rgba(42,31,19,.12)}
+.layout-feature.chair{border:2px solid rgba(72,59,43,.58);border-top:0;border-radius:0 0 4px 4px;background:rgba(255,255,255,.12);box-shadow:0 3px 6px rgba(54,39,21,.1)}
+.layout-feature.fixture{border:1px solid rgba(70,57,41,.5);background:linear-gradient(145deg,#a18b70,#76634d);box-shadow:0 4px 7px rgba(52,38,22,.14)}
+.layout-feature.pillar-square{border:1px solid rgba(66,52,36,.5);background:repeating-linear-gradient(135deg,#b8a58a 0 3px,#8f7c62 3px 5px);box-shadow:0 5px 9px rgba(48,35,20,.16)}
+
+@media(max-width:720px){.real-studio-map[data-layout-id="sachsen"] .studio-floor{min-height:360px}.real-studio-map[data-layout-id="ladies"] .studio-floor{min-height:400px}.real-studio-map[data-layout-id="bhf1"] .studio-floor{min-height:560px}.real-studio-map[data-layout-id="bornheim"] .studio-floor{min-height:370px}.real-studio-map[data-layout-id="oval"] .studio-floor{min-height:400px}.real-studio-map[data-layout-id="mid"] .studio-floor{min-height:250px}}
+@media(max-width:460px){.real-studio-map[data-layout-id="sachsen"] .studio-floor{min-height:330px}.real-studio-map[data-layout-id="ladies"] .studio-floor{min-height:365px}.real-studio-map[data-layout-id="bhf1"] .studio-floor{min-height:500px}.real-studio-map[data-layout-id="bornheim"] .studio-floor{min-height:340px}.real-studio-map[data-layout-id="oval"] .studio-floor{min-height:370px}.real-studio-map[data-layout-id="mid"] .studio-floor{min-height:225px}}
