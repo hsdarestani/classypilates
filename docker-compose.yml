@@ -24,6 +24,15 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_TTL_HOURS: ${JWT_TTL_HOURS:-24}
       UPLOAD_DIR: /data/uploads
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SSL: ${SMTP_SSL:-false}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      SEPA_PROVIDER_KEY: ${SEPA_PROVIDER_KEY:-}
     volumes:
       - classy_uploads:/data/uploads
     depends_on:
