@@ -2,6 +2,15 @@
   const gate=document.querySelector('#experienceGate');
   if(!gate)return;
   const body=document.body;
+
+  if(!document.querySelector('link[data-classfit-coming-soon]')){
+    const css=document.createElement('link');
+    css.rel='stylesheet';
+    css.href='./classfit-coming-soon.css?v=20260827-1';
+    css.dataset.classfitComingSoon='1';
+    document.head.appendChild(css);
+  }
+
   const remember=(choice)=>{try{sessionStorage.setItem('cpExperienceChoice',choice)}catch(_){}};
   const current=()=>{try{return sessionStorage.getItem('cpExperienceChoice')}catch(_){return null}};
   const open=()=>{gate.removeAttribute('aria-hidden');gate.classList.remove('is-leaving');body.classList.add('gate-open');requestAnimationFrame(()=>gate.querySelector('[data-enter-pilates]')?.focus({preventScroll:true}))};
