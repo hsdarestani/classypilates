@@ -7,15 +7,47 @@
   const open=()=>{gate.removeAttribute('aria-hidden');gate.classList.remove('is-leaving');body.classList.add('gate-open');requestAnimationFrame(()=>gate.querySelector('[data-enter-pilates]')?.focus({preventScroll:true}))};
   const close=()=>{gate.classList.add('is-leaving');body.classList.remove('gate-open');setTimeout(()=>gate.setAttribute('aria-hidden','true'),560)};
 
+  const comingSoon=document.createElement('div');
+  comingSoon.className='classfit-coming-soon';
+  comingSoon.setAttribute('aria-hidden','true');
+  comingSoon.innerHTML=`
+    <div class="classfit-coming-soon-bg" aria-hidden="true"></div>
+    <button class="classfit-coming-soon-close" type="button" aria-label="Back to experience selection">←</button>
+    <div class="classfit-coming-soon-copy" role="dialog" aria-modal="true" aria-labelledby="classfitComingSoonTitle">
+      <p class="eyebrow">CLASS FIT · FRANKFURT</p>
+      <h2 id="classfitComingSoonTitle">Something powerful<br><em>is coming.</em></h2>
+      <p>High-energy small group training, strength and conditioning — the new Class Fit experience is currently being prepared.</p>
+      <div class="classfit-coming-soon-badge"><span></span> COMING SOON</div>
+      <button class="classfit-coming-soon-back" type="button">Back to Classy</button>
+    </div>`;
+  gate.appendChild(comingSoon);
+
+  const showComingSoon=()=>{
+    comingSoon.setAttribute('aria-hidden','false');
+    gate.classList.add('fit-coming-soon-open');
+    requestAnimationFrame(()=>comingSoon.querySelector('.classfit-coming-soon-back')?.focus({preventScroll:true}));
+  };
+  const hideComingSoon=()=>{
+    comingSoon.setAttribute('aria-hidden','true');
+    gate.classList.remove('fit-coming-soon-open');
+    requestAnimationFrame(()=>gate.querySelector('[data-enter-fit]')?.focus({preventScroll:true}));
+  };
+
   gate.querySelector('[data-enter-pilates]')?.addEventListener('click',()=>{remember('pilates');close()});
-  gate.querySelector('[data-enter-fit]')?.addEventListener('click',()=>remember('fit'));
+  gate.querySelector('[data-enter-fit]')?.addEventListener('click',e=>{e.preventDefault();showComingSoon()});
+  comingSoon.querySelector('.classfit-coming-soon-close')?.addEventListener('click',hideComingSoon);
+  comingSoon.querySelector('.classfit-coming-soon-back')?.addEventListener('click',hideComingSoon);
 
   const switcher=document.createElement('button');
   switcher.type='button';switcher.className='experience-switch';switcher.textContent='Switch experience';switcher.setAttribute('aria-label','Choose Class Fit or Classy Pilates');
-  switcher.addEventListener('click',()=>{try{sessionStorage.removeItem('cpExperienceChoice')}catch(_){}open()});
+  switcher.addEventListener('click',()=>{try{sessionStorage.removeItem('cpExperienceChoice')}catch(_){}hideComingSoon();open()});
   body.appendChild(switcher);
 
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!gate.hasAttribute('aria-hidden')){remember('pilates');close()}});
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape'||gate.hasAttribute('aria-hidden'))return;
+    if(comingSoon.getAttribute('aria-hidden')==='false'){hideComingSoon();return}
+    remember('pilates');close();
+  });
 
   if(current()==='pilates'){gate.setAttribute('aria-hidden','true');body.classList.remove('gate-open')}else{open()}
 
