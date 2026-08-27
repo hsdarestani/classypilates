@@ -4,8 +4,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
+COPY feedback_app.py .
 COPY import_mindbody_schedule.py .
 COPY data ./data
 RUN mkdir -p /data/uploads
 EXPOSE 8000
-CMD ["uvicorn","main:app","--host","0.0.0.0","--port","8000","--proxy-headers"]
+CMD ["uvicorn","feedback_app:app","--host","0.0.0.0","--port","8000","--proxy-headers"]
