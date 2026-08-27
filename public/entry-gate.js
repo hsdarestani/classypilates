@@ -10,6 +10,9 @@
     css.dataset.classfitComingSoon='1';
     document.head.appendChild(css);
   }
+  if(!document.querySelector('link[data-client-feedback]')){
+    const css=document.createElement('link');css.rel='stylesheet';css.href='./client-feedback.css?v=20260827-2';css.dataset.clientFeedback='1';document.head.appendChild(css);
+  }
 
   const remember=(choice)=>{try{sessionStorage.setItem('cpExperienceChoice',choice)}catch(_){}};
   const current=()=>{try{return sessionStorage.getItem('cpExperienceChoice')}catch(_){return null}};
@@ -62,10 +65,14 @@
 
   /* Booking floor plans: kept as separate assets so the booking wizard stays maintainable. */
   if(!document.querySelector('link[data-studio-layouts]')){
-    const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css?v=20260825-layout2';css.dataset.studioLayouts='1';document.head.appendChild(css);
+    const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css?v=20260827-feedback1';css.dataset.studioLayouts='1';document.head.appendChild(css);
   }
   if(!document.querySelector('script[data-studio-layouts]')){
-    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260825-layout2';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260827-feedback1';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+  }
+
+  if(!document.querySelector('script[data-client-feedback]')){
+    const script=document.createElement('script');script.src='./client-feedback.js?v=20260827-2';script.defer=true;script.dataset.clientFeedback='1';document.body.appendChild(script);
   }
 
   /* Production bridge: once the real API is available, selected spots and reservations are synced centrally. */
