@@ -4,6 +4,13 @@
   const languages=new Map();
   let editingClassId=null;
 
+  const style=document.createElement('style');
+  style.textContent=`
+    .class-language-field small{display:block;margin-top:6px;color:#8b857b;font-size:10px;font-weight:500;letter-spacing:0;text-transform:none}
+    .admin-class-language{display:inline-flex;align-items:center;width:max-content;margin-top:6px;padding:4px 7px;border:1px solid rgba(21,21,19,.13);border-radius:999px;background:#f3eee6;font:700 9px/1 Manrope,Arial,sans-serif;letter-spacing:.05em;color:#4d473f}
+  `;
+  document.head.appendChild(style);
+
   const normal=value=>String(value||'de').toLowerCase()==='en'?'en':'de';
   const badge=value=>normal(value)==='en'?'🇬🇧 EN':'🇩🇪 DE';
 
@@ -51,8 +58,7 @@
     if(!type||$('#cLanguage'))return;
     const typeLabel=type.closest('label'),grid=typeLabel?.parentElement;
     if(!grid)return;
-    const field=languageLabel('cLanguage','de');
-    typeLabel.insertAdjacentElement('afterend',field);
+    typeLabel.insertAdjacentElement('afterend',languageLabel('cLanguage','de'));
   }
 
   function enhanceEditModal(){
@@ -68,12 +74,11 @@
     $$('[data-edit-class]').forEach(button=>{
       const row=button.closest('.trow');
       const first=row?.querySelector('div');
-      if(!first||first.querySelector('.admin-class-language'))return;
+      if(!first)return;
       const lang=languages.get(Number(button.dataset.editClass))||'de';
-      const mark=document.createElement('span');
-      mark.className='admin-class-language';
+      let mark=first.querySelector('.admin-class-language');
+      if(!mark){mark=document.createElement('span');mark.className='admin-class-language';first.appendChild(mark)}
       mark.textContent=badge(lang);
-      first.appendChild(mark);
     });
   }
 
