@@ -68,7 +68,7 @@
     const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css?v=20260827-feedback1';css.dataset.studioLayouts='1';document.head.appendChild(css);
   }
   if(!document.querySelector('script[data-studio-layouts]')){
-    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260828-final-sketches';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260828-bhf1-exact2';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
   }
 
   if(!document.querySelector('script[data-client-feedback]')){
