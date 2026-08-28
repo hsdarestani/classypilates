@@ -74,6 +74,9 @@
   if(!document.querySelector('script[data-client-feedback]')){
     const script=document.createElement('script');script.src='./client-feedback.js?v=20260827-2';script.defer=true;script.dataset.clientFeedback='1';document.body.appendChild(script);
   }
+  if(!document.querySelector('script[data-class-language]')){
+    const script=document.createElement('script');script.src='./class-language.js?v=20260828-1';script.defer=true;script.dataset.classLanguage='1';document.body.appendChild(script);
+  }
 
   /* Production bridge: once the real API is available, selected spots and reservations are synced centrally. */
   if(!document.querySelector('script[data-production-sync]')){
