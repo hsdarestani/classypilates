@@ -1,7 +1,7 @@
 (()=>{
   const capacities={bhf1:8,ladies:10,sachsen:12,bornheim:8,mid:10,oval:10};
   const layouts={
-    sachsen:{title:'Studio Sachsenhausen',spots:[[19,21,90],[27,22,90],[35,21,90],[43,23,90],[51,22,90],[59,21,90],[39,62,90],[72,22,90],[80,21,90],[87,23,90],[94,22,90],[84,64,0]],features:[['mirror',38,4,50,3,0,'MIRROR'],['mirror',84,91,25,3,0,'MIRROR'],['entrance',4,72,4,15,0,'ENTRANCE'],['chair',5,17,4,6,90,''],['chair',5,25,4,6,90,''],['chair',5,33,4,6,90,''],['chair',5,41,4,6,90,''],['desk',59,76,13,11,0,'RECEPTION'],['partition',65,48,.7,89,0,'']]},
+    sachsen:{title:'Studio Sachsenhausen',spots:[[19,21,90],[27,22,90],[35,21,90],[43,23,90],[51,22,90],[59,21,90],[37,62,90],[72,22,90],[80,21,90],[87,23,90],[94,22,90],[84,64,0]],features:[['mirror',38,4,50,3,0,'MIRROR'],['mirror',84,4,26,3,0,'MIRROR'],['mirror',84,91,25,3,0,'MIRROR'],['entrance',4,72,4,15,0,'ENTRANCE'],['chair',5,17,4,6,90,''],['chair',5,25,4,6,90,''],['chair',5,33,4,6,90,''],['chair',5,41,4,6,90,''],['desk',59,76,13,11,0,'RECEPTION'],['partition',65,48,.7,89,0,'']]},
 
     /* Bahnhofsviertel 2F: exact supplied sketch.
        01–03 on the left, 04 vertical above the single center mirror,
