@@ -3,9 +3,11 @@
   const layouts={
     sachsen:{title:'Studio Sachsenhausen',spots:[[19,21,90],[27,22,90],[35,21,90],[43,23,90],[51,22,90],[59,21,90],[39,62,90],[72,22,90],[80,21,90],[87,23,90],[94,22,90],[84,64,0]],features:[['mirror',38,4,50,3,0,'MIRROR'],['mirror',84,91,25,3,0,'MIRROR'],['entrance',4,72,4,15,0,'ENTRANCE'],['chair',5,17,4,6,90,''],['chair',5,25,4,6,90,''],['chair',5,33,4,6,90,''],['chair',5,41,4,6,90,''],['desk',59,76,13,11,0,'RECEPTION'],['partition',65,48,.7,89,0,'']]},
 
-    /* Bahnhofsviertel 2F: #04 is intentionally removed in the supplied sketch.
-       Keep its DOM slot hidden so the visible equipment keeps the real labels 01,02,03,05…10. */
-    ladies:{title:'Studio Bahnhofsviertel · 2nd Floor',visiblePlaces:9,spots:[[18,18,0],[18,35,0],[18,52,0],null,[64,18,0],[64,35,0],[64,52,0],[86,18,0],[86,35,0],[86,52,0]],features:[['mirror',4,30,3,50,90,'MIRROR'],['mirror',14,34,22,3,0,'MIRROR'],['mirror',43,52,3,26,90,'MIRROR'],['mirror',43,68,24,3,0,'MIRROR'],['mirror',97,31,3,56,90,'MIRROR'],['entrance',15,91,12,4,0,'ENTRANCE']]},
+    /* Bahnhofsviertel 2F: exact supplied sketch.
+       01–03 on the left, 04 vertical above the single center mirror,
+       05–07 and 08–10 in two right-side columns. Only three mirrors:
+       one vertical left, one vertical center, one vertical right. */
+    ladies:{title:'Studio Bahnhofsviertel · 2nd Floor',spots:[[18,18,0],[18,35,0],[18,52,0],[43,27,90],[64,18,0],[64,35,0],[64,52,0],[86,18,0],[86,35,0],[86,52,0]],features:[['mirror',4,30,3,50,0,'MIRROR'],['mirror',43,54,3,27,0,'MIRROR'],['mirror',97,31,3,56,0,'MIRROR'],['entrance',15,79,6,14,0,'ENTRANCE']]},
 
     /* Bahnhofsviertel 1F: exact supplied sketch — entrance bottom-left; mirrors only on the left wall and top wall. */
     bhf1:{title:'Studio Bahnhofsviertel · 1st Floor',spots:[[17,24,90],[32,25,90],[46,24,90],[66,23,90],[79,24,90],[91,23,90],[70,69,90],[86,70,90]],features:[['mirror',4,22,3,44,0,'MIRROR'],['mirror',46,5,14,3,0,'MIRROR'],['mirror',79,6,44,3,0,'MIRROR'],['entrance',6,86,4,14,0,'ENTRANCE']]},
