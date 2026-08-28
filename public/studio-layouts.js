@@ -6,8 +6,8 @@
     /* Bahnhofsviertel 2F: exact supplied sketch.
        01–03 on the left, 04 vertical above the single center mirror,
        05–07 and 08–10 in two right-side columns. Only three mirrors:
-       one vertical left, one vertical center, one vertical right. */
-    ladies:{title:'Studio Bahnhofsviertel · 2nd Floor',spots:[[18,18,0],[18,35,0],[18,52,0],[43,27,90],[64,18,0],[64,35,0],[64,52,0],[86,18,0],[86,35,0],[86,52,0]],features:[['mirror',4,30,3,50,0,'MIRROR'],['mirror',43,54,3,27,0,'MIRROR'],['mirror',97,31,3,56,0,'MIRROR'],['entrance',15,79,6,14,0,'ENTRANCE']]},
+       one vertical left, one horizontal center, one vertical right. */
+    ladies:{title:'Studio Bahnhofsviertel · 2nd Floor',spots:[[18,18,0],[18,35,0],[18,52,0],[43,27,90],[64,18,0],[64,35,0],[64,52,0],[86,18,0],[86,35,0],[86,52,0]],features:[['mirror',4,30,3,50,0,'MIRROR'],['mirror',43,54,24,3,0,'MIRROR'],['mirror',97,31,3,56,0,'MIRROR'],['entrance',15,79,6,14,0,'ENTRANCE']]},
 
     /* Bahnhofsviertel 1F: exact supplied sketch — entrance bottom-left; mirrors only on the left wall and top wall. */
     bhf1:{title:'Studio Bahnhofsviertel · 1st Floor',spots:[[17,24,90],[32,25,90],[46,24,90],[66,23,90],[79,24,90],[91,23,90],[70,69,90],[86,70,90]],features:[['mirror',4,22,3,44,0,'MIRROR'],['mirror',46,5,14,3,0,'MIRROR'],['mirror',79,6,44,3,0,'MIRROR'],['entrance',6,86,4,14,0,'ENTRANCE']]},
