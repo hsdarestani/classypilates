@@ -12,7 +12,7 @@
     /* Bahnhofsviertel 1F: exact supplied sketch — entrance bottom-left; mirrors only on the left wall and top wall. */
     bhf1:{title:'Studio Bahnhofsviertel · 1st Floor',spots:[[17,24,90],[32,25,90],[46,24,90],[66,23,90],[79,24,90],[91,23,90],[70,69,90],[86,70,90]],features:[['mirror',4,22,3,44,0,'MIRROR'],['mirror',46,5,14,3,0,'MIRROR'],['mirror',79,6,44,3,0,'MIRROR'],['entrance',6,86,4,14,0,'ENTRANCE']]},
 
-    bornheim:{title:'Studio Bornheim',spots:[[20,18,0],[16,63,90],[28,65,90],[39,62,90],[50,64,90],[61,62,90],[72,65,90],[84,63,90]],features:[['mirror',4,26,3,48,90,'MIRROR'],['mirror',49,88,74,3,0,'MIRROR'],['desk',82,18,12,7,0,'RECEPTION'],['chair',93,12,5,6,90,''],['chair',93,19,5,6,90,''],['chair',93,26,5,6,90,''],['entrance',97,34,4,13,0,'ENTRANCE']]},
+    bornheim:{title:'Studio Bornheim',spots:[[20,18,0],[16,63,90],[28,65,90],[39,62,90],[50,64,90],[61,62,90],[72,65,90],[84,63,90]],features:[['mirror',1.8,29,2.6,52,0,'MIRROR'],['mirror',49,88,74,3,0,'MIRROR'],['desk',82,18,12,7,0,'RECEPTION'],['chair',93,12,5,6,90,''],['chair',93,19,5,6,90,''],['chair',93,26,5,6,90,''],['entrance',97,34,4,13,0,'ENTRANCE']]},
 
     oval:{title:'Studio Oval',spots:[[12,22,90],[24,22,90],[36,22,90],[48,22,90],[60,22,90],[70,22,90],[80,22,90],[90,22,90],[33,78,0],[86,72,20]],features:[['mirror',52,4,90,3,0,'MIRROR'],['entrance',4,57,4,15,0,'ENTRANCE'],['wall',60,79,1,37,0,''],['wall',68,61,17,1,0,''],['wall',76,79,1,37,0,''],['mirror',77,79,2,37,0,'MIRROR'],['mirror',88,96,23,3,0,'MIRROR']]},
 
