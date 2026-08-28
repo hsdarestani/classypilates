@@ -2,8 +2,10 @@
   const $=(s,c=document)=>c.querySelector(s),$$=(s,c=document)=>[...c.querySelectorAll(s)];
   const originalFetch=window.fetch.bind(window);
   const LANG_KEY='cpBookingLanguage';
+  const CLASS_LANG_KEY='cpActiveClassLanguage';
   const VOUCHER_KEY='cpBookingVoucher';
   const lang=()=>{const saved=sessionStorage.getItem(LANG_KEY);if(saved==='de'||saved==='en')return saved;return document.documentElement.lang==='de'?'de':'en'};
+  const classLang=()=>{const saved=sessionStorage.getItem(CLASS_LANG_KEY);return saved==='en'?'en':'de'};
   const flag=l=>l==='de'?'🇩🇪':'🇬🇧';
   const iconInstagram='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>';
   const iconWhatsapp='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.3c.2 2 1.8 4.1 4.2 5.3.7.3 1.3.4 1.8-.2l.8-1-2.2-1.1-.6.8c-.2.2-.5.2-.8.1-1.1-.6-2-1.4-2.6-2.5-.2-.3-.1-.6.1-.8l.6-.6-.9-2.1-.4.1Z"/></svg>';
@@ -32,8 +34,8 @@
   }
 
   function decorateLanguage(){
-    const l=lang();
-    $$('.wizard-class-card').forEach(card=>{let badge=card.querySelector('.booking-language-badge');if(!badge){badge=document.createElement('span');badge.className='booking-language-badge';const copy=card.querySelector('div:nth-child(2)');copy?.appendChild(badge)}if(badge)badge.textContent=`${flag(l)} ${l.toUpperCase()}`});
+    const l=classLang();
+    $$('.wizard-class-card').forEach(card=>{let badge=card.querySelector('.booking-language-badge');if(!badge){badge=document.createElement('span');badge.className='booking-language-badge';const copy=card.querySelector('div:nth-child(2)');copy?.appendChild(badge)}if(badge){badge.dataset.language=l;badge.setAttribute('aria-label',l==='en'?'Class language English':'Kurssprache Deutsch');badge.title=l==='en'?'Class language: English':'Kurssprache: Deutsch';badge.textContent=`${flag(l)} ${l.toUpperCase()}`}});
   }
 
   function enhancePayment(){
