@@ -68,14 +68,14 @@
     const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css?v=20260827-feedback1';css.dataset.studioLayouts='1';document.head.appendChild(css);
   }
   if(!document.querySelector('script[data-studio-layouts]')){
-    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260828-bhf1-entrance-up1';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260828-bhf2-exact1';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
   }
 
   if(!document.querySelector('script[data-client-feedback]')){
-    const script=document.createElement('script');script.src='./client-feedback.js?v=20260827-2';script.defer=true;script.dataset.clientFeedback='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./client-feedback.js?v=20260828-class-lang1';script.defer=true;script.dataset.clientFeedback='1';document.body.appendChild(script);
   }
   if(!document.querySelector('script[data-class-language]')){
-    const script=document.createElement('script');script.src='./class-language.js?v=20260828-2';script.async=false;script.dataset.classLanguage='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./class-language.js?v=20260828-class-lang3';script.async=false;script.dataset.classLanguage='1';document.body.appendChild(script);
   }
 
   /* Production bridge: once the real API is available, selected spots and reservations are synced centrally. */
