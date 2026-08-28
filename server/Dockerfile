@@ -5,6 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY feedback_app.py .
+COPY class_language.py .
 COPY runtime_app.py .
 COPY import_mindbody_schedule.py .
 COPY data ./data
