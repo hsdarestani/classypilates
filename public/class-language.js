@@ -6,10 +6,11 @@
 
   const style=document.createElement('style');
   style.textContent=`
-    .class-name{position:relative;padding-right:78px}
-    .class-language{position:absolute;right:0;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;gap:6px;min-width:54px;padding:6px 9px;border:1px solid rgba(21,21,19,.12);border-radius:999px;background:rgba(244,240,232,.72);font:700 9px/1 Manrope,Arial,sans-serif;letter-spacing:.08em;white-space:nowrap;color:#454139}
-    .class-language .class-language-flag{font-size:15px;line-height:1;letter-spacing:0}
-    @media(max-width:760px){.class-name{padding-right:0}.class-language{position:static;transform:none;margin-top:7px;width:max-content;padding:5px 8px}.class-language .class-language-flag{font-size:13px}}
+    .class-name{position:relative;padding-right:82px}
+    .class-name .class-language{position:absolute;right:0;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;gap:6px;min-width:58px;width:max-content;padding:6px 9px;margin:0;border:1px solid rgba(21,21,19,.14);border-radius:999px;background:#f4f0e8;color:#454139;font:700 9px/1 Manrope,Arial,sans-serif;letter-spacing:.08em;white-space:nowrap;z-index:2}
+    .class-name .class-language .class-language-flag{display:inline; margin:0; color:inherit; font-size:15px;line-height:1;letter-spacing:0}
+    .class-name .class-language .class-language-code{display:inline; margin:0; color:inherit; font:700 9px/1 Manrope,Arial,sans-serif;letter-spacing:.08em}
+    @media(max-width:760px){.class-name{padding-right:0}.class-name .class-language{position:static;transform:none;margin-top:8px;padding:5px 8px}.class-name .class-language .class-language-flag{font-size:13px}}
   `;
   document.head.appendChild(style);
 
@@ -41,9 +42,11 @@
         badge.className='class-language';
         name.appendChild(badge);
       }
+      if(badge.dataset.language===language)return;
+      badge.dataset.language=language;
       badge.setAttribute('aria-label',language==='en'?'Class language English':'Kurssprache Deutsch');
       badge.title=language==='en'?'Class language: English':'Kurssprache: Deutsch';
-      badge.innerHTML=`<span class="class-language-flag">${flag(language)}</span><span>${language.toUpperCase()}</span>`;
+      badge.innerHTML=`<span class="class-language-flag">${flag(language)}</span><span class="class-language-code">${language.toUpperCase()}</span>`;
     });
   }
 
@@ -57,11 +60,12 @@
     try{
       const response=await upstreamFetch(`/api/schedule?from=${encodeURIComponent(berlinIsoDate(start))}&to=${encodeURIComponent(berlinIsoDate(end))}`,{headers:{accept:'application/json'},cache:'no-store'});
       if(response.ok)remember(await response.json());
+      else decorate();
     }catch(_){decorate()}
   }
 
   const list=document.querySelector('#classList');
-  if(list)new MutationObserver(decorate).observe(list,{childList:true,subtree:true});
+  if(list)new MutationObserver(decorate).observe(list,{childList:true});
   seed();
   decorate();
 })();
