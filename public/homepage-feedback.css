@@ -1,0 +1,8 @@
+/* 2026-08-31 homepage studio-card cleanup from client screenshot. */
+.studio-card .studio-arrow{display:none!important}
+.studio-card .studio-hover-actions{justify-content:flex-end!important}
+.studio-card .studio-hover-actions button[data-studio-book]{display:none!important}
+.studio-card .studio-hover-actions>a:first-child{margin-left:auto}
+
+/* Use the supplied Class Fit image consistently in the experience selector. */
+.experience-card.fit:before{background-image:url('/IMG-20260831-WA0001.jpg')!important}
