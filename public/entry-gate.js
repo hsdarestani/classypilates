@@ -6,12 +6,15 @@
   if(!document.querySelector('link[data-classfit-coming-soon]')){
     const css=document.createElement('link');
     css.rel='stylesheet';
-    css.href='./classfit-coming-soon.css?v=20260827-1';
+    css.href='./classfit-coming-soon.css?v=20260831-1';
     css.dataset.classfitComingSoon='1';
     document.head.appendChild(css);
   }
   if(!document.querySelector('link[data-client-feedback]')){
     const css=document.createElement('link');css.rel='stylesheet';css.href='./client-feedback.css?v=20260827-2';css.dataset.clientFeedback='1';document.head.appendChild(css);
+  }
+  if(!document.querySelector('link[data-homepage-feedback]')){
+    const css=document.createElement('link');css.rel='stylesheet';css.href='./homepage-feedback.css?v=20260831-1';css.dataset.homepageFeedback='1';document.head.appendChild(css);
   }
 
   const remember=(choice)=>{try{sessionStorage.setItem('cpExperienceChoice',choice)}catch(_){}};
