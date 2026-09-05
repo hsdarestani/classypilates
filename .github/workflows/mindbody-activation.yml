@@ -1,0 +1,56 @@
+name: Mindbody Site Activation
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  activation:
+    if: contains(github.event.head_commit.message, '[mindbody-activation]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate activation link for Classy Pilates
+        env:
+          API_KEY_1: ${{ secrets.MINDBODY_API_KEY }}
+          API_KEY_2: ${{ secrets.MB_API_KEY }}
+          API_KEY_3: ${{ secrets.MBO_API_KEY }}
+          API_KEY_4: ${{ secrets.API_KEY }}
+          API_KEY_5: ${{ secrets.MINDBODY_KEY }}
+          SITE_ID_SECRET: ${{ secrets.MINDBODY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          API_KEY="${API_KEY_1:-${API_KEY_2:-${API_KEY_3:-${API_KEY_4:-${API_KEY_5:-}}}}}"
+          SITE_ID="${SITE_ID_SECRET:-5742686}"
+
+          if [ -z "$API_KEY" ]; then
+            echo "No Mindbody API key found in the supported repository secret names." >&2
+            echo "Supported names: MINDBODY_API_KEY, MB_API_KEY, MBO_API_KEY, API_KEY, MINDBODY_KEY" >&2
+            exit 2
+          fi
+
+          RESPONSE="$(curl -sS --fail-with-body \
+            -H "API-Key: ${API_KEY}" \
+            -H "SiteId: ${SITE_ID}" \
+            -H "Accept: application/json" \
+            -H "User-Agent: ClassyPilates/1.0" \
+            'https://api.mindbodyonline.com/public/v6/site/activationcode')"
+
+          python3 - "$RESPONSE" <<'PY'
+          import json, sys
+          data = json.loads(sys.argv[1])
+          code = data.get("ActivationCode") or data.get("activationCode")
+          link = data.get("ActivationLink") or data.get("activationLink")
+          if not code or not link:
+              raise SystemExit("Mindbody response did not contain ActivationCode/ActivationLink: " + json.dumps(data))
+          print("MINDBODY_ACTIVATION_CODE=" + str(code))
+          print("MINDBODY_ACTIVATION_LINK=" + str(link))
+          with open("/tmp/activation-summary.md", "w", encoding="utf-8") as f:
+              f.write("## Classy Pilates Mindbody activation\n\n")
+              f.write(f"- Site ID: `{5742686}`\n")
+              f.write(f"- Activation code: `{code}`\n")
+              f.write(f"- Activation link: {link}\n")
+          PY
+          cat /tmp/activation-summary.md >> "$GITHUB_STEP_SUMMARY"
