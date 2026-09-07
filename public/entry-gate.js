@@ -17,6 +17,46 @@
     const css=document.createElement('link');css.rel='stylesheet';css.href='./homepage-feedback.css?v=20260831-1';css.dataset.homepageFeedback='1';document.head.appendChild(css);
   }
 
+  const requestedStyle=document.createElement('style');
+  requestedStyle.dataset.clientRequestedUi='1';
+  requestedStyle.textContent=`
+    #passes .pass-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+    @media(max-width:980px){#passes .pass-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+    @media(max-width:620px){#passes .pass-grid{grid-template-columns:1fr!important}}
+  `;
+  document.head.appendChild(requestedStyle);
+
+  function applyClientRequestedUi(){
+    const fitCard=gate.querySelector('.experience-card.fit');
+    if(fitCard){
+      const meta=fitCard.querySelector('.experience-card-meta>span:first-child');
+      const title=fitCard.querySelector('h3');
+      const action=fitCard.querySelector('.experience-card-action>span');
+      if(meta)meta.textContent='HIIT';
+      if(title)title.textContent='Classy Fitness';
+      if(action)action.textContent='Enter Classy Fitness';
+      fitCard.setAttribute('aria-label','Open Classy Fitness');
+    }
+    gate.querySelectorAll('.experience-card-icon').forEach(icon=>icon.remove());
+
+    const passGrid=document.querySelector('#passes .pass-grid');
+    if(passGrid&&!passGrid.querySelector('[data-five-class-pass]')){
+      const five=document.createElement('article');
+      five.dataset.fiveClassPass='1';
+      five.innerHTML='<span>FLEXIBLE</span><h3>5 Classes</h3><b>119 €</b><p>Five classes for a flexible training rhythm.</p><button type="button">Buy in the shop →</button>';
+      five.querySelector('button')?.addEventListener('click',()=>{location.href='/shop?product=five'});
+      const featured=passGrid.querySelector('.featured');
+      passGrid.insertBefore(five,featured||passGrid.children[1]||null);
+    }
+    const smallPrint=document.querySelector('#passes .small-print');
+    if(smallPrint&&!smallPrint.dataset.fiveClassCleaned){
+      smallPrint.dataset.fiveClassCleaned='1';
+      smallPrint.innerHTML='<a href="/shop">View all payment methods ↗</a>';
+    }
+  }
+
+  applyClientRequestedUi();
+
   const remember=(choice)=>{try{sessionStorage.setItem('cpExperienceChoice',choice)}catch(_){}};
   const current=()=>{try{return sessionStorage.getItem('cpExperienceChoice')}catch(_){return null}};
   const open=()=>{gate.removeAttribute('aria-hidden');gate.classList.remove('is-leaving');body.classList.add('gate-open');requestAnimationFrame(()=>gate.querySelector('[data-enter-pilates]')?.focus({preventScroll:true}))};
@@ -29,9 +69,9 @@
     <div class="classfit-coming-soon-bg" aria-hidden="true"></div>
     <button class="classfit-coming-soon-close" type="button" aria-label="Back to experience selection">←</button>
     <div class="classfit-coming-soon-copy" role="dialog" aria-modal="true" aria-labelledby="classfitComingSoonTitle">
-      <p class="eyebrow">CLASS FIT · FRANKFURT</p>
+      <p class="eyebrow">CLASSY FITNESS · FRANKFURT</p>
       <h2 id="classfitComingSoonTitle">Something powerful<br><em>is coming.</em></h2>
-      <p>High-energy small group training, strength and conditioning — the new Class Fit experience is currently being prepared.</p>
+      <p>High-energy small group training, strength and conditioning — the new Classy Fitness experience is currently being prepared.</p>
       <div class="classfit-coming-soon-badge"><span></span> COMING SOON</div>
       <button class="classfit-coming-soon-back" type="button">Back to Classy</button>
     </div>`;
@@ -54,8 +94,8 @@
   comingSoon.querySelector('.classfit-coming-soon-back')?.addEventListener('click',hideComingSoon);
 
   const switcher=document.createElement('button');
-  switcher.type='button';switcher.className='experience-switch';switcher.textContent='Switch experience';switcher.setAttribute('aria-label','Choose Class Fit or Classy Pilates');
-  switcher.addEventListener('click',()=>{try{sessionStorage.removeItem('cpExperienceChoice')}catch(_){}hideComingSoon();open()});
+  switcher.type='button';switcher.className='experience-switch';switcher.textContent='Switch experience';switcher.setAttribute('aria-label','Choose Classy Fitness or Classy Pilates');
+  switcher.addEventListener('click',()=>{try{sessionStorage.removeItem('cpExperienceChoice')}catch(_){}hideComingSoon();applyClientRequestedUi();open()});
   body.appendChild(switcher);
 
   document.addEventListener('keydown',e=>{
@@ -71,17 +111,17 @@
     const css=document.createElement('link');css.rel='stylesheet';css.href='./studio-layouts.css?v=20260827-feedback1';css.dataset.studioLayouts='1';document.head.appendChild(css);
   }
   if(!document.querySelector('script[data-studio-layouts]')){
-    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260828-bornheim-left-mirror1';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./studio-layouts.js?v=20260907-bhf1-bottom-mirror';script.defer=true;script.dataset.studioLayouts='1';document.body.appendChild(script);
   }
 
   if(!document.querySelector('script[data-client-feedback]')){
     const script=document.createElement('script');script.src='./client-feedback.js?v=20260831-whatsapp2';script.defer=true;script.dataset.clientFeedback='1';document.body.appendChild(script);
   }
   if(!document.querySelector('script[data-homepage-feedback]')){
-    const script=document.createElement('script');script.src='./homepage-feedback.js?v=20260831-whatsapp1';script.defer=true;script.dataset.homepageFeedback='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./homepage-feedback.js?v=20260907-coach-photos';script.defer=true;script.dataset.homepageFeedback='1';document.body.appendChild(script);
   }
   if(!document.querySelector('script[data-class-language]')){
-    const script=document.createElement('script');script.src='./class-language.js?v=20260828-class-lang3';script.async=false;script.dataset.classLanguage='1';document.body.appendChild(script);
+    const script=document.createElement('script');script.src='./class-language.js?v=20260907-code-only';script.async=false;script.dataset.classLanguage='1';document.body.appendChild(script);
   }
 
   /* Production bridge: once the real API is available, selected spots and reservations are synced centrally. */
@@ -93,4 +133,6 @@
   if(footerLinks&&!footerLinks.querySelector('[data-team-login]')){
     const team=document.createElement('a');team.href='/login';team.textContent='Login';team.dataset.teamLogin='1';footerLinks.appendChild(team);
   }
+
+  new MutationObserver(applyClientRequestedUi).observe(document.body,{childList:true,subtree:true});
 })();
