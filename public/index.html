@@ -78,10 +78,14 @@
     <section class="studios section" id="studios"><div class="section-head"><div><p class="eyebrow">START HERE · SIX PLACES. ONE STANDARD.</p><h2>Find your<br><em>studio.</em></h2></div><p>Choose your Classy space in Frankfurt first. One tap opens the filtered schedule while your profile, credits and bookings stay connected across every location.</p></div><div class="studio-grid" id="studioGrid"></div></section>
 
     <section class="schedule-section" id="schedule">
-      <div class="schedule-intro"><div><p class="eyebrow">LIVE SCHEDULE</p><h2>Find your<br><em>next class.</em></h2></div><p>Choose a studio, class and time — then book your place in a few steps.</p></div>
-      <div class="schedule-source" id="scheduleSource">Schedule source: production database</div>
-      <div class="schedule-toolbar"><label><span>STUDIO</span><select id="studioFilter"><option value="All">All studios</option></select></label><label><span>CLASS</span><select id="classFilter"><option value="All">All classes</option><option value="Reformer">Reformer</option><option value="Powerformer">Powerformer</option><option value="Mat">Mat</option><option value="Barre">Barre</option></select></label><label><span>TIME</span><select id="timeFilter"><option value="All">Any time</option><option value="Morning">Morning</option><option value="Afternoon">Afternoon</option><option value="Evening">Evening</option></select></label></div>
-      <div class="date-strip" id="dateStrip"></div><div class="class-list" id="classList"></div>
+      <div class="schedule-title section-x"><div><p class="eyebrow">BOOKING, SIMPLIFIED</p><h2>Find your next<br><em>class.</em></h2></div><div class="trust-box"><span class="shield">✓</span><div><b>Simple. Clear. Reliable.</b><small>Studio · Coach · Spot · Payment · Confirmation</small></div></div></div>
+      <div class="booking-shell">
+        <div class="booking-topline"><div class="booking-tabs" role="tablist"><button class="booking-tab active" data-mode="returning" type="button">Returning client</button><button class="booking-tab" data-mode="first" type="button">First class</button></div><button class="change-location" id="focusLocation" type="button">Change location <span>⌄</span></button></div>
+        <div class="filters"><label><span>STUDIO</span><select id="locationFilter"></select></label><label><span>CLASS</span><select id="classFilter"><option value="all">All classes</option><option value="Reformer">Reformer</option><option value="Powerformer">Powerformer</option><option value="Mat">Mat Pilates</option><option value="Barre">Barre</option></select></label><label><span>TIME</span><select id="timeFilter"><option value="all">All times</option><option value="morning">Morning · until 12</option><option value="afternoon">Afternoon · 12–17</option><option value="evening">Evening · after 17</option></select></label><button class="reset" id="resetFilters" type="button">Reset</button></div>
+        <div class="date-wrap"><button class="date-arrow" id="datePrev" type="button" aria-label="Previous days">←</button><div class="date-strip" id="dateStrip"></div><button class="date-arrow" id="dateNext" type="button" aria-label="Next days">→</button></div>
+        <div class="schedule-meta"><span id="resultsLabel">Schedule</span><span class="availability-key"><i></i> spots available</span></div><div class="schedule-source" id="scheduleSource">Loading Mindbody schedule…</div><div class="class-list" id="classList"></div>
+        <div class="schedule-footer"><span>No suitable time?</span><button id="notifyBtn" type="button">Notify me when a spot opens →</button></div>
+      </div>
     </section>
 
     <section class="classes" id="classes">
