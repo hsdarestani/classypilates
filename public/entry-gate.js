@@ -26,15 +26,13 @@
   `;
   document.head.appendChild(requestedStyle);
 
+  const syncText=(el,value)=>{if(el&&el.textContent!==value)el.textContent=value};
   function applyClientRequestedUi(){
     const fitCard=gate.querySelector('.experience-card.fit');
     if(fitCard){
-      const meta=fitCard.querySelector('.experience-card-meta>span:first-child');
-      const title=fitCard.querySelector('h3');
-      const action=fitCard.querySelector('.experience-card-action>span');
-      if(meta)meta.textContent='HIIT';
-      if(title)title.textContent='Classy Fitness';
-      if(action)action.textContent='Enter Classy Fitness';
+      syncText(fitCard.querySelector('.experience-card-meta>span:first-child'),'HIIT');
+      syncText(fitCard.querySelector('h3'),'Classy Fitness');
+      syncText(fitCard.querySelector('.experience-card-action>span'),'Enter Classy Fitness');
       fitCard.setAttribute('aria-label','Open Classy Fitness');
     }
     gate.querySelectorAll('.experience-card-icon').forEach(icon=>icon.remove());
