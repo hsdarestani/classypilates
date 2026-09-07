@@ -2,18 +2,20 @@
   const WHATSAPP='https://wa.me/4915253816033';
   const whatsappIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.3c.2 2 1.8 4.1 4.2 5.3.7.3 1.3.4 1.8-.2l.8-1-2.2-1.1-.6.8c-.2.2-.5.2-.8.1-1.1-.6-2-1.4-2.6-2.5-.2-.3-.1-.6.1-.8l.6-.6-.9-2.1-.4.1Z"/></svg>';
   const COACH_PHOTOS=[
-    {match:name=>/^anna\s*k\b/.test(name)||name==='anna',src:'/anna%20K.jpg'},
-    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg'},
-    {match:name=>/^luca\b/.test(name),src:'/luca.jpg'}
+    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',position:'50% 72%'},
+    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',position:'50% 48%'},
+    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',position:'50% 76%'}
   ];
 
   const coachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
-  const coachPhoto=value=>{const name=coachName(value);return COACH_PHOTOS.find(item=>item.match(name))?.src||''};
+  const coachPhoto=value=>{const name=coachName(value);return COACH_PHOTOS.find(item=>item.match(name))||null};
+  const localPhotoPaths=COACH_PHOTOS.map(item=>decodeURIComponent(item.src).toLowerCase());
 
   const style=document.createElement('style');
   style.textContent=`
-    .coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important;object-position:center!important}
-    .coach-real-avatar img{width:100%;height:100%;object-fit:cover;object-position:center}
+    .coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important}
+    .coach-real-avatar img{width:100%;height:100%;object-fit:cover}
+    .coach-real-avatar{overflow:hidden}
   `;
   document.head.appendChild(style);
 
@@ -59,21 +61,34 @@
       })[0]||null;
   }
 
-  function fillExistingAvatar(avatar,src,name){
-    if(!avatar||!src)return;
+  function fillExistingAvatar(avatar,photo,name){
+    if(!avatar||!photo)return;
     const alt=`Coach ${name.trim()}`;
     if(avatar.tagName==='IMG'){
       avatar.classList.add('coach-photo-fill');
       avatar.alt=alt;
       avatar.loading='lazy';
-      if(avatar.getAttribute('src')!==src)avatar.src=src;
+      avatar.style.objectPosition=photo.position;
+      if(avatar.getAttribute('src')!==photo.src)avatar.src=photo.src;
       return;
     }
     avatar.style.overflow='hidden';
     avatar.setAttribute('aria-label',alt);
     let image=avatar.querySelector('img.coach-photo-fill');
     if(!image){avatar.textContent='';image=document.createElement('img');image.className='coach-photo-fill';avatar.appendChild(image)}
-    image.src=src;image.alt=alt;image.loading='lazy';
+    image.src=photo.src;image.alt=alt;image.loading='lazy';image.style.objectPosition=photo.position;
+  }
+
+  function isKnownLocalImage(image){
+    if(!image)return false;
+    try{return localPhotoPaths.some(path=>decodeURIComponent(new URL(image.src,location.href).pathname).toLowerCase()===path)}catch(_){return false}
+  }
+
+  function restoreCoachFallback(card,name){
+    const avatar=card.querySelector('.coach-real-avatar');if(!avatar)return;
+    const image=avatar.querySelector('img');
+    if(!isKnownLocalImage(image))return;
+    avatar.innerHTML=`<span>${String(name||'CP').trim().split(/\s+/).map(part=>part[0]||'').join('').slice(0,2).toUpperCase()}</span>`;
   }
 
   function applyCoachPhotos(){
@@ -84,18 +99,19 @@
       const box=row.querySelector('.class-coach');
       if(!box)return;
       const name=box.querySelector('b')?.textContent||'';
-      const src=coachPhoto(name);if(!src)return;
+      const photo=coachPhoto(name);if(!photo)return;
       const avatar=existingScheduleAvatar(row,box,name);
-      fillExistingAvatar(avatar,src,name);
+      fillExistingAvatar(avatar,photo,name);
     });
 
     document.querySelectorAll('#coachGrid .coach-real-card').forEach(card=>{
       const name=card.querySelector('h3')?.textContent||'';
-      const src=coachPhoto(name);if(!src)return;
+      const photo=coachPhoto(name);
+      if(!photo){restoreCoachFallback(card,name);return}
       const avatar=card.querySelector('.coach-real-avatar');if(!avatar)return;
       let image=avatar.querySelector('img');
       if(!image){avatar.textContent='';image=document.createElement('img');avatar.appendChild(image)}
-      image.src=src;image.alt=`Coach ${name.trim()}`;image.loading='lazy';
+      image.src=photo.src;image.alt=`Coach ${name.trim()}`;image.loading='lazy';image.style.objectPosition=photo.position;
     });
   }
 
