@@ -13,7 +13,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[mindbody-verify]')
     runs-on: ubuntu-latest
     steps:
-      - name: Verify Classy Pilates Mindbody API access
+      - name: Preview live Mindbody import data (read only)
         env:
           API_KEY_1: ${{ secrets.MINDBODY_API_KEY }}
           API_KEY_2: ${{ secrets.MB_API_KEY }}
@@ -23,65 +23,172 @@ jobs:
           SITE_ID_SECRET: ${{ secrets.MINDBODY_SITE_ID }}
         run: |
           set -euo pipefail
-          API_KEY="${API_KEY_1:-${API_KEY_2:-${API_KEY_3:-${API_KEY_4:-${API_KEY_5:-}}}}}"
-          SITE_ID="${SITE_ID_SECRET:-5742686}"
-
-          if [ -z "$API_KEY" ]; then
+          export MINDBODY_API_KEY="${API_KEY_1:-${API_KEY_2:-${API_KEY_3:-${API_KEY_4:-${API_KEY_5:-}}}}}"
+          export MINDBODY_SITE_ID="${SITE_ID_SECRET:-5742686}"
+          if [ -z "$MINDBODY_API_KEY" ]; then
             echo "No Mindbody API key found in repository secrets." >&2
             exit 2
           fi
 
-          LOCATIONS="$(curl -sS --fail-with-body \
-            -H "API-Key: ${API_KEY}" \
-            -H "SiteId: ${SITE_ID}" \
-            -H "Accept: application/json" \
-            -H "User-Agent: ClassyPilates/1.0" \
-            'https://api.mindbodyonline.com/public/v6/site/locations')"
+          python3 <<'PY'
+          import collections, datetime as dt, json, os, urllib.error, urllib.parse, urllib.request
 
-          CLASSES="$(curl -sS --fail-with-body \
-            -H "API-Key: ${API_KEY}" \
-            -H "SiteId: ${SITE_ID}" \
-            -H "Accept: application/json" \
-            -H "User-Agent: ClassyPilates/1.0" \
-            'https://api.mindbodyonline.com/public/v6/class/classes')"
+          API='https://api.mindbodyonline.com/public/v6'
+          KEY=os.environ['MINDBODY_API_KEY']
+          SITE=os.environ['MINDBODY_SITE_ID']
+          HEADERS={'API-Key':KEY,'SiteId':SITE,'Accept':'application/json','User-Agent':'ClassyPilates/1.0'}
 
-          python3 - "$SITE_ID" "$LOCATIONS" "$CLASSES" <<'PY'
-          import json, sys
-          site_id, locations_raw, classes_raw = sys.argv[1:4]
-          locations = json.loads(locations_raw)
-          classes = json.loads(classes_raw)
+          def req(path, params=None):
+              url=API+'/'+path.lstrip('/')
+              if params:
+                  url += '?' + urllib.parse.urlencode(params, doseq=True)
+              r=urllib.request.Request(url, headers=HEADERS)
+              try:
+                  with urllib.request.urlopen(r, timeout=30) as res:
+                      return res.status, json.loads(res.read().decode() or '{}')
+              except urllib.error.HTTPError as e:
+                  raw=e.read().decode(errors='replace')
+                  try: body=json.loads(raw)
+                  except Exception: body={'raw':raw[:500]}
+                  return e.code, body
 
-          def first_list(data, names):
-              if isinstance(data, list):
-                  return data
-              if isinstance(data, dict):
-                  for name in names:
-                      value = data.get(name)
-                      if isinstance(value, list):
-                          return value
+          def rows(payload, keys):
+              if isinstance(payload,list): return payload
+              if isinstance(payload,dict):
+                  for k in keys:
+                      v=payload.get(k)
+                      if isinstance(v,list): return v
               return []
 
-          location_rows = first_list(locations, ("Locations", "locations", "Items", "items"))
-          class_rows = first_list(classes, ("Classes", "classes", "Items", "items"))
-          location_names = []
-          for row in location_rows[:20]:
-              if isinstance(row, dict):
-                  name = row.get("Name") or row.get("name")
-                  if name:
-                      location_names.append(str(name))
+          def getv(obj,*names,default=None):
+              if not isinstance(obj,dict): return default
+              for name in names:
+                  if name in obj and obj[name] is not None: return obj[name]
+              return default
 
-          print(f"Mindbody connection OK for Site ID {site_id}")
-          print(f"Locations returned: {len(location_rows)}")
-          print(f"Classes returned in default window: {len(class_rows)}")
-          if location_names:
-              print("Locations: " + " | ".join(location_names))
+          def nested_name(obj,*candidate_keys):
+              for key in candidate_keys:
+                  v=getv(obj,key,key[:1].lower()+key[1:])
+                  if isinstance(v,dict):
+                      n=getv(v,'Name','name','DisplayName','displayName','DisplayName','display_name')
+                      if n: return str(n)
+              return ''
 
-          with open("/tmp/mindbody-summary.md", "w", encoding="utf-8") as f:
-              f.write("## Mindbody connection verified ✅\n\n")
-              f.write(f"- Site ID: `{site_id}`\n")
-              f.write(f"- Locations returned: **{len(location_rows)}**\n")
-              f.write(f"- Classes returned in default window: **{len(class_rows)}**\n")
-              if location_names:
-                  f.write("- Locations: " + ", ".join(location_names) + "\n")
+          # Business locations
+          loc_status, loc_payload=req('site/locations')
+          locs=rows(loc_payload,('Locations','locations','Items','items')) if loc_status==200 else []
+
+          # Full next-30-day live schedule, paged.
+          today=dt.datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
+          end=today+dt.timedelta(days=30, hours=23, minutes=59)
+          classes=[]
+          offset=0
+          limit=200
+          class_status=200
+          while offset < 4000:
+              status,payload=req('class/classes',{
+                  'StartDateTime':today.isoformat(),
+                  'EndDateTime':end.isoformat(),
+                  'Limit':limit,
+                  'Offset':offset,
+              })
+              class_status=status
+              if status!=200: break
+              batch=rows(payload,('Classes','classes','Items','items'))
+              classes.extend(batch)
+              if len(batch)<limit: break
+              offset += limit
+
+          # Optional staff directory. This call may need more permissions; failure is reported, not fatal.
+          staff_status, staff_payload=req('staff/staff',{'Limit':200,'Offset':0})
+          staff=rows(staff_payload,('StaffMembers','Staff','staff','Items','items')) if staff_status==200 else []
+
+          locations_counter=collections.Counter()
+          coaches_counter=collections.Counter()
+          names_counter=collections.Counter()
+          capacities=booked=waitlisted=0
+          has_description=has_room=has_staff_image=0
+          sample=[]
+
+          for c in classes:
+              cname=nested_name(c,'ClassDescription') or str(getv(c,'Name','name',default='')).strip()
+              staff_obj=getv(c,'Staff','staff',default={}) or {}
+              coach=(getv(staff_obj,'DisplayName','displayName','Name','name') or nested_name(c,'Staff')).strip() if isinstance(staff_obj,dict) else ''
+              loc_obj=getv(c,'Location','location',default={}) or {}
+              location=(getv(loc_obj,'Name','name') or '').strip() if isinstance(loc_obj,dict) else ''
+              maxcap=int(getv(c,'MaxCapacity','maxCapacity','WebCapacity','webCapacity',default=0) or 0)
+              totalbook=int(getv(c,'TotalBooked','totalBooked','WebBooked','webBooked',default=0) or 0)
+              totalwait=int(getv(c,'TotalWaitlisted','totalWaitlisted',default=0) or 0)
+              capacities += maxcap; booked += totalbook; waitlisted += totalwait
+              if cname: names_counter[cname]+=1
+              if coach: coaches_counter[coach]+=1
+              if location: locations_counter[location]+=1
+              desc_obj=getv(c,'ClassDescription','classDescription',default={}) or {}
+              desc=getv(desc_obj,'Description','description') if isinstance(desc_obj,dict) else None
+              if desc: has_description += 1
+              if getv(c,'RoomName','roomName'): has_room += 1
+              urls=getv(staff_obj,'ImageUrl','imageUrl','ImageURL','imageURL','StaffImageURLs','staffImageURLs') if isinstance(staff_obj,dict) else None
+              if urls: has_staff_image += 1
+              if len(sample)<8:
+                  sample.append({
+                      'class':cname or '—','start':getv(c,'StartDateTime','startDateTime',default='—'),
+                      'location':location or '—','coach':coach or '—','capacity':maxcap,
+                      'booked':totalbook,'waitlisted':totalwait,
+                  })
+
+          loc_names=[]
+          for x in locs:
+              n=getv(x,'Name','name')
+              if n: loc_names.append(str(n))
+
+          staff_names=[]
+          for x in staff:
+              n=getv(x,'DisplayName','displayName','Name','name')
+              if n: staff_names.append(str(n))
+
+          print('=== MINDBODY IMPORT PREVIEW (READ ONLY — NOTHING APPLIED) ===')
+          print('Site ID:', SITE)
+          print('Window:', today.date().isoformat(), 'to', end.date().isoformat())
+          print('Locations endpoint:', loc_status, '| locations:', len(locs))
+          print('Classes endpoint:', class_status, '| sessions in next 30 days:', len(classes))
+          print('Staff endpoint:', staff_status, '| staff returned:', len(staff))
+          print('Location names:', ' | '.join(loc_names) if loc_names else '—')
+          print('Unique class names:', len(names_counter))
+          print('Unique coaches found in classes:', len(coaches_counter))
+          print('Total capacity across returned sessions:', capacities)
+          print('Total currently booked across returned sessions:', booked)
+          print('Total currently waitlisted:', waitlisted)
+          print('Sessions with description:', has_description)
+          print('Sessions with room name:', has_room)
+          print('Sessions exposing a staff image field:', has_staff_image)
+          print('CLASS NAMES:')
+          for n,cnt in names_counter.most_common(): print(f'  - {n}: {cnt}')
+          print('COACHES FROM LIVE CLASSES:')
+          for n,cnt in coaches_counter.most_common(): print(f'  - {n}: {cnt} sessions')
+          print('SESSIONS BY LOCATION:')
+          for n,cnt in locations_counter.most_common(): print(f'  - {n}: {cnt}')
+          if staff_names:
+              print('STAFF DIRECTORY NAMES:')
+              for n in sorted(set(staff_names), key=str.casefold): print('  -',n)
+          print('SAMPLE LIVE SESSIONS:')
+          for x in sample: print('  -',json.dumps(x,ensure_ascii=False))
+          print('=== END PREVIEW ===')
+
+          with open('/tmp/mindbody-summary.md','w',encoding='utf-8') as f:
+              f.write('## Mindbody import preview — READ ONLY\n\n')
+              f.write('**No Mindbody data was written to Classy.**\n\n')
+              f.write(f'- Window: `{today.date()}` → `{end.date()}`\n')
+              f.write(f'- Locations: **{len(locs)}**\n')
+              f.write(f'- Live sessions: **{len(classes)}**\n')
+              f.write(f'- Unique class names: **{len(names_counter)}**\n')
+              f.write(f'- Coaches seen in live classes: **{len(coaches_counter)}**\n')
+              f.write(f'- Staff directory endpoint: **HTTP {staff_status}**, **{len(staff)}** returned\n')
+              f.write(f'- Capacity / booked / waitlisted: **{capacities} / {booked} / {waitlisted}**\n\n')
+              f.write('### Class names\n')
+              for n,cnt in names_counter.most_common(): f.write(f'- {n}: {cnt}\n')
+              f.write('\n### Coaches in live classes\n')
+              for n,cnt in coaches_counter.most_common(): f.write(f'- {n}: {cnt} sessions\n')
+              f.write('\n### Locations\n')
+              for n,cnt in locations_counter.most_common(): f.write(f'- {n}: {cnt} sessions\n')
           PY
           cat /tmp/mindbody-summary.md >> "$GITHUB_STEP_SUMMARY"
