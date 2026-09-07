@@ -31,9 +31,15 @@ classy.smarbiz.sbs {
   try_files {path} {path}/ /index.html
   file_server
 
+  @homepage path / /index.html
+  header @homepage Clear-Site-Data "\"cache\""
+
   header {
     X-Content-Type-Options nosniff
     Referrer-Policy strict-origin-when-cross-origin
     X-Frame-Options SAMEORIGIN
+    Cache-Control "no-cache, no-store, must-revalidate"
+    Pragma "no-cache"
+    Expires "0"
   }
 }
