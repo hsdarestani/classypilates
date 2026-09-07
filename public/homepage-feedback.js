@@ -12,7 +12,7 @@
 
   const style=document.createElement('style');
   style.textContent=`
-    .coach-photo-fill{display:block!important;width:100%!important;height:100%!important;object-fit:cover!important;object-position:center!important;border-radius:inherit!important}
+    .coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important;object-position:center!important}
     .coach-real-avatar img{width:100%;height:100%;object-fit:cover;object-position:center}
   `;
   document.head.appendChild(style);
@@ -40,15 +40,17 @@
   }
 
   function existingScheduleAvatar(row,coachBox,name){
+    const direct=coachBox.querySelector('.coach-avatar');
+    if(direct)return direct;
     const initial=(String(name||'').trim()[0]||'').toUpperCase();
-    const preferred=['.coach-avatar','.coach-initial','.coach-badge','.class-coach-avatar','[data-coach-avatar]'];
+    const preferred=['.coach-initial','.coach-badge','.class-coach-avatar','[data-coach-avatar]'];
     for(const selector of preferred){
       const found=row.querySelector(selector);
-      if(found&&!found.classList.contains('coach-inline-avatar'))return found;
+      if(found)return found;
     }
     const coachRect=coachBox.getBoundingClientRect();
     return [...row.querySelectorAll('div,span,i,b')]
-      .filter(el=>el!==coachBox&&!coachBox.contains(el)&&!el.classList.contains('coach-inline-avatar')&&el.textContent.trim().toUpperCase()===initial&&isCircleLike(el))
+      .filter(el=>el!==coachBox&&!coachBox.contains(el)&&el.textContent.trim().toUpperCase()===initial&&isCircleLike(el))
       .sort((a,b)=>{
         const ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
         const ad=Math.hypot((ar.left+ar.width/2)-(coachRect.left+coachRect.width/2),(ar.top+ar.height/2)-(coachRect.top+coachRect.height/2));
@@ -57,17 +59,21 @@
       })[0]||null;
   }
 
-  function fillExistingAvatar(circle,src,name){
-    if(!circle||!src)return;
-    circle.style.overflow='hidden';
-    circle.setAttribute('aria-label',`Coach ${name.trim()}`);
-    circle.textContent='';
-    const image=document.createElement('img');
-    image.className='coach-photo-fill';
-    image.src=src;
-    image.alt=`Coach ${name.trim()}`;
-    image.loading='lazy';
-    circle.appendChild(image);
+  function fillExistingAvatar(avatar,src,name){
+    if(!avatar||!src)return;
+    const alt=`Coach ${name.trim()}`;
+    if(avatar.tagName==='IMG'){
+      avatar.classList.add('coach-photo-fill');
+      avatar.alt=alt;
+      avatar.loading='lazy';
+      if(avatar.getAttribute('src')!==src)avatar.src=src;
+      return;
+    }
+    avatar.style.overflow='hidden';
+    avatar.setAttribute('aria-label',alt);
+    let image=avatar.querySelector('img.coach-photo-fill');
+    if(!image){avatar.textContent='';image=document.createElement('img');image.className='coach-photo-fill';avatar.appendChild(image)}
+    image.src=src;image.alt=alt;image.loading='lazy';
   }
 
   function applyCoachPhotos(){
@@ -79,8 +85,8 @@
       if(!box)return;
       const name=box.querySelector('b')?.textContent||'';
       const src=coachPhoto(name);if(!src)return;
-      const circle=existingScheduleAvatar(row,box,name);
-      if(circle&&!circle.querySelector('.coach-photo-fill'))fillExistingAvatar(circle,src,name);
+      const avatar=existingScheduleAvatar(row,box,name);
+      fillExistingAvatar(avatar,src,name);
     });
 
     document.querySelectorAll('#coachGrid .coach-real-card').forEach(card=>{
