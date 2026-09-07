@@ -1,0 +1,95 @@
+name: Connect Mindbody Production
+
+on:
+  workflow_run:
+    workflows: ["Deploy Classy Production"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classy-mindbody-connect
+  cancel-in-progress: false
+
+jobs:
+  connect:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH helper
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Configure production and verify Mindbody
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+          API_KEY_1: ${{ secrets.MINDBODY_API_KEY }}
+          API_KEY_2: ${{ secrets.MB_API_KEY }}
+          API_KEY_3: ${{ secrets.MBO_API_KEY }}
+          API_KEY_4: ${{ secrets.API_KEY }}
+          API_KEY_5: ${{ secrets.MINDBODY_KEY }}
+          SITE_ID_SECRET: ${{ secrets.MINDBODY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          API_KEY="${API_KEY_1:-${API_KEY_2:-${API_KEY_3:-${API_KEY_4:-${API_KEY_5:-}}}}}"
+          SITE_ID="${SITE_ID_SECRET:-5742686}"
+
+          test -n "$HOST" && test -n "$PASS"
+          if [ -z "$API_KEY" ]; then
+            echo "No Mindbody API key found in repository secrets." >&2
+            exit 2
+          fi
+
+          # Confirm the already-activated site is readable before touching production.
+          curl -sS --fail-with-body \
+            -H "API-Key: ${API_KEY}" \
+            -H "SiteId: ${SITE_ID}" \
+            -H "Accept: application/json" \
+            -H "User-Agent: ClassyPilates/1.0" \
+            'https://api.mindbodyonline.com/public/v6/site/locations' >/dev/null
+
+          API_KEY_B64="$(printf '%s' "$API_KEY" | base64 -w0)"
+          SITE_ID_B64="$(printf '%s' "$SITE_ID" | base64 -w0)"
+          export SSHPASS="$PASS"
+
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" \
+            "API_KEY_B64='$API_KEY_B64' SITE_ID_B64='$SITE_ID_B64' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+
+          API_KEY="$(printf '%s' "$API_KEY_B64" | base64 -d)"
+          SITE_ID="$(printf '%s' "$SITE_ID_B64" | base64 -d)"
+
+          touch .env
+          sed -i '/^MINDBODY_API_KEY=/d;/^MINDBODY_SITE_ID=/d;/^MINDBODY_API_URL=/d' .env
+          {
+            printf 'MINDBODY_API_KEY=%s\n' "$API_KEY"
+            printf 'MINDBODY_SITE_ID=%s\n' "$SITE_ID"
+            printf 'MINDBODY_API_URL=%s\n' 'https://api.mindbodyonline.com/public/v6'
+          } >> .env
+          chmod 600 .env
+
+          docker compose up -d --force-recreate api
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8787/api/health >/dev/null
+
+          RESULT="$(docker compose exec -T api python mindbody_api.py)"
+          printf '%s\n' "$RESULT"
+          python3 - "$RESULT" <<'PY'
+          import json, sys
+          data = json.loads(sys.argv[1])
+          if not data.get("ok"):
+              raise SystemExit("Mindbody verification failed")
+          print(
+              "Mindbody production connection OK: "
+              f"site={data.get('site_id')} "
+              f"locations={data.get('locations')} "
+              f"classes={data.get('classes_default_window')}"
+          )
+          PY
+          REMOTE

@@ -33,6 +33,9 @@ services:
       SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       SEPA_PROVIDER_KEY: ${SEPA_PROVIDER_KEY:-}
+      MINDBODY_API_KEY: ${MINDBODY_API_KEY:-}
+      MINDBODY_SITE_ID: ${MINDBODY_SITE_ID:-5742686}
+      MINDBODY_API_URL: ${MINDBODY_API_URL:-https://api.mindbodyonline.com/public/v6}
     volumes:
       - classy_uploads:/data/uploads
     depends_on:
