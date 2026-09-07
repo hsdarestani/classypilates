@@ -1,0 +1,110 @@
+name: Preview Full Future Mindbody Schedule
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[mindbody-full-preview]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan all future schedule data without applying it
+        env:
+          API_KEY: ${{ secrets.MINDBODY_API_KEY }}
+          SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import collections, datetime as dt, json, os, time, urllib.parse, urllib.request
+
+          api='https://api.mindbodyonline.com/public/v6'
+          headers={'API-Key':os.environ['API_KEY'],'SiteId':os.environ.get('SITE_ID') or '5742686','Accept':'application/json','User-Agent':'ClassyPilates/1.0'}
+
+          def call(path, params):
+              url=api+'/'+path+'?'+urllib.parse.urlencode(params)
+              for attempt in range(4):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=45) as r:
+                          return json.loads(r.read().decode() or '{}')
+                  except Exception:
+                      if attempt==3: raise
+                      time.sleep(2**attempt)
+
+          def rows(data):
+              for k in ('Classes','classes','Items','items'):
+                  v=data.get(k) if isinstance(data,dict) else None
+                  if isinstance(v,list): return v
+              return []
+
+          today=dt.date.today()
+          cursor=today
+          stop=today+dt.timedelta(days=365*5)
+          all_classes=[]
+          empty=0
+          windows=0
+
+          while cursor<=stop and empty<12:
+              end=min(cursor+dt.timedelta(days=30),stop)
+              offset=0
+              window=[]
+              while True:
+                  batch=rows(call('class/classes',{
+                      'StartDateTime':cursor.isoformat()+'T00:00:00',
+                      'EndDateTime':end.isoformat()+'T23:59:59',
+                      'Limit':200,'Offset':offset
+                  }))
+                  window.extend(batch)
+                  if len(batch)<200: break
+                  offset+=200
+              windows+=1
+              if window:
+                  empty=0
+                  all_classes.extend(window)
+              else:
+                  empty+=1
+              cursor=end+dt.timedelta(days=1)
+
+          seen=set(); classes=[]
+          for c in all_classes:
+              key=(str(c.get('Id') or c.get('id') or ''),str(c.get('StartDateTime') or c.get('startDateTime') or ''))
+              if key in seen: continue
+              seen.add(key); classes.append(c)
+
+          names=collections.Counter(); coaches=collections.Counter(); locations=collections.Counter()
+          capacity=booked=waitlisted=0; starts=[]
+          for c in classes:
+              desc=c.get('ClassDescription') or c.get('classDescription') or {}
+              staff=c.get('Staff') or c.get('staff') or {}
+              loc=c.get('Location') or c.get('location') or {}
+              name=(desc.get('Name') if isinstance(desc,dict) else None) or c.get('Name') or c.get('name') or '—'
+              coach=(staff.get('DisplayName') or staff.get('Name') or staff.get('name') or '—') if isinstance(staff,dict) else '—'
+              location=(loc.get('Name') or loc.get('name') or '—') if isinstance(loc,dict) else '—'
+              start=c.get('StartDateTime') or c.get('startDateTime') or ''
+              names[str(name)]+=1; coaches[str(coach)]+=1; locations[str(location)]+=1
+              capacity+=int(c.get('MaxCapacity') or c.get('WebCapacity') or 0)
+              booked+=int(c.get('TotalBooked') or c.get('WebBooked') or 0)
+              waitlisted+=int(c.get('TotalWaitlisted') or 0)
+              if start: starts.append(str(start))
+
+          print('=== FULL FUTURE MINDBODY PREVIEW — READ ONLY ===')
+          print('NO DATA WAS APPLIED TO CLASSY')
+          print('Future sessions:',len(classes))
+          print('First session:',min(starts) if starts else '—')
+          print('Last session:',max(starts) if starts else '—')
+          print('Unique class names:',len(names))
+          print('Unique coaches:',len([x for x in coaches if x!='—']))
+          print('Locations:',len([x for x in locations if x!='—']))
+          print('Capacity / booked / waitlisted:',capacity,booked,waitlisted)
+          print('Scanned 31-day windows:',windows,'; stopped after',empty,'consecutive empty windows or 5-year safety horizon')
+          print('CLASS NAMES:')
+          for n,c in names.most_common(): print(' -',n,':',c)
+          print('COACHES:')
+          for n,c in coaches.most_common(): print(' -',n,':',c)
+          print('LOCATIONS:')
+          for n,c in locations.most_common(): print(' -',n,':',c)
+          PY
