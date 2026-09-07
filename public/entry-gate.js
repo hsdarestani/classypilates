@@ -28,28 +28,38 @@
 
   const syncText=(el,value)=>{if(el&&el.textContent!==value)el.textContent=value};
   function applyClientRequestedUi(){
+    const isDe=document.documentElement.lang==='de';
     const fitCard=gate.querySelector('.experience-card.fit');
     if(fitCard){
       syncText(fitCard.querySelector('.experience-card-meta>span:first-child'),'HIIT');
       syncText(fitCard.querySelector('h3'),'Classy Fitness');
-      syncText(fitCard.querySelector('.experience-card-action>span'),'Enter Classy Fitness');
-      fitCard.setAttribute('aria-label','Open Classy Fitness');
+      syncText(fitCard.querySelector('.experience-card-action>span'),isDe?'Classy Fitness öffnen':'Enter Classy Fitness');
+      fitCard.setAttribute('aria-label',isDe?'Classy Fitness öffnen':'Open Classy Fitness');
     }
     gate.querySelectorAll('.experience-card-icon').forEach(icon=>icon.remove());
 
     const passGrid=document.querySelector('#passes .pass-grid');
-    if(passGrid&&!passGrid.querySelector('[data-five-class-pass]')){
-      const five=document.createElement('article');
-      five.dataset.fiveClassPass='1';
-      five.innerHTML='<span>FLEXIBLE</span><h3>5 Classes</h3><b>119 €</b><p>Five classes for a flexible training rhythm.</p><button type="button">Buy in the shop →</button>';
-      five.querySelector('button')?.addEventListener('click',()=>{location.href='/shop?product=five'});
-      const featured=passGrid.querySelector('.featured');
-      passGrid.insertBefore(five,featured||passGrid.children[1]||null);
+    if(passGrid){
+      let five=passGrid.querySelector('[data-five-class-pass]');
+      if(!five){
+        five=document.createElement('article');
+        five.dataset.fiveClassPass='1';
+        five.innerHTML='<span></span><h3></h3><b>119 €</b><p></p><button type="button"></button>';
+        five.querySelector('button')?.addEventListener('click',()=>{location.href='/shop?product=five'});
+        const featured=passGrid.querySelector('.featured');
+        passGrid.insertBefore(five,featured||passGrid.children[1]||null);
+      }
+      syncText(five.querySelector('span'),isDe?'FLEXIBEL':'FLEXIBLE');
+      syncText(five.querySelector('h3'),isDe?'5 Kurse':'5 Classes');
+      syncText(five.querySelector('b'),'119 €');
+      syncText(five.querySelector('p'),isDe?'Fünf Kurse für einen flexiblen Trainingsrhythmus.':'Five classes for a flexible training rhythm.');
+      syncText(five.querySelector('button'),isDe?'In den Warenkorb →':'Buy in the shop →');
     }
     const smallPrint=document.querySelector('#passes .small-print');
-    if(smallPrint&&!smallPrint.dataset.fiveClassCleaned){
-      smallPrint.dataset.fiveClassCleaned='1';
-      smallPrint.innerHTML='<a href="/shop">View all payment methods ↗</a>';
+    if(smallPrint){
+      let link=smallPrint.querySelector('[data-all-payment-methods]');
+      if(!link){smallPrint.textContent='';link=document.createElement('a');link.href='/shop';link.dataset.allPaymentMethods='1';smallPrint.appendChild(link)}
+      syncText(link,isDe?'Alle Zahlungsarten ansehen ↗':'View all payment methods ↗');
     }
   }
 
