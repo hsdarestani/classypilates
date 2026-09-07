@@ -12,10 +12,8 @@
 
   const style=document.createElement('style');
   style.textContent=`
-    .class-coach.has-local-photo{position:relative;min-height:46px;padding-left:54px;display:flex;flex-direction:column;justify-content:center}
-    .class-coach .coach-inline-avatar{position:absolute;left:0;top:50%;width:42px;height:42px;transform:translateY(-50%);border-radius:50%;object-fit:cover;object-position:center;border:1px solid rgba(21,21,19,.12);background:#d8d0c1}
+    .coach-photo-fill{display:block!important;width:100%!important;height:100%!important;object-fit:cover!important;object-position:center!important;border-radius:inherit!important}
     .coach-real-avatar img{width:100%;height:100%;object-fit:cover;object-position:center}
-    @media(max-width:760px){.class-coach.has-local-photo{padding-left:46px;min-height:40px}.class-coach .coach-inline-avatar{width:36px;height:36px}}
   `;
   document.head.appendChild(style);
 
@@ -32,18 +30,57 @@
     });
   }
 
+  function isCircleLike(el){
+    if(!el)return false;
+    const rect=el.getBoundingClientRect();
+    if(rect.width<24||rect.height<24||rect.width>100||rect.height>100)return false;
+    if(Math.max(rect.width,rect.height)/Math.max(1,Math.min(rect.width,rect.height))>1.35)return false;
+    const radius=getComputedStyle(el).borderRadius||'';
+    return radius.includes('%')||parseFloat(radius)>=Math.min(rect.width,rect.height)*.28;
+  }
+
+  function existingScheduleAvatar(row,coachBox,name){
+    const initial=(String(name||'').trim()[0]||'').toUpperCase();
+    const preferred=['.coach-avatar','.coach-initial','.coach-badge','.class-coach-avatar','[data-coach-avatar]'];
+    for(const selector of preferred){
+      const found=row.querySelector(selector);
+      if(found&&!found.classList.contains('coach-inline-avatar'))return found;
+    }
+    const coachRect=coachBox.getBoundingClientRect();
+    return [...row.querySelectorAll('div,span,i,b')]
+      .filter(el=>el!==coachBox&&!coachBox.contains(el)&&!el.classList.contains('coach-inline-avatar')&&el.textContent.trim().toUpperCase()===initial&&isCircleLike(el))
+      .sort((a,b)=>{
+        const ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
+        const ad=Math.hypot((ar.left+ar.width/2)-(coachRect.left+coachRect.width/2),(ar.top+ar.height/2)-(coachRect.top+coachRect.height/2));
+        const bd=Math.hypot((br.left+br.width/2)-(coachRect.left+coachRect.width/2),(br.top+br.height/2)-(coachRect.top+coachRect.height/2));
+        return ad-bd;
+      })[0]||null;
+  }
+
+  function fillExistingAvatar(circle,src,name){
+    if(!circle||!src)return;
+    circle.style.overflow='hidden';
+    circle.setAttribute('aria-label',`Coach ${name.trim()}`);
+    circle.textContent='';
+    const image=document.createElement('img');
+    image.className='coach-photo-fill';
+    image.src=src;
+    image.alt=`Coach ${name.trim()}`;
+    image.loading='lazy';
+    circle.appendChild(image);
+  }
+
   function applyCoachPhotos(){
-    document.querySelectorAll('#classList .class-coach').forEach(box=>{
+    document.querySelectorAll('#classList .coach-inline-avatar').forEach(node=>node.remove());
+    document.querySelectorAll('#classList .class-coach.has-local-photo').forEach(box=>box.classList.remove('has-local-photo'));
+
+    document.querySelectorAll('#classList .class-row').forEach(row=>{
+      const box=row.querySelector('.class-coach');
+      if(!box)return;
       const name=box.querySelector('b')?.textContent||'';
-      const src=coachPhoto(name);
-      const old=box.querySelector('.coach-inline-avatar');
-      if(!src){old?.remove();box.classList.remove('has-local-photo');return}
-      box.classList.add('has-local-photo');
-      let image=old;
-      if(!image){image=document.createElement('img');image.className='coach-inline-avatar';box.prepend(image)}
-      if(image.getAttribute('src')!==src)image.src=src;
-      image.alt=`Coach ${name.trim()}`;
-      image.loading='lazy';
+      const src=coachPhoto(name);if(!src)return;
+      const circle=existingScheduleAvatar(row,box,name);
+      if(circle&&!circle.querySelector('.coach-photo-fill'))fillExistingAvatar(circle,src,name);
     });
 
     document.querySelectorAll('#coachGrid .coach-real-card').forEach(card=>{
