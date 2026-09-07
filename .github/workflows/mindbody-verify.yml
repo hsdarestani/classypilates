@@ -1,0 +1,87 @@
+name: Verify Mindbody Connection
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[mindbody-verify]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Classy Pilates Mindbody API access
+        env:
+          API_KEY_1: ${{ secrets.MINDBODY_API_KEY }}
+          API_KEY_2: ${{ secrets.MB_API_KEY }}
+          API_KEY_3: ${{ secrets.MBO_API_KEY }}
+          API_KEY_4: ${{ secrets.API_KEY }}
+          API_KEY_5: ${{ secrets.MINDBODY_KEY }}
+          SITE_ID_SECRET: ${{ secrets.MINDBODY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          API_KEY="${API_KEY_1:-${API_KEY_2:-${API_KEY_3:-${API_KEY_4:-${API_KEY_5:-}}}}}"
+          SITE_ID="${SITE_ID_SECRET:-5742686}"
+
+          if [ -z "$API_KEY" ]; then
+            echo "No Mindbody API key found in repository secrets." >&2
+            exit 2
+          fi
+
+          LOCATIONS="$(curl -sS --fail-with-body \
+            -H "API-Key: ${API_KEY}" \
+            -H "SiteId: ${SITE_ID}" \
+            -H "Accept: application/json" \
+            -H "User-Agent: ClassyPilates/1.0" \
+            'https://api.mindbodyonline.com/public/v6/site/locations')"
+
+          CLASSES="$(curl -sS --fail-with-body \
+            -H "API-Key: ${API_KEY}" \
+            -H "SiteId: ${SITE_ID}" \
+            -H "Accept: application/json" \
+            -H "User-Agent: ClassyPilates/1.0" \
+            'https://api.mindbodyonline.com/public/v6/class/classes')"
+
+          python3 - "$SITE_ID" "$LOCATIONS" "$CLASSES" <<'PY'
+          import json, sys
+          site_id, locations_raw, classes_raw = sys.argv[1:4]
+          locations = json.loads(locations_raw)
+          classes = json.loads(classes_raw)
+
+          def first_list(data, names):
+              if isinstance(data, list):
+                  return data
+              if isinstance(data, dict):
+                  for name in names:
+                      value = data.get(name)
+                      if isinstance(value, list):
+                          return value
+              return []
+
+          location_rows = first_list(locations, ("Locations", "locations", "Items", "items"))
+          class_rows = first_list(classes, ("Classes", "classes", "Items", "items"))
+          location_names = []
+          for row in location_rows[:20]:
+              if isinstance(row, dict):
+                  name = row.get("Name") or row.get("name")
+                  if name:
+                      location_names.append(str(name))
+
+          print(f"Mindbody connection OK for Site ID {site_id}")
+          print(f"Locations returned: {len(location_rows)}")
+          print(f"Classes returned in default window: {len(class_rows)}")
+          if location_names:
+              print("Locations: " + " | ".join(location_names))
+
+          with open("/tmp/mindbody-summary.md", "w", encoding="utf-8") as f:
+              f.write("## Mindbody connection verified ✅\n\n")
+              f.write(f"- Site ID: `{site_id}`\n")
+              f.write(f"- Locations returned: **{len(location_rows)}**\n")
+              f.write(f"- Classes returned in default window: **{len(class_rows)}**\n")
+              if location_names:
+                  f.write("- Locations: " + ", ".join(location_names) + "\n")
+          PY
+          cat /tmp/mindbody-summary.md >> "$GITHUB_STEP_SUMMARY"
