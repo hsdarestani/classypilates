@@ -2,9 +2,9 @@
   const WHATSAPP='https://wa.me/4915253816033';
   const whatsappIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.3c.2 2 1.8 4.1 4.2 5.3.7.3 1.3.4 1.8-.2l.8-1-2.2-1.1-.6.8c-.2.2-.5.2-.8.1-1.1-.6-2-1.4-2.6-2.5-.2-.3-.1-.6.1-.8l.6-.6-.9-2.1-.4.1Z"/></svg>';
   const COACH_PHOTOS=[
-    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',schedulePosition:'50% 24%',cardPosition:'50% 100%',cardScale:1.65,cardOrigin:'50% 100%'},
-    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',schedulePosition:'50% 28%',cardPosition:'50% 20%',cardScale:1,cardOrigin:'50% 50%'},
-    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 24%',cardPosition:'50% 100%',cardScale:1.6,cardOrigin:'50% 100%'}
+    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',schedulePosition:'50% 52%',cardPosition:'50% 56%'},
+    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',schedulePosition:'50% 38%',cardPosition:'50% 38%'},
+    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 50%',cardPosition:'50% 54%'}
   ];
 
   const coachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
@@ -14,8 +14,8 @@
   const style=document.createElement('style');
   style.textContent=`
     .coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important}
-    .coach-real-avatar img{width:100%;height:100%;object-fit:cover;display:block}
-    .coach-real-avatar{overflow:hidden}
+    .coach-real-avatar{width:100%!important;height:auto!important;aspect-ratio:16/10!important;overflow:hidden!important}
+    .coach-real-avatar img{width:100%!important;height:100%!important;display:block!important;object-fit:cover!important;transform:none!important;transform-origin:center!important}
   `;
   document.head.appendChild(style);
 
@@ -69,6 +69,7 @@
       avatar.alt=alt;
       avatar.loading='lazy';
       avatar.style.objectPosition=photo.schedulePosition;
+      avatar.style.transform='none';
       if(avatar.getAttribute('src')!==photo.src)avatar.src=photo.src;
       return;
     }
@@ -76,7 +77,7 @@
     avatar.setAttribute('aria-label',alt);
     let image=avatar.querySelector('img.coach-photo-fill');
     if(!image){avatar.textContent='';image=document.createElement('img');image.className='coach-photo-fill';avatar.appendChild(image)}
-    image.src=photo.src;image.alt=alt;image.loading='lazy';image.style.objectPosition=photo.schedulePosition;
+    image.src=photo.src;image.alt=alt;image.loading='lazy';image.style.objectPosition=photo.schedulePosition;image.style.transform='none';
   }
 
   function isKnownLocalImage(image){
@@ -115,8 +116,8 @@
       image.alt=`Coach ${name.trim()}`;
       image.loading='lazy';
       image.style.objectPosition=photo.cardPosition;
-      image.style.transformOrigin=photo.cardOrigin;
-      image.style.transform=`scale(${photo.cardScale})`;
+      image.style.transform='none';
+      image.style.transformOrigin='center';
     });
   }
 
