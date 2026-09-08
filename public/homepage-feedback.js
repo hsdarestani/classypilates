@@ -4,7 +4,8 @@
   const COACH_PHOTOS=[
     {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',schedulePosition:'50% 52%'},
     {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',schedulePosition:'50% 38%'},
-    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 50%'}
+    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 50%'},
+    {match:name=>/^zora\b/.test(name),src:'/zora.jpg',schedulePosition:'50% 40%'}
   ];
 
   const coachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
