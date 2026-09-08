@@ -7,17 +7,23 @@
   const initials=name=>String(name||'CP').split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase();
   const api=async path=>{const response=await fetch(path,{headers:{accept:'application/json'},cache:'no-store'});if(!response.ok)throw new Error(path);return response.json()};
 
+  /*
+   * These supplied portraits are intentionally rendered as CSS backgrounds in
+   * the coach cards instead of <img> + object-fit. That makes the 16:10 crop
+   * deterministic across Chrome/Safari/Android/iOS and prevents later image
+   * rules from changing the framing.
+   */
   const LOCAL_COACH_PHOTOS=[
-    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg'},
-    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg'},
-    {match:name=>/^luca\b/.test(name),src:'/luca.jpg'}
+    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',cardPosition:'50% 35%'},
+    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',cardPosition:'50% 35%'},
+    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',cardPosition:'50% 35%'}
   ];
   const normalizeCoachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
-  const coachPhotoUrl=coach=>{
+  const localCoachPhoto=coach=>{
     const name=normalizeCoachName(coach?.display_name);
-    const local=LOCAL_COACH_PHOTOS.find(item=>item.match(name));
-    return local?.src||String(coach?.photo_url||'').trim();
+    return LOCAL_COACH_PHOTOS.find(item=>item.match(name))||null;
   };
+  const coachPhotoUrl=coach=>String(coach?.photo_url||'').trim();
   const cssUrl=value=>String(value||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');
 
   function renderOverview(data){
@@ -31,15 +37,24 @@
 
   function coachCard(coach){
     const studios=(coach.studios||[]).join(' · ')||'Classy Pilates Frankfurt';
-    const photoUrl=coachPhotoUrl(coach);
-    const avatar=photoUrl
-      ?`<span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(photoUrl)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async">`
-      :`<span class="coach-real-initials">${esc(initials(coach.display_name))}</span>`;
-    return `<article class="coach-real-card" data-coach-card><div class="coach-real-avatar" data-coach-photo-frame>${avatar}</div><div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div><b>${count(coach.sessions)}</b><small>Sessions</small><b>${count(coach.bookings)}</b><small>Bookings</small></div></div></article>`;
+    const local=localCoachPhoto(coach);
+    const remotePhoto=local?'':coachPhotoUrl(coach);
+
+    let avatar='';
+    if(local){
+      avatar=`<div class="coach-real-avatar coach-real-avatar--fixed-photo" data-coach-photo-frame data-photo-mode="background" style="background-image:url(&quot;${esc(local.src)}&quot;);background-position:${esc(local.cardPosition)}"></div>`;
+    }else if(remotePhoto){
+      avatar=`<div class="coach-real-avatar" data-coach-photo-frame><span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(remotePhoto)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
+    }else{
+      avatar=`<div class="coach-real-avatar" data-coach-photo-frame><span class="coach-real-initials">${esc(initials(coach.display_name))}</span></div>`;
+    }
+
+    return `<article class="coach-real-card" data-coach-card>${avatar}<div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div><b>${count(coach.sessions)}</b><small>Sessions</small><b>${count(coach.bookings)}</b><small>Bookings</small></div></div></article>`;
   }
 
   function prepareCoachPhotoFrames(grid){
     grid.querySelectorAll('[data-coach-photo-frame]').forEach(frame=>{
+      if(frame.dataset.photoMode==='background')return;
       const image=frame.querySelector('img');
       const backdrop=frame.querySelector('.coach-real-backdrop');
       if(!image||!backdrop)return;
