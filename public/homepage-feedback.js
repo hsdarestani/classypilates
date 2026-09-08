@@ -9,14 +9,9 @@
 
   const coachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
   const coachPhoto=value=>{const name=coachName(value);return COACH_PHOTOS.find(item=>item.match(name))||null};
-  const localPhotoPaths=COACH_PHOTOS.map(item=>decodeURIComponent(item.src).toLowerCase());
 
   const style=document.createElement('style');
-  style.textContent=`
-    .coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important}
-    #coachGrid .coach-real-avatar{width:100%!important;height:auto!important;aspect-ratio:16/10!important;overflow:hidden!important;position:relative!important;background-color:#d8d3ca!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important}
-    #coachGrid .coach-real-avatar img{width:100%!important;height:100%!important;display:block!important;object-fit:contain!important;object-position:center center!important;transform:none!important;transform-origin:center!important;position:relative!important;z-index:1!important}
-  `;
+  style.textContent=`.coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important}`;
   document.head.appendChild(style);
 
   function fixStudioWhatsApp(){
@@ -80,34 +75,12 @@
     image.src=photo.src;image.alt=alt;image.loading='lazy';image.style.objectPosition=photo.schedulePosition;image.style.transform='none';
   }
 
-  function isKnownLocalImage(image){
-    if(!image)return false;
-    try{return localPhotoPaths.some(path=>decodeURIComponent(new URL(image.src,location.href).pathname).toLowerCase()===path)}catch(_){return false}
-  }
-
-  function restoreCoachFallback(card,name){
-    const avatar=card.querySelector('.coach-real-avatar');if(!avatar)return;
-    const image=avatar.querySelector('img');
-    if(!isKnownLocalImage(image))return;
-    avatar.style.backgroundImage='';
-    avatar.innerHTML=`<span>${String(name||'CP').trim().split(/\s+/).map(part=>part[0]||'').join('').slice(0,2).toUpperCase()}</span>`;
-  }
-
-  function fitCoachCardImage(avatar,image,src){
-    if(!avatar||!image||!src)return;
-    const safeSrc=String(src).replace(/"/g,'%22');
-    avatar.style.backgroundImage=`linear-gradient(rgba(216,211,202,.62),rgba(216,211,202,.62)),url("${safeSrc}")`;
-    avatar.style.backgroundSize='cover';
-    avatar.style.backgroundPosition='center';
-    image.style.width='100%';
-    image.style.height='100%';
-    image.style.objectFit='contain';
-    image.style.objectPosition='center center';
-    image.style.transform='none';
-    image.style.transformOrigin='center';
-  }
-
-  function applyCoachPhotos(){
+  /*
+   * Only the tiny schedule avatars are handled here. The full coach cards are
+   * authoritative in real-data.js and must never be rewritten by this late
+   * feedback layer; doing so was the source of the device-dependent crop.
+   */
+  function applyScheduleCoachPhotos(){
     document.querySelectorAll('#classList .coach-inline-avatar').forEach(node=>node.remove());
     document.querySelectorAll('#classList .class-coach.has-local-photo').forEach(box=>box.classList.remove('has-local-photo'));
 
@@ -119,32 +92,9 @@
       const avatar=existingScheduleAvatar(row,box,name);
       fillExistingAvatar(avatar,photo,name);
     });
-
-    document.querySelectorAll('#coachGrid .coach-real-card').forEach(card=>{
-      const name=card.querySelector('h3')?.textContent||'';
-      const photo=coachPhoto(name);
-      const avatar=card.querySelector('.coach-real-avatar');if(!avatar)return;
-      let image=avatar.querySelector('img');
-
-      if(photo){
-        if(!image){avatar.textContent='';image=document.createElement('img');avatar.appendChild(image)}
-        image.src=photo.src;
-        image.alt=`Coach ${name.trim()}`;
-        image.loading='lazy';
-        fitCoachCardImage(avatar,image,photo.src);
-        return;
-      }
-
-      if(image){
-        fitCoachCardImage(avatar,image,image.getAttribute('src')||image.src);
-        return;
-      }
-
-      restoreCoachFallback(card,name);
-    });
   }
 
-  const run=()=>{fixStudioWhatsApp();applyCoachPhotos()};
+  const run=()=>{fixStudioWhatsApp();applyScheduleCoachPhotos()};
   run();
   new MutationObserver(run).observe(document.body,{childList:true,subtree:true});
 })();
