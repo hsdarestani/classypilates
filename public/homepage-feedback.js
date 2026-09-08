@@ -2,9 +2,9 @@
   const WHATSAPP='https://wa.me/4915253816033';
   const whatsappIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.3c.2 2 1.8 4.1 4.2 5.3.7.3 1.3.4 1.8-.2l.8-1-2.2-1.1-.6.8c-.2.2-.5.2-.8.1-1.1-.6-2-1.4-2.6-2.5-.2-.3-.1-.6.1-.8l.6-.6-.9-2.1-.4.1Z"/></svg>';
   const COACH_PHOTOS=[
-    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',schedulePosition:'50% 52%',cardPosition:'50% 56%'},
-    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',schedulePosition:'50% 38%',cardPosition:'50% 38%'},
-    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 50%',cardPosition:'50% 54%'}
+    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',schedulePosition:'50% 52%'},
+    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',schedulePosition:'50% 38%'},
+    {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 50%'}
   ];
 
   const coachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
@@ -14,8 +14,8 @@
   const style=document.createElement('style');
   style.textContent=`
     .coach-avatar.coach-photo-fill{display:block!important;object-fit:cover!important}
-    .coach-real-avatar{width:100%!important;height:auto!important;aspect-ratio:16/10!important;overflow:hidden!important}
-    .coach-real-avatar img{width:100%!important;height:100%!important;display:block!important;object-fit:cover!important;transform:none!important;transform-origin:center!important}
+    #coachGrid .coach-real-avatar{width:100%!important;height:auto!important;aspect-ratio:16/10!important;overflow:hidden!important;position:relative!important;background-color:#d8d3ca!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important}
+    #coachGrid .coach-real-avatar img{width:100%!important;height:100%!important;display:block!important;object-fit:contain!important;object-position:center center!important;transform:none!important;transform-origin:center!important;position:relative!important;z-index:1!important}
   `;
   document.head.appendChild(style);
 
@@ -89,7 +89,22 @@
     const avatar=card.querySelector('.coach-real-avatar');if(!avatar)return;
     const image=avatar.querySelector('img');
     if(!isKnownLocalImage(image))return;
+    avatar.style.backgroundImage='';
     avatar.innerHTML=`<span>${String(name||'CP').trim().split(/\s+/).map(part=>part[0]||'').join('').slice(0,2).toUpperCase()}</span>`;
+  }
+
+  function fitCoachCardImage(avatar,image,src){
+    if(!avatar||!image||!src)return;
+    const safeSrc=String(src).replace(/"/g,'%22');
+    avatar.style.backgroundImage=`linear-gradient(rgba(216,211,202,.62),rgba(216,211,202,.62)),url("${safeSrc}")`;
+    avatar.style.backgroundSize='cover';
+    avatar.style.backgroundPosition='center';
+    image.style.width='100%';
+    image.style.height='100%';
+    image.style.objectFit='contain';
+    image.style.objectPosition='center center';
+    image.style.transform='none';
+    image.style.transformOrigin='center';
   }
 
   function applyCoachPhotos(){
@@ -108,16 +123,24 @@
     document.querySelectorAll('#coachGrid .coach-real-card').forEach(card=>{
       const name=card.querySelector('h3')?.textContent||'';
       const photo=coachPhoto(name);
-      if(!photo){restoreCoachFallback(card,name);return}
       const avatar=card.querySelector('.coach-real-avatar');if(!avatar)return;
       let image=avatar.querySelector('img');
-      if(!image){avatar.textContent='';image=document.createElement('img');avatar.appendChild(image)}
-      image.src=photo.src;
-      image.alt=`Coach ${name.trim()}`;
-      image.loading='lazy';
-      image.style.objectPosition=photo.cardPosition;
-      image.style.transform='none';
-      image.style.transformOrigin='center';
+
+      if(photo){
+        if(!image){avatar.textContent='';image=document.createElement('img');avatar.appendChild(image)}
+        image.src=photo.src;
+        image.alt=`Coach ${name.trim()}`;
+        image.loading='lazy';
+        fitCoachCardImage(avatar,image,photo.src);
+        return;
+      }
+
+      if(image){
+        fitCoachCardImage(avatar,image,image.getAttribute('src')||image.src);
+        return;
+      }
+
+      restoreCoachFallback(card,name);
     });
   }
 
