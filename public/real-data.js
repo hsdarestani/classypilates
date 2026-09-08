@@ -7,6 +7,19 @@
   const initials=name=>String(name||'CP').split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase();
   const api=async path=>{const response=await fetch(path,{headers:{accept:'application/json'},cache:'no-store'});if(!response.ok)throw new Error(path);return response.json()};
 
+  const LOCAL_COACH_PHOTOS=[
+    {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg'},
+    {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg'},
+    {match:name=>/^luca\b/.test(name),src:'/luca.jpg'}
+  ];
+  const normalizeCoachName=value=>String(value||'').trim().toLowerCase().replace(/[.]+/g,'').replace(/\s+/g,' ');
+  const coachPhotoUrl=coach=>{
+    const name=normalizeCoachName(coach?.display_name);
+    const local=LOCAL_COACH_PHOTOS.find(item=>item.match(name));
+    return local?.src||String(coach?.photo_url||'').trim();
+  };
+  const cssUrl=value=>String(value||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');
+
   function renderOverview(data){
     const metrics=$('#realMetrics');
     if(metrics)metrics.innerHTML=[
@@ -18,16 +31,32 @@
 
   function coachCard(coach){
     const studios=(coach.studios||[]).join(' · ')||'Classy Pilates Frankfurt';
-    const avatar=coach.photo_url
-      ?`<img src="${esc(coach.photo_url)}" alt="Coach ${esc(coach.display_name)}" loading="lazy">`
-      :`<span>${esc(initials(coach.display_name))}</span>`;
-    return `<article class="coach-real-card" data-coach-card><div class="coach-real-avatar">${avatar}</div><div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div><b>${count(coach.sessions)}</b><small>Sessions</small><b>${count(coach.bookings)}</b><small>Bookings</small></div></div></article>`;
+    const photoUrl=coachPhotoUrl(coach);
+    const avatar=photoUrl
+      ?`<span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(photoUrl)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async">`
+      :`<span class="coach-real-initials">${esc(initials(coach.display_name))}</span>`;
+    return `<article class="coach-real-card" data-coach-card><div class="coach-real-avatar" data-coach-photo-frame>${avatar}</div><div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div><b>${count(coach.sessions)}</b><small>Sessions</small><b>${count(coach.bookings)}</b><small>Bookings</small></div></div></article>`;
+  }
+
+  function prepareCoachPhotoFrames(grid){
+    grid.querySelectorAll('[data-coach-photo-frame]').forEach(frame=>{
+      const image=frame.querySelector('img');
+      const backdrop=frame.querySelector('.coach-real-backdrop');
+      if(!image||!backdrop)return;
+      const src=image.getAttribute('src')||image.src;
+      if(src)backdrop.style.backgroundImage=`url("${cssUrl(src)}")`;
+      image.addEventListener('error',()=>{
+        frame.classList.add('coach-photo-error');
+        frame.innerHTML=`<span class="coach-real-initials">${esc(initials(image.alt.replace(/^Coach\s+/i,'')))}</span>`;
+      },{once:true});
+    });
   }
 
   function renderCoaches(rows){
     const grid=$('#coachGrid'),button=$('#showAllCoaches');if(!grid)return;
     const sorted=[...rows].sort((a,b)=>b.sessions-a.sessions||a.display_name.localeCompare(b.display_name,'en'));
     grid.innerHTML=sorted.map(coachCard).join('')||'<div class="real-loading">No coach data found.</div>';
+    prepareCoachPhotoFrames(grid);
     const cards=[...grid.querySelectorAll('[data-coach-card]')];
     cards.slice(12).forEach(card=>card.hidden=true);
     if(button&&cards.length>12){button.hidden=false;button.addEventListener('click',()=>{const expanding=cards.some(card=>card.hidden);cards.forEach((card,index)=>card.hidden=!expanding&&index>=12);button.textContent=expanding?'Show less':'Show all coaches'})}
