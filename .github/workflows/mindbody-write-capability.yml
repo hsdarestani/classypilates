@@ -1,0 +1,52 @@
+name: Check Mindbody Write Credentials
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/mindbody-write-capability.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify API and token capability without business-data writes
+        env:
+          API_KEY: ${{ secrets.MINDBODY_API_KEY }}
+          SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
+          SOURCE_NAME: ${{ secrets.MINDBODY_SOURCE_NAME }}
+          SOURCE_PASSWORD: ${{ secrets.MINDBODY_SOURCE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$API_KEY" && test -n "$SITE_ID" && test -n "$SOURCE_NAME" && test -n "$SOURCE_PASSWORD"
+
+          READ_STATUS="$(curl -sS -o /tmp/read.json -w '%{http_code}'             -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" -H 'Accept: application/json'             'https://api.mindbodyonline.com/public/v6/site/locations')"
+          test "$READ_STATUS" = "200"
+          echo "Mindbody read access: OK"
+
+          TOKEN_STATUS="$(curl -sS -o /tmp/token.json -w '%{http_code}'             -X POST -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID"             -H 'Accept: application/json' -H 'Content-Type: application/json'             --data "$(jq -n --arg u "$SOURCE_NAME" --arg p "$SOURCE_PASSWORD" '{Username:$u,Password:$p}')"             'https://api.mindbodyonline.com/public/v6/usertoken/issue')"
+
+          python3 - "$TOKEN_STATUS" <<'PY'
+          import json, sys
+          status = int(sys.argv[1])
+          try:
+              payload = json.load(open('/tmp/token.json', encoding='utf-8'))
+          except Exception:
+              payload = {}
+          token = payload.get('AccessToken') or payload.get('accessToken') or payload.get('Token') or payload.get('token')
+          if status == 200 and token:
+              print('Mindbody write authentication: USER_TOKEN_AVAILABLE')
+              raise SystemExit(0)
+          error = payload.get('Error') or payload.get('error') or {}
+          if isinstance(error, dict):
+              code = error.get('Code') or error.get('code') or error.get('errorCode') or 'unknown'
+              message = error.get('Message') or error.get('message') or error.get('errorMessage') or 'credentials were not accepted for a user token'
+          else:
+              code, message = 'unknown', str(error or 'credentials were not accepted for a user token')
+          print(f'Mindbody write authentication: USER_TOKEN_UNAVAILABLE HTTP={status} code={code} message={message}')
+          raise SystemExit(3)
+          PY
