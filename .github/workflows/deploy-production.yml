@@ -39,11 +39,29 @@ jobs:
         env:
           HOST: ${{ secrets.HOST }}
           PASS: ${{ secrets.PASS }}
+          SMTP_PASS: ${{ secrets.CLASSY_SMTP_PASS }}
         run: |
+          test -n "$SMTP_PASS"
           export SSHPASS="$PASS"
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" 'bash -s' <<'REMOTE'
+          SMTP_PASS_B64="$(printf '%s' "$SMTP_PASS" | base64 -w0)"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "SMTP_PASS_B64='$SMTP_PASS_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
+
+          SMTP_PASSWORD="$(printf '%s' "$SMTP_PASS_B64" | base64 -d)"
+          touch .env
+          sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d' .env
+          {
+            printf '%s\n' 'SMTP_HOST=host267.alfahosting-server.de'
+            printf '%s\n' 'SMTP_PORT=465'
+            printf '%s\n' 'SMTP_USER=booking@classypilates.de'
+            printf 'SMTP_PASS=%s\n' "$SMTP_PASSWORD"
+            printf '%s\n' 'SMTP_FROM=Classy Pilates <booking@classypilates.de>'
+            printf '%s\n' 'SMTP_SSL=true'
+            printf '%s\n' 'SMTP_STARTTLS=false'
+          } >> .env
+          chmod 600 .env
+          unset SMTP_PASSWORD SMTP_PASS_B64
 
           if ! command -v docker >/dev/null 2>&1; then
             if command -v apt-get >/dev/null 2>&1; then
