@@ -4,6 +4,9 @@ import json
 import os
 import re
 import secrets
+import smtplib
+import ssl
+from email.message import EmailMessage
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -11,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import jwt
 from dateutil import parser as date_parser
-from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -29,6 +32,76 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 COACH_PHOTO_DIR = UPLOAD_DIR / "coach-photos"
 COACH_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
 MAX_COACH_PHOTO_BYTES = 5 * 1024 * 1024
+
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
+SMTP_SSL = os.getenv("SMTP_SSL", "true").lower() in {"1", "true", "yes", "on"}
+SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "false").lower() in {"1", "true", "yes", "on"}
+
+
+def send_transactional_email(to_email: str, subject: str, heading: str, paragraphs: list[str]) -> None:
+    """Send one transactional email. Delivery failures never roll back business state."""
+    if not all((SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_FROM, to_email)):
+        return
+    msg = EmailMessage()
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    text = heading + "\n\n" + "\n\n".join(paragraphs) + "\n\nClassy Pilates Frankfurt"
+    msg.set_content(text)
+    body = "".join(f"<p style=\"margin:0 0 16px\">{p}</p>" for p in paragraphs)
+    msg.add_alternative(
+        f"""<!doctype html><html><body style="margin:0;background:#f4f1ec;padding:32px 16px;font-family:Arial,sans-serif;color:#171717">
+        <div style="max-width:600px;margin:auto;background:#fff;padding:36px;border-radius:18px">
+        <h1 style="font-size:25px;margin:0 0 24px">{heading}</h1>{body}
+        <p style="margin:28px 0 0;font-weight:700">Classy Pilates Frankfurt</p></div></body></html>""",
+        subtype="html",
+    )
+    try:
+        if SMTP_SSL:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15, context=ssl.create_default_context()) as client:
+                client.login(SMTP_USER, SMTP_PASS)
+                client.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as client:
+                if SMTP_STARTTLS:
+                    client.starttls(context=ssl.create_default_context())
+                client.login(SMTP_USER, SMTP_PASS)
+                client.send_message(msg)
+    except Exception as exc:
+        print(f"Transactional email delivery failed: {type(exc).__name__}", flush=True)
+
+
+def booking_email_data(booking: "Booking") -> tuple[str, str, str, list[str]]:
+    starts = as_utc(booking.klass.starts_at).astimezone(ZoneInfo("Europe/Berlin"))
+    studio = booking.klass.studio.name
+    subject = f"Buchungsbestätigung · {booking.klass.title}"
+    heading = "Deine Buchung ist bestätigt"
+    paragraphs = [
+        f"Hallo {booking.customer_name or 'Classy Client'},",
+        f"{booking.klass.title} · {starts.strftime('%d.%m.%Y um %H:%M Uhr')} · {studio}",
+        f"Buchungsnummer: {booking.reference}",
+        (f"Reformer/Platz: {booking.spot_number}" if booking.spot_number else "Dein Platz ist reserviert."),
+        "Du kannst deine Buchung bis 12 Stunden vor Kursbeginn in deinem Kundenkonto stornieren.",
+    ]
+    return booking.email, subject, heading, paragraphs
+
+
+def cancellation_email_data(booking: "Booking") -> tuple[str, str, str, list[str]]:
+    starts = as_utc(booking.klass.starts_at).astimezone(ZoneInfo("Europe/Berlin"))
+    return (
+        booking.email,
+        f"Stornierungsbestätigung · {booking.klass.title}",
+        "Deine Buchung wurde storniert",
+        [
+            f"{booking.klass.title} · {starts.strftime('%d.%m.%Y um %H:%M Uhr')} · {booking.klass.studio.name}",
+            f"Buchungsnummer: {booking.reference}",
+            "Ein verwendeter Class Credit wurde deinem Kundenkonto wieder gutgeschrieben, sofern die Stornierungsfrist eingehalten wurde.",
+        ],
+    )
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
@@ -549,7 +622,7 @@ def login(data: LoginIn, response: Response, db: Session = Depends(db_session)):
     return {"token": token, "user": user_dict(user)}
 
 @app.post("/api/auth/register")
-def register(data: RegisterIn, response: Response, db: Session = Depends(db_session)):
+def register(data: RegisterIn, response: Response, background_tasks: BackgroundTasks, db: Session = Depends(db_session)):
     email = data.email.strip().lower()
     if len(data.password) < 8:
         raise HTTPException(400, "password_too_short")
@@ -583,6 +656,13 @@ def register(data: RegisterIn, response: Response, db: Session = Depends(db_sess
     db.commit(); db.refresh(user)
     token = make_token(user)
     response.set_cookie("cp_session", token, max_age=JWT_TTL_HOURS * 3600, httponly=True, secure=True, samesite="lax", path="/")
+    background_tasks.add_task(
+        send_transactional_email,
+        user.email,
+        "Willkommen bei Classy Pilates",
+        "Willkommen bei Classy Pilates",
+        [f"Hallo {user.first_name},", "dein Kundenkonto wurde erfolgreich erstellt.", "Du kannst jetzt Class Credits kaufen und deine Kurse buchen."],
+    )
     return {"token": token, "user": user_dict(user)}
 
 @app.post("/api/auth/logout")
@@ -680,7 +760,7 @@ def customer_claim_booking(data: BookingClaimIn, user: User = Depends(customer_o
     return {"ok": True}
 
 @app.delete("/api/customer/bookings/{reference}")
-def customer_cancel_booking(reference: str, user: User = Depends(customer_only), db: Session = Depends(db_session)):
+def customer_cancel_booking(reference: str, background_tasks: BackgroundTasks, user: User = Depends(customer_only), db: Session = Depends(db_session)):
     booking = db.scalar(
         select(Booking)
         .join(CustomerBookingLink, CustomerBookingLink.booking_id == Booking.id)
@@ -699,6 +779,7 @@ def customer_cancel_booking(reference: str, user: User = Depends(customer_only),
             profile.credits += 1
         booking.payment_method = "class_credit_refunded"
     db.commit()
+    background_tasks.add_task(send_transactional_email, *cancellation_email_data(booking))
     return {"ok": True}
 
 @app.get("/api/customer/waitlist")
@@ -1377,7 +1458,7 @@ def resolve_public_class(data: PublicBookingIn, user: Optional[User], db: Sessio
     return klass
 
 @app.post("/api/bookings")
-def public_booking(data: PublicBookingIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
+def public_booking(data: PublicBookingIn, background_tasks: BackgroundTasks, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=resolve_public_class(data,user,db)
     if not c or c.status!="active": raise HTTPException(409,"class_unavailable")
     if as_utc(c.starts_at) <= datetime.now(timezone.utc): raise HTTPException(409,"class_started")
@@ -1402,7 +1483,9 @@ def public_booking(data: PublicBookingIn, user: Optional[User] = Depends(optiona
     db.add(b); db.flush()
     if user and portal_for(user) == "/account" and user.email.lower() == data.email.lower():
         db.add(CustomerBookingLink(booking_id=b.id, user_id=user.id))
-    db.commit();return {"booking":{"reference":ref},"payment_status":b.payment_status,"credit_used":use_credit,"credits_remaining":profile.credits if profile else None}
+    db.commit()
+    background_tasks.add_task(send_transactional_email, *booking_email_data(b))
+    return {"booking":{"reference":ref},"payment_status":b.payment_status,"credit_used":use_credit,"credits_remaining":profile.credits if profile else None}
 
 @app.get("/api/bookings")
 def public_bookings(email: str, reference: str, db: Session = Depends(db_session)):
@@ -1413,7 +1496,7 @@ def public_bookings(email: str, reference: str, db: Session = Depends(db_session
     return {"credits":0,"bookings":[{"reference":booking.reference,"status":booking.status,"starts_at":booking.klass.starts_at.isoformat(),"name":booking.klass.title,"studio_name":booking.klass.studio.name,"spot_number":booking.spot_number}]}
 
 @app.delete("/api/bookings")
-def public_cancel(payload: dict, db: Session = Depends(db_session)):
+def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session = Depends(db_session)):
     ref=str(payload.get("reference", "")); email=str(payload.get("email", "")).lower()
     b=db.scalar(select(Booking).where(Booking.reference==ref,Booking.email==email))
     if not b: raise HTTPException(404,"not_found")
@@ -1425,7 +1508,9 @@ def public_cancel(payload: dict, db: Session = Depends(db_session)):
         if profile:
             profile.credits += 1
         b.payment_method = "class_credit_refunded"
-    db.commit();return {"ok":True}
+    db.commit()
+    background_tasks.add_task(send_transactional_email, *cancellation_email_data(b))
+    return {"ok":True}
 
 @app.post("/api/waitlist")
 def join_waitlist(data: WaitlistIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
