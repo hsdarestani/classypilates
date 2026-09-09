@@ -97,6 +97,14 @@ jobs:
           fi
 
           docker compose up -d --build --remove-orphans
+          docker compose exec -T api python - <<'PY'
+          import os, smtplib, ssl
+          host = os.environ["SMTP_HOST"]
+          port = int(os.environ["SMTP_PORT"])
+          with smtplib.SMTP_SSL(host, port, timeout=15, context=ssl.create_default_context()) as client:
+              client.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+          print("SMTP authentication OK")
+          PY
 
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
