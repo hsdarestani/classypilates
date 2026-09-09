@@ -18,17 +18,17 @@ jobs:
         env:
           API_KEY: ${{ secrets.MINDBODY_API_KEY }}
           SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
-          SOURCE_NAME: ${{ secrets.MINDBODY_SOURCE_NAME }}
-          SOURCE_PASSWORD: ${{ secrets.MINDBODY_SOURCE_PASSWORD }}
+          STAFF_USERNAME: ${{ secrets.MINDBODY_STAFF_USERNAME }}
+          STAFF_PASSWORD: ${{ secrets.MINDBODY_STAFF_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$API_KEY" && test -n "$SITE_ID" && test -n "$SOURCE_NAME" && test -n "$SOURCE_PASSWORD"
+          test -n "$API_KEY" && test -n "$SITE_ID" && test -n "$STAFF_USERNAME" && test -n "$STAFF_PASSWORD"
 
           READ_STATUS="$(curl -sS -o /tmp/read.json -w '%{http_code}'             -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" -H 'Accept: application/json'             'https://api.mindbodyonline.com/public/v6/site/locations')"
           test "$READ_STATUS" = "200"
           echo "Mindbody read access: OK"
 
-          TOKEN_STATUS="$(curl -sS -o /tmp/token.json -w '%{http_code}'             -X POST -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID"             -H 'Accept: application/json' -H 'Content-Type: application/json'             --data "$(jq -n --arg u "$SOURCE_NAME" --arg p "$SOURCE_PASSWORD" '{Username:$u,Password:$p}')"             'https://api.mindbodyonline.com/public/v6/usertoken/issue')"
+          TOKEN_STATUS="$(curl -sS -o /tmp/token.json -w '%{http_code}'             -X POST -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID"             -H 'Accept: application/json' -H 'Content-Type: application/json'             --data "$(jq -n --arg u "$STAFF_USERNAME" --arg p "$STAFF_PASSWORD" '{Username:$u,Password:$p}')"             'https://api.mindbodyonline.com/public/v6/usertoken/issue')"
 
           python3 - "$TOKEN_STATUS" <<'PY'
           import json, sys
