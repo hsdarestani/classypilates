@@ -84,15 +84,7 @@
   function renderSuccess(ref){const method=payMethods.find(x=>x.id===wizard.payment)?.name||wizard.payment;setDrawer('Booking confirmed',`<div class="booking-success-v2"><div class="success-orbit"><span>✓</span></div><p class="eyebrow">YOU'RE IN</p><h3>See you in class.</h3><p class="success-lead">Your spot is reserved and linked to your Classy account.</p>${classSummary(wizard.class)}<div class="success-grid"><div><span>SPOT</span><b>${safe(spotLabel(wizard.spot,wizard.class))}</b></div><div><span>PAYMENT</span><b>${safe(method)}</b></div><div><span>BOOKING</span><b>${safe(ref)}</b></div></div><div class="demo-payment-note success"><span>ACCOUNT READY</span><p>Your bookings, credits and profile are now available in “My Classy”.</p></div><div class="success-actions"><a class="drawer-action" href="/account">Open My Classy</a><a class="drawer-action secondary" href="${calendarHref()}" download="classy-pilates.ics">Add to calendar</a><button class="drawer-action secondary" id="doneV2">Done</button></div></div>`,5);$('#doneV2')?.addEventListener('click',closeDrawer)}
 
   const originalOpenClass=typeof openClass==='function'?openClass:null;
-  function openMindbodyBooking(r){
-    const url=new URL('https://clients.mindbodyonline.com/classic/ws');
-    url.searchParams.set('studioid','5742686');
-    url.searchParams.set('stype','-7');
-    url.searchParams.set('sView','day');
-    if(r?.date)url.searchParams.set('date',r.date);
-    location.assign(url.toString());
-  }
-  if(originalOpenClass){openClass=function(r){if(!r)return;if(Number(r.spots)<=0)return originalOpenClass(r);openMindbodyBooking(r)}}
+  if(originalOpenClass){openClass=function(r){if(!r)return;if(Number(r.spots)<=0)return originalOpenClass(r);startWizard(r)}}
 
   moveStudiosBeforeSchedule();addQuickDock();observeDynamicUi();loadCoachPhotos();
 })();
