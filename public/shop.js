@@ -1,23 +1,18 @@
 const PRODUCTS={
-  single:{id:'single',name:'1 Class',eyebrow:'SINGLE',price:2800,description:'Maximum flexibility for your next class.'},
-  five:{id:'five',name:'5 Classes',eyebrow:'FLEXIBLE',price:11900,description:'Five classes for a flexible training rhythm.'},
-  ten:{id:'ten',name:'10 Classes',eyebrow:'MOST POPULAR',price:21900,description:'€21.90 per class — ideal for a consistent routine.',featured:true},
-  twenty:{id:'twenty',name:'20 Classes',eyebrow:'COMMITTED',price:39900,description:'€19.95 per class — for regular training.'}
+  single:{id:'single',mindbodyId:'100006',name:'1 Class',eyebrow:'SINGLE',price:2800,description:'Maximum flexibility for your next class.'},
+  five:{id:'five',mindbodyId:'100011',name:'5 Classes',eyebrow:'FLEXIBLE',price:11900,description:'Five classes for a flexible training rhythm.'},
+  ten:{id:'ten',mindbodyId:'100007',name:'10 Classes',eyebrow:'MOST POPULAR',price:21900,description:'€21.90 per class — ideal for a consistent routine.',featured:true},
+  twenty:{id:'twenty',mindbodyId:'100010',name:'20 Classes',eyebrow:'COMMITTED',price:39900,description:'€19.95 per class — for regular training.'}
 };
 const PAYMENT_METHODS=[
-  {id:'card',name:'Card',hint:'Visa · Mastercard · American Express',badge:'CARD'},
-  {id:'apple_pay',name:'Apple Pay',hint:'Pay quickly with your Apple device',badge:' Pay'},
-  {id:'google_pay',name:'Google Pay',hint:'Pay quickly with Google Wallet',badge:'G Pay'},
-  {id:'paypal',name:'PayPal',hint:'Continue to PayPal',badge:'PayPal'},
-  {id:'klarna',name:'Klarna',hint:'Available Klarna options at checkout',badge:'Klarna.'},
-  {id:'sepa_debit',name:'SEPA Direct Debit',hint:'Direct debit from your bank account',badge:'SEPA'},
-  {id:'link',name:'Link',hint:'Stripe Link – faster checkout',badge:'Link'}
+  {id:'mindbody',name:'Mindbody Payments',hint:'Secure checkout managed by Mindbody',badge:'SECURE'}
 ];
+const MINDBODY_SITE_ID='5742686';
 const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s)];
 const money=cents=>new Intl.NumberFormat(document.documentElement.lang==='de'?'de-DE':'en-GB',{style:'currency',currency:'EUR'}).format(cents/100);
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-const state={cart:read('cpCart',[]),step:1,customer:read('cpCustomer',{}),payment:'card'};
+const state={cart:read('cpCart',[]),step:1,customer:read('cpCustomer',{}),payment:'mindbody'};
 
 function read(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback}catch(_){return fallback}}
 function write(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(_){}}
@@ -30,7 +25,7 @@ function renderProducts(){
   $('#productGrid').innerHTML=Object.values(PRODUCTS).map(p=>`<article class="product-card ${p.featured?'featured':''}">${p.featured?'<span class="badge">MOST POPULAR</span>':''}<small>${esc(p.eyebrow)}</small><h3>${esc(p.name)}</h3><div class="price">${money(p.price)}</div><p>${esc(p.description)}</p><button type="button" data-add="${p.id}">Add to cart →</button></article>`).join('');
   $$('[data-add]').forEach(btn=>btn.addEventListener('click',()=>addProduct(btn.dataset.add)));
 }
-function addProduct(id){if(!PRODUCTS[id])return;if(!state.cart.includes(id))state.cart.push(id);write('cpCart',state.cart);updateCartCount();showToast('Added to cart',PRODUCTS[id].name);openCart()}
+function addProduct(id){if(!PRODUCTS[id])return;state.cart=[id];write('cpCart',state.cart);updateCartCount();showToast('Selected',PRODUCTS[id].name);openCart()}
 function removeProduct(id){state.cart=state.cart.filter(x=>x!==id);write('cpCart',state.cart);updateCartCount();renderDrawer()}
 function updateCartCount(){$('#cartCount').textContent=state.cart.length}
 function openCart(){state.step=1;renderDrawer();$('#drawerBackdrop').classList.add('open');$('#cartDrawer').classList.add('open');$('#cartDrawer').setAttribute('aria-hidden','false');document.body.style.overflow='hidden'}
@@ -56,16 +51,15 @@ function renderPayment(){
 }
 async function submitPayment(){
   if(!$('#terms').checked){showToast('Consent required','Please accept the terms.');return}
-  const button=$('#payNow');button.disabled=true;button.textContent='Preparing payment…';
-  const order={reference:'CP-ORDER-'+token(8),currency:'eur',items:state.cart.map(id=>({id,quantity:1})),customer:state.customer,paymentMethod:state.payment,amount:total(),returnUrl:location.origin+location.pathname+'?payment=success'};
-  const endpoint=state.payment==='paypal'?'/api/checkout/paypal':'/api/checkout/create';
-  try{
-    const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-idempotency-key':order.reference},body:JSON.stringify(order)});
-    const data=await response.json().catch(()=>({}));
-    if(response.ok&&data.url){write('cpPendingOrder',order);location.href=data.url;return}
-    if(response.status!==503&&response.status!==404&&response.status!==501)throw new Error(data.error||'checkout_failed');
-    savePreparedOrder(order,data.code||'provider_not_connected');
-  }catch(_){savePreparedOrder(order,'provider_not_connected')}
+  const product=cartItems()[0];
+  if(!product?.mindbodyId){showToast('Checkout unavailable','Please select a Class Pack.');return}
+  const button=$('#payNow');button.disabled=true;button.textContent='Opening secure Mindbody checkout…';
+  write('cpPendingOrder',{product:product.id,customer:state.customer,createdAt:new Date().toISOString()});
+  const checkout=new URL('https://clients.mindbodyonline.com/classic/ws');
+  checkout.searchParams.set('studioid',MINDBODY_SITE_ID);
+  checkout.searchParams.set('stype','41');
+  checkout.searchParams.set('prodId',product.mindbodyId);
+  location.assign(checkout.toString());
 }
 function savePreparedOrder(order){
   const orders=read('cpOrders',[]);orders.unshift({...order,status:'payment_provider_pending',createdAt:new Date().toISOString()});write('cpOrders',orders.slice(0,25));
