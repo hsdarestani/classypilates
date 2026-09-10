@@ -60,6 +60,8 @@ jobs:
           curl -fsSL --max-time 30 -o /tmp/public-booking.js 'https://new.classypilates.de/booking-flow.js?v=20260910-mindbody-live1'
           grep -q "url.searchParams.set('studioid','5742686')" /tmp/public-booking.js
           grep -q "url.searchParams.set('stype','-7')" /tmp/public-booking.js
-          curl -fsSL --max-time 30 -o /dev/null 'https://clients.mindbodyonline.com/classic/ws?studioid=5742686&stype=-7'
-          curl -fsSL --max-time 30 -o /dev/null 'https://clients.mindbodyonline.com/classic/ws?studioid=5742686&stype=41&prodId=100006'
-          echo "Public preview, API, booking and Mindbody shop: OK"
+          BOOK_CODE="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' 'https://clients.mindbodyonline.com/classic/ws?studioid=5742686&stype=-7')"
+          SHOP_CODE="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' 'https://clients.mindbodyonline.com/classic/ws?studioid=5742686&stype=41&prodId=100006')"
+          case "$BOOK_CODE" in 200|301|302|403) ;; *) exit 1 ;; esac
+          case "$SHOP_CODE" in 200|301|302|403) ;; *) exit 1 ;; esac
+          echo "Public preview, API, booking and Mindbody shop links: OK"
