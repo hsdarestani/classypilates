@@ -274,6 +274,15 @@ jobs:
               server_name new.classypilates.de;
               include /etc/nginx/snippets/classy-routes.conf;
           }
+
+          # Prepared in advance for the final DNS cutover. HTTPS is enabled
+          # only after classypilates.de and www resolve to this server.
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name classypilates.de www.classypilates.de;
+              include /etc/nginx/snippets/classy-routes.conf;
+          }
           NGINX_PREVIEW
             ln -sfn /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs
             nginx -t
