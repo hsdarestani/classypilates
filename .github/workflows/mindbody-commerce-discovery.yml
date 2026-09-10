@@ -13,7 +13,7 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Read sellable pricing options without changing data
+      - name: Map sellable pricing options by location without changing data
         env:
           API_KEY: ${{ secrets.MINDBODY_API_KEY }}
           SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
@@ -23,49 +23,41 @@ jobs:
           set -euo pipefail
           test -n "$API_KEY" && test -n "$SITE_ID"
           test -n "$STAFF_USERNAME" && test -n "$STAFF_PASSWORD"
-
-          TOKEN_STATUS="$(curl -sS -o /tmp/token.json -w '%{http_code}' \
-            -X POST -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" \
-            -H 'Accept: application/json' -H 'Content-Type: application/json' \
-            --data "$(jq -n --arg u "$STAFF_USERNAME" --arg p "$STAFF_PASSWORD" '{Username:$u,Password:$p}')" \
-            'https://api.mindbodyonline.com/public/v6/usertoken/issue')"
-          test "$TOKEN_STATUS" = "200"
-          TOKEN="$(jq -r '.AccessToken // .accessToken // .Token // .token // empty' /tmp/token.json)"
-          test -n "$TOKEN"
-          rm -f /tmp/token.json
-
-          SERVICES_STATUS="$(curl -sS -o /tmp/services.json -w '%{http_code}' \
-            -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" \
-            -H "Authorization: Bearer $TOKEN" -H 'Accept: application/json' \
-            'https://api.mindbodyonline.com/public/v6/sale/services?OnlineOnly=true')"
-          unset TOKEN
-          if [ "$SERVICES_STATUS" != "200" ]; then
-            echo "Mindbody services lookup failed with HTTP $SERVICES_STATUS" >&2
-            jq -c '{Error:(.Error // .error // "unknown")}' /tmp/services.json >&2 || true
-            exit 3
-          fi
-
           python3 - <<'PY'
-          import json
-          data = json.load(open('/tmp/services.json', encoding='utf-8'))
-          rows = data.get('Services') or data.get('services') or data.get('Items') or []
-          print(f"Sellable Mindbody pricing options: {len(rows)}")
-          for row in rows:
-              if not isinstance(row, dict):
-                  continue
-              service_id = row.get('Id') or row.get('ID') or row.get('id')
-              name = row.get('Name') or row.get('name') or ''
-              price = row.get('Price') or row.get('price')
-              online = row.get('OnlinePrice') or row.get('onlinePrice')
-              count = row.get('Count') or row.get('count')
-              program = row.get('Program') or row.get('program') or {}
-              program_name = program.get('Name') if isinstance(program, dict) else ''
-              print(json.dumps({
-                  'id': service_id,
-                  'name': name,
-                  'price': price,
-                  'online_price': online,
-                  'count': count,
-                  'program': program_name,
-              }, ensure_ascii=False))
+          import json, os, urllib.parse, urllib.request
+
+          base = "https://api.mindbodyonline.com/public/v6"
+          api_key, site_id = os.environ["API_KEY"], os.environ["SITE_ID"]
+          common = {"API-Key": api_key, "SiteId": site_id, "Accept": "application/json"}
+
+          body = json.dumps({"Username": os.environ["STAFF_USERNAME"], "Password": os.environ["STAFF_PASSWORD"]}).encode()
+          req = urllib.request.Request(base + "/usertoken/issue", data=body, method="POST",
+              headers={**common, "Content-Type": "application/json"})
+          with urllib.request.urlopen(req, timeout=30) as res:
+              token_data = json.load(res)
+          token = token_data.get("AccessToken") or token_data.get("accessToken") or token_data.get("Token")
+          if not token:
+              raise SystemExit("No user token returned")
+          auth = {**common, "Authorization": "Bearer " + token}
+
+          def get(path, params=None):
+              query = "?" + urllib.parse.urlencode(params or {}) if params else ""
+              with urllib.request.urlopen(urllib.request.Request(base + path + query, headers=auth), timeout=30) as res:
+                  return json.load(res)
+
+          locations = get("/site/locations").get("Locations", [])
+          wanted = {"1 Class", "5 Classes", "10 Classes", "20 Classes"}
+          for loc in locations:
+              lid, lname = loc.get("Id"), loc.get("Name", "")
+              services = get("/sale/services", {"OnlineOnly": "true", "LocationId": lid}).get("Services", [])
+              matches = []
+              for row in services:
+                  name = str(row.get("Name") or "").strip()
+                  if name in wanted:
+                      matches.append({
+                          "id": row.get("Id"), "name": name,
+                          "price": row.get("OnlinePrice", row.get("Price")),
+                          "count": row.get("Count")
+                      })
+              print(json.dumps({"location_id": lid, "location": lname, "pricing_options": matches}, ensure_ascii=False))
           PY
