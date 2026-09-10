@@ -56,12 +56,13 @@ jobs:
           curl -fsSL --max-time 30 -o /tmp/public-health.json https://new.classypilates.de/api/health
           grep -q '"ok":true' /tmp/public-health.json
           curl -fsSL --max-time 30 -o /tmp/public-shop.html https://new.classypilates.de/shop
-          grep -q 'SECURE CHECKOUT POWERED BY MINDBODY' /tmp/public-shop.html
-          curl -fsSL --max-time 30 -o /tmp/public-booking.js 'https://new.classypilates.de/booking-flow.js?v=20260910-mindbody-live1'
-          grep -q "url.searchParams.set('studioid','5742686')" /tmp/public-booking.js
-          grep -q "url.searchParams.set('stype','-7')" /tmp/public-booking.js
-          BOOK_CODE="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' 'https://clients.mindbodyonline.com/classic/ws?studioid=5742686&stype=-7')"
-          SHOP_CODE="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' 'https://clients.mindbodyonline.com/classic/ws?studioid=5742686&stype=41&prodId=100006')"
-          case "$BOOK_CODE" in 200|301|302|403) ;; *) exit 1 ;; esac
-          case "$SHOP_CODE" in 200|301|302|403) ;; *) exit 1 ;; esac
-          echo "Public preview, API, booking and Mindbody shop links: OK"
+          grep -q 'SECURE CHECKOUT' /tmp/public-shop.html
+          curl -fsSL --max-time 30 -o /tmp/public-booking.js 'https://new.classypilates.de/booking-flow.js?v=20260910-onsite-checkout1'
+          grep -q 'startWizard(r)' /tmp/public-booking.js
+          curl -fsSL --max-time 30 -o /tmp/public-shop.js https://new.classypilates.de/shop.js
+          grep -q "/api/checkout/create" /tmp/public-shop.js
+          if grep -q 'clients.mindbodyonline.com/classic/ws' /tmp/public-booking.js /tmp/public-shop.js; then
+            echo "Unexpected Mindbody redirect remains in the customer flow." >&2
+            exit 1
+          fi
+          echo "Public preview, API and on-site booking/checkout flow: OK"
