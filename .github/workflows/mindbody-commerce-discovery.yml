@@ -2,6 +2,9 @@ name: Inspect Mindbody Commerce
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/mindbody-commerce-discovery.yml
 
 permissions:
   contents: read
