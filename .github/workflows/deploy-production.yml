@@ -267,6 +267,14 @@ jobs:
           }
           NGINX_HTTP
             fi
+            cat >> /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX_PREVIEW'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name new.classypilates.de;
+              include /etc/nginx/snippets/classy-routes.conf;
+          }
+          NGINX_PREVIEW
             ln -sfn /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs
             nginx -t
             systemctl reload nginx || nginx -s reload
