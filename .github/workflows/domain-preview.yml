@@ -41,8 +41,10 @@ jobs:
           certbot --nginx -d new.classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect
           nginx -t
           systemctl reload nginx || nginx -s reload
-          curl -fsSL --max-time 20 https://new.classypilates.de/ | grep -qi 'Classy'
-          curl -fsSL --max-time 20 https://new.classypilates.de/api/health | grep -q '"ok":true'
+          curl -fsSL --max-time 20 -o /tmp/classy-home.html https://new.classypilates.de/
+          grep -qi 'Classy' /tmp/classy-home.html
+          curl -fsSL --max-time 20 -o /tmp/classy-health.json https://new.classypilates.de/api/health
+          grep -q '"ok":true' /tmp/classy-health.json
           echo "new.classypilates.de HTTPS and API: OK"
           REMOTE
 
@@ -50,6 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSIL --max-time 30 https://new.classypilates.de/ >/dev/null
-          curl -fsSL --max-time 30 https://new.classypilates.de/api/health | grep -q '"ok":true'
-          curl -fsSL --max-time 30 https://new.classypilates.de/shop | grep -q 'SECURE CHECKOUT POWERED BY MINDBODY'
+          curl -fsSL --max-time 30 -o /tmp/public-health.json https://new.classypilates.de/api/health
+          grep -q '"ok":true' /tmp/public-health.json
+          curl -fsSL --max-time 30 -o /tmp/public-shop.html https://new.classypilates.de/shop
+          grep -q 'SECURE CHECKOUT POWERED BY MINDBODY' /tmp/public-shop.html
           echo "Public preview, API and Mindbody shop: OK"
