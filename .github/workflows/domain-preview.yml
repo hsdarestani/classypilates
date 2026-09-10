@@ -1,0 +1,55 @@
+name: Enable Classy Preview Domain
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/domain-preview.yml
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify DNS points to Classy production
+        run: |
+          set -euo pipefail
+          NEW_IPS="$(getent ahostsv4 new.classypilates.de | awk '{print $1}' | sort -u)"
+          TARGET_IPS="$(getent ahostsv4 classy.smarbiz.sbs | awk '{print $1}' | sort -u)"
+          test -n "$NEW_IPS" && test -n "$TARGET_IPS"
+          if ! comm -12 <(printf '%s\n' "$NEW_IPS") <(printf '%s\n' "$TARGET_IPS") | grep -q .; then
+            echo "DNS has not propagated to the Classy server yet." >&2
+            echo "new.classypilates.de: $NEW_IPS" >&2
+            echo "classy.smarbiz.sbs: $TARGET_IPS" >&2
+            exit 2
+          fi
+          echo "DNS target verified."
+
+      - name: Enable HTTPS and verify preview
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          sudo apt-get update && sudo apt-get install -y sshpass
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          certbot --nginx -d new.classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect
+          nginx -t
+          systemctl reload nginx || nginx -s reload
+          curl -fsSL --max-time 20 https://new.classypilates.de/ | grep -qi 'Classy'
+          curl -fsSL --max-time 20 https://new.classypilates.de/api/health | grep -q '"ok":true'
+          echo "new.classypilates.de HTTPS and API: OK"
+          REMOTE
+
+      - name: Verify public HTTPS
+        run: |
+          set -euo pipefail
+          curl -fsSIL --max-time 30 https://new.classypilates.de/ >/dev/null
+          curl -fsSL --max-time 30 https://new.classypilates.de/api/health | grep -q '"ok":true'
+          curl -fsSL --max-time 30 https://new.classypilates.de/shop | grep -q 'SECURE CHECKOUT POWERED BY MINDBODY'
+          echo "Public preview, API and Mindbody shop: OK"
