@@ -40,17 +40,31 @@ jobs:
           HOST: ${{ secrets.HOST }}
           PASS: ${{ secrets.PASS }}
           SMTP_PASS: ${{ secrets.CLASSY_SMTP_PASS }}
+          MINDBODY_API_KEY: ${{ secrets.MINDBODY_API_KEY }}
+          MINDBODY_SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
+          MINDBODY_STAFF_USERNAME: ${{ secrets.MINDBODY_STAFF_USERNAME }}
+          MINDBODY_STAFF_PASSWORD: ${{ secrets.MINDBODY_STAFF_PASSWORD }}
         run: |
           test -n "$SMTP_PASS"
+          test -n "$MINDBODY_API_KEY" && test -n "$MINDBODY_SITE_ID"
+          test -n "$MINDBODY_STAFF_USERNAME" && test -n "$MINDBODY_STAFF_PASSWORD"
           export SSHPASS="$PASS"
           SMTP_PASS_B64="$(printf '%s' "$SMTP_PASS" | base64 -w0)"
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "SMTP_PASS_B64='$SMTP_PASS_B64' bash -s" <<'REMOTE'
+          MINDBODY_API_KEY_B64="$(printf '%s' "$MINDBODY_API_KEY" | base64 -w0)"
+          MINDBODY_SITE_ID_B64="$(printf '%s' "$MINDBODY_SITE_ID" | base64 -w0)"
+          MINDBODY_STAFF_USERNAME_B64="$(printf '%s' "$MINDBODY_STAFF_USERNAME" | base64 -w0)"
+          MINDBODY_STAFF_PASSWORD_B64="$(printf '%s' "$MINDBODY_STAFF_PASSWORD" | base64 -w0)"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "SMTP_PASS_B64='$SMTP_PASS_B64' MINDBODY_API_KEY_B64='$MINDBODY_API_KEY_B64' MINDBODY_SITE_ID_B64='$MINDBODY_SITE_ID_B64' MINDBODY_STAFF_USERNAME_B64='$MINDBODY_STAFF_USERNAME_B64' MINDBODY_STAFF_PASSWORD_B64='$MINDBODY_STAFF_PASSWORD_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
 
           SMTP_PASSWORD="$(printf '%s' "$SMTP_PASS_B64" | base64 -d)"
+          MINDBODY_API_KEY_VALUE="$(printf '%s' "$MINDBODY_API_KEY_B64" | base64 -d)"
+          MINDBODY_SITE_ID_VALUE="$(printf '%s' "$MINDBODY_SITE_ID_B64" | base64 -d)"
+          MINDBODY_STAFF_USERNAME_VALUE="$(printf '%s' "$MINDBODY_STAFF_USERNAME_B64" | base64 -d)"
+          MINDBODY_STAFF_PASSWORD_VALUE="$(printf '%s' "$MINDBODY_STAFF_PASSWORD_B64" | base64 -d)"
           touch .env
-          sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d' .env
+          sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d;/^MINDBODY_API_KEY=/d;/^MINDBODY_SITE_ID=/d;/^MINDBODY_STAFF_USERNAME=/d;/^MINDBODY_STAFF_PASSWORD=/d' .env
           {
             printf '%s\n' 'SMTP_HOST=host267.alfahosting-server.de'
             printf '%s\n' 'SMTP_PORT=465'
@@ -59,9 +73,15 @@ jobs:
             printf '%s\n' 'SMTP_FROM=Classy Pilates <booking@classypilates.de>'
             printf '%s\n' 'SMTP_SSL=true'
             printf '%s\n' 'SMTP_STARTTLS=false'
+            printf 'MINDBODY_API_KEY=%s\n' "$MINDBODY_API_KEY_VALUE"
+            printf 'MINDBODY_SITE_ID=%s\n' "$MINDBODY_SITE_ID_VALUE"
+            printf 'MINDBODY_STAFF_USERNAME=%s\n' "$MINDBODY_STAFF_USERNAME_VALUE"
+            printf 'MINDBODY_STAFF_PASSWORD=%s\n' "$MINDBODY_STAFF_PASSWORD_VALUE"
           } >> .env
           chmod 600 .env
-          unset SMTP_PASSWORD SMTP_PASS_B64
+          unset SMTP_PASSWORD SMTP_PASS_B64 MINDBODY_API_KEY_VALUE MINDBODY_SITE_ID_VALUE
+          unset MINDBODY_STAFF_USERNAME_VALUE MINDBODY_STAFF_PASSWORD_VALUE
+          unset MINDBODY_API_KEY_B64 MINDBODY_SITE_ID_B64 MINDBODY_STAFF_USERNAME_B64 MINDBODY_STAFF_PASSWORD_B64
 
           if ! command -v docker >/dev/null 2>&1; then
             if command -v apt-get >/dev/null 2>&1; then
