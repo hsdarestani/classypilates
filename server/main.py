@@ -255,6 +255,22 @@ class ClassPassSale(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     redeemed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+class PaymentOrder(Base):
+    __tablename__ = "payment_orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reference: Mapped[str] = mapped_column(String(90), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    first_name: Mapped[str] = mapped_column(String(120), default="")
+    last_name: Mapped[str] = mapped_column(String(120), default="")
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    credits: Mapped[int] = mapped_column(Integer)
+    provider: Mapped[str] = mapped_column(String(30), default="sumup")
+    provider_payment_id: Mapped[Optional[str]] = mapped_column(String(120), unique=True, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    credited: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
 Base.metadata.create_all(engine)
 
 
@@ -646,13 +662,23 @@ def register(data: RegisterIn, response: Response, background_tasks: BackgroundT
     except Exception:
         db.rollback()
         raise HTTPException(409, "email_exists")
-    db.add(CustomerProfile(
+    profile = CustomerProfile(
         user_id=user.id,
         phone=data.phone.strip(),
         birth_date=data.birth_date.strip(),
         emergency_contact=data.emergency_contact.strip(),
         marketing_opt_in=data.marketing_opt_in,
-    ))
+    )
+    db.add(profile)
+    paid_orders = db.scalars(select(PaymentOrder).where(
+        func.lower(PaymentOrder.email) == email,
+        PaymentOrder.status == "paid",
+        PaymentOrder.credited.is_(False),
+    ).with_for_update()).all()
+    if paid_orders:
+        profile.credits += sum(order.credits for order in paid_orders)
+        for order in paid_orders:
+            order.credited = True
     db.commit(); db.refresh(user)
     token = make_token(user)
     response.set_cookie("cp_session", token, max_age=JWT_TTL_HOURS * 3600, httponly=True, secure=True, samesite="lax", path="/")

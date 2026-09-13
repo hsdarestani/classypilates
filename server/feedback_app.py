@@ -1,12 +1,16 @@
 import os
 import smtplib
 import ssl
+import json
+from urllib.error import HTTPError
+from urllib.request import Request as UrlRequest, urlopen
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import BackgroundTasks, Depends, HTTPException
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -17,6 +21,12 @@ app = core.app
 BERLIN = ZoneInfo("Europe/Berlin")
 ALLOWED_PACKS = {1, 5, 10, 20, 30, 50}
 KNOWN_PACK_PRICES = {1: 2800, 5: 11900, 10: 21900, 20: 39900}
+SHOP_PRODUCTS = {
+    "single": {"name": "1 Class", "price": 2800, "credits": 1},
+    "five": {"name": "5 Classes", "price": 11900, "credits": 5},
+    "ten": {"name": "10 Classes", "price": 21900, "credits": 10},
+    "twenty": {"name": "20 Classes", "price": 39900, "credits": 20},
+}
 
 
 class BookingPreference(core.Base):
@@ -109,6 +119,168 @@ class MembershipIn(BaseModel):
     credits_per_month: int
     starts_on: str
     payment_method: str = "sepa"
+
+
+class CheckoutCustomer(BaseModel):
+    email: EmailStr
+    firstName: str = ""
+    lastName: str = ""
+
+
+class CheckoutItem(BaseModel):
+    id: str
+    quantity: int = 1
+
+
+class CheckoutIn(BaseModel):
+    reference: str
+    customer: CheckoutCustomer
+    items: list[CheckoutItem]
+
+
+def _sumup_request(path: str, *, method: str = "GET", payload: Optional[dict] = None) -> dict:
+    api_key = os.getenv("SUMUPAPIKEY", "").strip()
+    if not api_key:
+        raise HTTPException(503, "sumup_not_configured")
+    body = json.dumps(payload).encode() if payload is not None else None
+    request = UrlRequest(
+        f"https://api.sumup.com{path}",
+        data=body,
+        method=method,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode())
+    except HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode()).get("message", "sumup_request_failed")
+        except Exception:
+            detail = "sumup_request_failed"
+        raise HTTPException(502, detail)
+    except Exception:
+        raise HTTPException(502, "sumup_unavailable")
+
+
+def _sync_sumup_order(checkout: dict, db: Session) -> Optional[core.PaymentOrder]:
+    checkout_id = str(checkout.get("id", ""))
+    order = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.provider_payment_id == checkout_id).with_for_update())
+    if not order:
+        return None
+    merchant = os.getenv("SUMUPMERCHANT", "").strip()
+    trusted = (
+        str(checkout.get("merchant_code", "")) == merchant
+        and str(checkout.get("currency", "")).upper() == "EUR"
+        and round(float(checkout.get("amount", 0)) * 100) == order.amount_cents
+    )
+    if not trusted:
+        raise HTTPException(409, "sumup_checkout_mismatch")
+    status = str(checkout.get("status", "")).upper()
+    if status == "PAID":
+        order.status = "paid"
+        if not order.credited:
+            user = db.scalar(select(core.User).where(func.lower(core.User.email) == order.email.lower()))
+            if user:
+                profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
+                if profile:
+                    profile.credits += order.credits
+                    order.credited = True
+    elif status in {"FAILED", "EXPIRED"} and order.status == "pending":
+        order.status = "failed" if status == "FAILED" else "cancelled"
+    db.commit()
+    return order
+
+
+@app.get("/api/checkout/create")
+def checkout_capability():
+    return {"ok": True, "provider": "sumup", "flow": "hosted_checkout"}
+
+
+@app.post("/api/checkout/create")
+def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depends(core.db_session)):
+    merchant = os.getenv("SUMUPMERCHANT", "").strip()
+    if not os.getenv("SUMUPAPIKEY", "").strip() or not merchant:
+        raise HTTPException(503, "sumup_not_configured")
+    reference = data.reference.strip()[:80]
+    if not reference or not data.items:
+        raise HTTPException(400, "invalid_checkout")
+    total = 0
+    credits = 0
+    names = []
+    for item in data.items:
+        product = SHOP_PRODUCTS.get(item.id)
+        quantity = min(10, max(1, item.quantity))
+        if not product:
+            raise HTTPException(400, "unknown_product")
+        total += product["price"] * quantity
+        credits += product["credits"] * quantity
+        names.append(f"{quantity}× {product['name']}")
+    email = str(data.customer.email).strip().lower()
+    existing = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.reference == reference))
+    if existing:
+        if existing.email != email or existing.amount_cents != total:
+            raise HTTPException(409, "reference_conflict")
+        raise HTTPException(409, "checkout_already_created")
+    order = core.PaymentOrder(
+        reference=reference,
+        email=email,
+        first_name=data.customer.firstName.strip(),
+        last_name=data.customer.lastName.strip(),
+        amount_cents=total,
+        credits=credits,
+    )
+    db.add(order)
+    db.commit()
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    origin = f"{proto}://{host}"
+    try:
+        checkout = _sumup_request("/v0.1/checkouts", method="POST", payload={
+            "checkout_reference": reference,
+            "amount": round(total / 100, 2),
+            "currency": "EUR",
+            "merchant_code": merchant,
+            "description": ("Classy Pilates · " + ", ".join(names))[:255],
+            "return_url": f"{origin}/api/checkout/sumup-return",
+            "redirect_url": f"{origin}/api/checkout/sumup-return?reference={reference}",
+            "hosted_checkout": {"enabled": True},
+        })
+        if not checkout.get("id") or not checkout.get("hosted_checkout_url"):
+            raise HTTPException(502, "sumup_checkout_incomplete")
+        order.provider_payment_id = str(checkout["id"])
+        db.commit()
+        return {"ok": True, "url": checkout["hosted_checkout_url"], "checkoutId": checkout["id"], "reference": reference}
+    except HTTPException:
+        order.status = "failed"
+        db.commit()
+        raise
+
+
+@app.post("/api/checkout/sumup-return", status_code=204)
+def sumup_webhook(event: dict, db: Session = Depends(core.db_session)):
+    if event.get("event_type") != "CHECKOUT_STATUS_CHANGED" or not event.get("id"):
+        return Response(status_code=204)
+    checkout = _sumup_request(f"/v0.1/checkouts/{event['id']}")
+    _sync_sumup_order(checkout, db)
+    return Response(status_code=204)
+
+
+@app.get("/api/checkout/sumup-return")
+def sumup_return(reference: str, request: Request, db: Session = Depends(core.db_session)):
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    origin = f"{proto}://{host}"
+    order = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.reference == reference[:80]))
+    if not order or not order.provider_payment_id:
+        return RedirectResponse(f"{origin}/shop?payment=failed&provider=sumup")
+    try:
+        checkout = _sumup_request(f"/v0.1/checkouts/{order.provider_payment_id}")
+        _sync_sumup_order(checkout, db)
+        status = str(checkout.get("status", "")).upper()
+        payment = "success" if status == "PAID" else ("failed" if status in {"FAILED", "EXPIRED"} else "pending")
+    except HTTPException:
+        payment = "failed"
+    return RedirectResponse(f"{origin}/shop?payment={payment}&provider=sumup&reference={reference[:80]}")
 
 
 def _drop_route(path: str, method: str):
