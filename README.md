@@ -19,11 +19,10 @@ Premium Classy Pilates website with a Barry's-inspired booking flow, central boo
 - Webshop at `/shop.html`
 - Class packs: 1 / 5 / 10 / 20 classes
 - Cart, customer data, billing data, checkout and order references
-- Stripe Checkout adapter with automatic payment methods
-- Apple Pay and Google Pay through Stripe when eligible/configured
-- Card payments, Link, Klarna and SEPA through Stripe account payment-method settings
+- SumUp Hosted Checkout adapter
+- SumUp-hosted payment collection with eligible card and wallet methods
 - Separate PayPal checkout + secure server-side capture
-- Stripe webhook verification and automatic credit fulfillment only after confirmed payment
+- SumUp callback verification and automatic credit fulfillment only after confirmed payment
 - D1 order, order item and credit ledger model
 - Idempotency-ready order references and provider request keys
 
@@ -61,25 +60,14 @@ Set these in Cloudflare Pages → Settings → Variables and Secrets when connec
 
 - `ADMIN_TOKEN` — strong private token used by `/admin.html`
 
-### Stripe
+### SumUp
 
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
+- `SUMUPAPIKEY` — SumUp API key (server-side secret)
+- `SUMUPMERCHANT` — SumUp merchant code
 
-Stripe webhook endpoint:
+SumUp status callback endpoint (configured automatically when checkout is created):
 
-`/api/webhooks/stripe`
-
-Recommended Stripe account payment methods for Germany:
-
-- Cards
-- Apple Pay
-- Google Pay
-- Link
-- Klarna
-- SEPA Direct Debit
-
-Actual availability is determined by Stripe, browser/device eligibility, currency, customer and the merchant's enabled payment methods.
+`/api/checkout/sumup-return`
 
 ### PayPal
 
@@ -114,7 +102,7 @@ Until D1 is bound and real classes are entered/imported, the existing generated 
 2. Cart calculates the total from the fixed product catalog.
 3. Customer enters contact/billing details.
 4. Customer chooses payment method.
-5. Stripe methods redirect to Stripe Checkout; PayPal redirects to PayPal approval.
+5. The customer is redirected to SumUp Hosted Checkout.
 6. Server-side webhook/capture verifies the payment.
 7. Order changes to `paid`.
 8. Purchased credits are written to `credit_ledger` exactly after confirmed payment.

@@ -5,19 +5,13 @@ const PRODUCTS={
   twenty:{id:'twenty',name:'20 Classes',eyebrow:'COMMITTED',price:39900,description:'€19.95 per class — for regular training.'}
 };
 const PAYMENT_METHODS=[
-  {id:'card',name:'Card',hint:'Visa · Mastercard · American Express',badge:'CARD'},
-  {id:'apple_pay',name:'Apple Pay',hint:'Pay quickly with your Apple device',badge:' Pay'},
-  {id:'google_pay',name:'Google Pay',hint:'Pay quickly with Google Wallet',badge:'G Pay'},
-  {id:'paypal',name:'PayPal',hint:'Continue to PayPal',badge:'PayPal'},
-  {id:'klarna',name:'Klarna',hint:'Available Klarna options at checkout',badge:'Klarna.'},
-  {id:'sepa_debit',name:'SEPA Direct Debit',hint:'Direct debit from your bank account',badge:'SEPA'},
-  {id:'link',name:'Link',hint:'Stripe Link – faster checkout',badge:'Link'}
+  {id:'sumup',name:'Secure checkout',hint:'Pay securely on the SumUp checkout page',badge:'SumUp'}
 ];
 const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s)];
 const money=cents=>new Intl.NumberFormat(document.documentElement.lang==='de'?'de-DE':'en-GB',{style:'currency',currency:'EUR'}).format(cents/100);
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-const state={cart:read('cpCart',[]),step:1,customer:read('cpCustomer',{}),payment:'card'};
+const state={cart:read('cpCart',[]),step:1,customer:read('cpCustomer',{}),payment:'sumup'};
 
 function read(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback}catch(_){return fallback}}
 function write(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(_){}}
@@ -58,7 +52,7 @@ async function submitPayment(){
   if(!$('#terms').checked){showToast('Consent required','Please accept the terms.');return}
   const button=$('#payNow');button.disabled=true;button.textContent='Preparing payment…';
   const order={reference:'CP-ORDER-'+token(8),currency:'eur',items:state.cart.map(id=>({id,quantity:1})),customer:state.customer,paymentMethod:state.payment,amount:total(),returnUrl:location.origin+location.pathname+'?payment=success'};
-  const endpoint=state.payment==='paypal'?'/api/checkout/paypal':'/api/checkout/create';
+  const endpoint='/api/checkout/create';
   try{
     const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-idempotency-key':order.reference},body:JSON.stringify(order)});
     const data=await response.json().catch(()=>({}));
@@ -70,10 +64,10 @@ async function submitPayment(){
 function savePreparedOrder(order){
   const orders=read('cpOrders',[]);orders.unshift({...order,status:'payment_provider_pending',createdAt:new Date().toISOString()});write('cpOrders',orders.slice(0,25));
   $('#drawerTitle').textContent='Checkout ready';$('#checkoutProgress').innerHTML='<span></span><span></span><span class="active">Payment</span>';
-  $('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Your checkout is ready.</h3><p>Order <b>${esc(order.reference)}</b> has been saved. Once Stripe, wallets or PayPal are connected with live credentials, the same flow will continue directly to payment. No charge is made until then.</p><span class="order-ref">${esc(order.reference)}</span><button class="drawer-action" id="donePrepared" type="button">Done</button></div>`;
+  $('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Your checkout is ready.</h3><p>Order <b>${esc(order.reference)}</b> has been saved. Once SumUp is connected with live credentials, the same flow will continue directly to payment. No charge is made until then.</p><span class="order-ref">${esc(order.reference)}</span><button class="drawer-action" id="donePrepared" type="button">Done</button></div>`;
   $('#donePrepared').addEventListener('click',()=>{state.cart=[];write('cpCart',[]);updateCartCount();closeCart()});
 }
-function handleReturn(){const q=new URLSearchParams(location.search);if(q.get('payment')==='success'){const pending=read('cpPendingOrder',null);state.cart=[];write('cpCart',[]);updateCartCount();openCart();$('#drawerTitle').textContent='Payment confirmed';$('#checkoutProgress').innerHTML='<span></span><span></span><span class="active">Done</span>';$('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Thank you.</h3><p>Your payment returned successfully. Server-side payment confirmation will then activate the credits.</p>${pending?.reference?`<span class="order-ref">${esc(pending.reference)}</span>`:''}<button class="drawer-action" id="doneReturn" type="button">Go to schedule</button></div>`;$('#doneReturn').addEventListener('click',()=>location.href='/#schedule');history.replaceState({},'',location.pathname)}}
+function handleReturn(){const q=new URLSearchParams(location.search);const payment=q.get('payment');if(payment==='success'){const pending=read('cpPendingOrder',null);state.cart=[];write('cpCart',[]);updateCartCount();openCart();$('#drawerTitle').textContent='Payment confirmed';$('#checkoutProgress').innerHTML='<span></span><span></span><span class="active">Done</span>';$('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Thank you.</h3><p>Your SumUp payment is confirmed and your class credits are ready.</p>${(q.get('reference')||pending?.reference)?`<span class="order-ref">${esc(q.get('reference')||pending.reference)}</span>`:''}<button class="drawer-action" id="doneReturn" type="button">Go to schedule</button></div>`;$('#doneReturn').addEventListener('click',()=>location.href='/#schedule');history.replaceState({},'',location.pathname)}else if(payment==='failed'||payment==='pending'){openCart();state.step=3;renderPayment();showToast(payment==='failed'?'Payment not completed':'Payment is processing',payment==='failed'?'No payment was confirmed. Please try again.':'Please wait a moment and check your account before retrying.');history.replaceState({},'',location.pathname)}}
 
 $('#cartTrigger').addEventListener('click',openCart);$('#closeDrawer').addEventListener('click',closeCart);$('#drawerBackdrop').addEventListener('click',closeCart);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeCart()});
 renderProducts();updateCartCount();
