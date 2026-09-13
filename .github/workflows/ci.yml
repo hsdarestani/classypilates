@@ -1,0 +1,56 @@
+name: Classy Payment CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax checks
+        run: |
+          python -m py_compile server/main.py server/feedback_app.py
+          node --check public/booking-flow.js
+          node --check public/shop.js
+
+      - name: Diff check
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git diff --check "origin/$BASE_REF...HEAD"
+          else
+            git diff --check
+          fi
+
+      - name: Runtime payment guardrails
+        run: |
+          if grep -RIni --exclude-dir=.git --include='*.py' --include='*.js' --include='*.html' --include='*.css' 'stripe' server public; then
+            echo 'Stripe runtime references remain.' >&2
+            exit 1
+          fi
+          if grep -Ein 'PRESENTATION_PAYMENT|Payment is simulated|No real charge|Confirm demo payment|completeDemoBooking' public/booking-flow.js; then
+            echo 'Demo booking payment flow remains.' >&2
+            exit 1
+          fi
+          if grep -Ein 'savePreparedOrder|provider_not_connected|Checkout ready|No charge is made until then' public/shop.js; then
+            echo 'Fake shop checkout fallback remains.' >&2
+            exit 1
+          fi

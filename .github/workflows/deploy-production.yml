@@ -59,6 +59,8 @@ jobs:
           MINDBODY_STAFF_PASSWORD_B64="$(printf '%s' "$MINDBODY_STAFF_PASSWORD" | base64 -w0)"
           SUMUPAPIKEY_B64="$(printf '%s' "$SUMUPAPIKEY" | base64 -w0)"
           SUMUPMERCHANT_B64="$(printf '%s' "$SUMUPMERCHANT" | base64 -w0)"
+          echo "::add-mask::$SUMUPAPIKEY_B64"
+          echo "::add-mask::$SUMUPMERCHANT_B64"
           sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "SMTP_PASS_B64='$SMTP_PASS_B64' MINDBODY_API_KEY_B64='$MINDBODY_API_KEY_B64' MINDBODY_SITE_ID_B64='$MINDBODY_SITE_ID_B64' MINDBODY_STAFF_USERNAME_B64='$MINDBODY_STAFF_USERNAME_B64' MINDBODY_STAFF_PASSWORD_B64='$MINDBODY_STAFF_PASSWORD_B64' SUMUPAPIKEY_B64='$SUMUPAPIKEY_B64' SUMUPMERCHANT_B64='$SUMUPMERCHANT_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
@@ -141,6 +143,7 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:8787/api/health
+          curl -fsS http://127.0.0.1:8787/api/checkout/create | grep -q '"provider":"sumup"'
 
           # The importer uses SQLAlchemy Core only, so it can safely run beside
           # the API without loading the full application a second time.
@@ -355,6 +358,7 @@ jobs:
           sleep 5
           curl -fsSIL --max-time 20 https://classy.smarbiz.sbs/ >/dev/null
           curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/health | grep -q '"ok":true'
+          curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/checkout/create | grep -q '"provider":"sumup"'
 
       - name: Publish deployment heartbeat
         if: always()

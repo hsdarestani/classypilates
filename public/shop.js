@@ -51,23 +51,15 @@ function renderPayment(){
 async function submitPayment(){
   if(!$('#terms').checked){showToast('Consent required','Please accept the terms.');return}
   const button=$('#payNow');button.disabled=true;button.textContent='Preparing payment…';
-  const order={reference:'CP-ORDER-'+token(8),currency:'eur',items:state.cart.map(id=>({id,quantity:1})),customer:state.customer,paymentMethod:state.payment,amount:total(),returnUrl:location.origin+location.pathname+'?payment=success'};
-  const endpoint='/api/checkout/create';
+  const order={reference:'CP-ORDER-'+token(8),items:state.cart.map(id=>({id,quantity:1})),customer:state.customer};
   try{
-    const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','x-idempotency-key':order.reference},body:JSON.stringify(order)});
-    const data=await response.json().catch(()=>({}));
-    if(response.ok&&data.url){write('cpPendingOrder',order);location.href=data.url;return}
-    if(response.status!==503&&response.status!==404&&response.status!==501)throw new Error(data.error||'checkout_failed');
-    savePreparedOrder(order,data.code||'provider_not_connected');
-  }catch(_){savePreparedOrder(order,'provider_not_connected')}
+    const response=await fetch('/api/checkout/create',{method:'POST',headers:{'content-type':'application/json','x-idempotency-key':order.reference},body:JSON.stringify(order)});
+    const data=await response.json().catch(()=>({}));const url=data.hosted_checkout_url||data.url;
+    if(response.ok&&url){write('cpPendingOrder',order);location.href=url;return}
+    throw new Error(data.detail||'checkout_failed');
+  }catch(error){button.disabled=false;button.textContent='Pay securely · '+money(total());const unavailable=['sumup_not_configured','sumup_unavailable','sumup_request_failed'].includes(error.message);showToast(unavailable?'Payment unavailable':'Payment not started',unavailable?'SumUp is currently unavailable. No order has been marked as paid.':'Secure checkout could not be started. Please try again.');}
 }
-function savePreparedOrder(order){
-  const orders=read('cpOrders',[]);orders.unshift({...order,status:'payment_provider_pending',createdAt:new Date().toISOString()});write('cpOrders',orders.slice(0,25));
-  $('#drawerTitle').textContent='Checkout ready';$('#checkoutProgress').innerHTML='<span></span><span></span><span class="active">Payment</span>';
-  $('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Your checkout is ready.</h3><p>Order <b>${esc(order.reference)}</b> has been saved. Once SumUp is connected with live credentials, the same flow will continue directly to payment. No charge is made until then.</p><span class="order-ref">${esc(order.reference)}</span><button class="drawer-action" id="donePrepared" type="button">Done</button></div>`;
-  $('#donePrepared').addEventListener('click',()=>{state.cart=[];write('cpCart',[]);updateCartCount();closeCart()});
-}
-function handleReturn(){const q=new URLSearchParams(location.search);const payment=q.get('payment');if(payment==='success'){const pending=read('cpPendingOrder',null);state.cart=[];write('cpCart',[]);updateCartCount();openCart();$('#drawerTitle').textContent='Payment confirmed';$('#checkoutProgress').innerHTML='<span></span><span></span><span class="active">Done</span>';$('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Thank you.</h3><p>Your SumUp payment is confirmed and your class credits are ready.</p>${(q.get('reference')||pending?.reference)?`<span class="order-ref">${esc(q.get('reference')||pending.reference)}</span>`:''}<button class="drawer-action" id="doneReturn" type="button">Go to schedule</button></div>`;$('#doneReturn').addEventListener('click',()=>location.href='/#schedule');history.replaceState({},'',location.pathname)}else if(payment==='failed'||payment==='pending'){openCart();state.step=3;renderPayment();showToast(payment==='failed'?'Payment not completed':'Payment is processing',payment==='failed'?'No payment was confirmed. Please try again.':'Please wait a moment and check your account before retrying.');history.replaceState({},'',location.pathname)}}
+async function handleReturn(){const q=new URLSearchParams(location.search),pending=read('cpPendingOrder',null),reference=q.get('reference')||pending?.reference||'';if(!reference)return;let verified='pending';try{const response=await fetch('/api/checkout/status?reference='+encodeURIComponent(reference),{credentials:'same-origin',cache:'no-store'});const data=await response.json().catch(()=>({}));if(response.ok)verified=data.status||'pending';else if(response.status===404)verified='failed'}catch(_){}if(verified==='paid'){state.cart=[];write('cpCart',[]);try{localStorage.removeItem('cpPendingOrder')}catch(_){}updateCartCount();openCart();$('#drawerTitle').textContent='Payment confirmed';$('#checkoutProgress').innerHTML='<span></span><span></span><span class="active">Done</span>';$('#drawerBody').innerHTML=`<div class="confirmation"><div class="check">✓</div><h3>Thank you.</h3><p>Your SumUp payment is confirmed and your class credits are ready.</p><span class="order-ref">${esc(reference)}</span><button class="drawer-action" id="doneReturn" type="button">Go to schedule</button></div>`;$('#doneReturn').addEventListener('click',()=>location.href='/#schedule')}else{openCart();state.step=3;renderPayment();const failed=['failed','cancelled'].includes(verified);showToast(failed?'Payment not completed':'Payment is processing',failed?'SumUp did not confirm the payment. Please try again.':'No successful payment has been confirmed yet. Please check again before retrying.')}history.replaceState({},'',location.pathname)}
 
 $('#cartTrigger').addEventListener('click',openCart);$('#closeDrawer').addEventListener('click',closeCart);$('#drawerBackdrop').addEventListener('click',closeCart);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeCart()});
 renderProducts();updateCartCount();
