@@ -37,8 +37,11 @@ jobs:
 
       - name: Commit patched implementation
         run: |
+          mkdir -p tmp
+          cp .github/workflows/deploy-production.yml tmp/deploy-production.patched.yml
+          git checkout -- .github/workflows/deploy-production.yml
           git config user.name 'classy-sumup-bot'
           git config user.email 'actions@users.noreply.github.com'
-          git add server/main.py server/feedback_app.py public/booking-flow.js public/shop.js .github/workflows/deploy-production.yml
+          git add server/main.py server/feedback_app.py public/booking-flow.js public/shop.js tmp/deploy-production.patched.yml
           git commit -m 'feat: complete production SumUp payments [sumup-patch]'
           git push origin HEAD:fix/sumup-production-ready
