@@ -2,6 +2,7 @@ import os
 import smtplib
 import ssl
 import json
+from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError
 from urllib.request import Request as UrlRequest, urlopen
 from datetime import date, datetime, timedelta, timezone
@@ -135,7 +136,8 @@ class CheckoutItem(BaseModel):
 class CheckoutIn(BaseModel):
     reference: str
     customer: CheckoutCustomer
-    items: list[CheckoutItem]
+    items: list[CheckoutItem] = []
+    bookingReference: Optional[str] = None
 
 
 def _sumup_request(path: str, *, method: str = "GET", payload: Optional[dict] = None) -> dict:
@@ -162,32 +164,83 @@ def _sumup_request(path: str, *, method: str = "GET", payload: Optional[dict] = 
         raise HTTPException(502, "sumup_unavailable")
 
 
-def _sync_sumup_order(checkout: dict, db: Session) -> Optional[core.PaymentOrder]:
-    checkout_id = str(checkout.get("id", ""))
+def _checkout_origin(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",", 1)[0].strip()
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc)).split(",", 1)[0].strip()
+    hostname = host.split(":", 1)[0].lower()
+    allowed_hosts = {"classy.smarbiz.sbs", "new.classypilates.de", "classypilates.de", "www.classypilates.de"}
+    if hostname not in allowed_hosts:
+        return os.getenv("PUBLIC_BASE_URL", "https://classy.smarbiz.sbs").strip().rstrip("/")
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _sumup_amount_cents(checkout: dict) -> int:
+    try:
+        amount = Decimal(str(checkout.get("amount", ""))).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError, TypeError):
+        raise HTTPException(409, "sumup_checkout_mismatch")
+    return int(amount * 100)
+
+
+def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[BackgroundTasks] = None) -> Optional[core.PaymentOrder]:
+    checkout_id = str(checkout.get("id", "")).strip()
+    if not checkout_id:
+        raise HTTPException(409, "sumup_checkout_mismatch")
     order = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.provider_payment_id == checkout_id).with_for_update())
     if not order:
         return None
     merchant = os.getenv("SUMUPMERCHANT", "").strip()
+    if not merchant:
+        raise HTTPException(503, "sumup_not_configured")
     trusted = (
-        str(checkout.get("merchant_code", "")) == merchant
+        str(checkout.get("merchant_code", "")).strip() == merchant
         and str(checkout.get("currency", "")).upper() == "EUR"
-        and round(float(checkout.get("amount", 0)) * 100) == order.amount_cents
+        and _sumup_amount_cents(checkout) == order.amount_cents
     )
     if not trusted:
         raise HTTPException(409, "sumup_checkout_mismatch")
+
     status = str(checkout.get("status", "")).upper()
+    email_job = None
     if status == "PAID":
         order.status = "paid"
-        if not order.credited:
+        if order.booking_reference:
+            booking = db.scalar(select(core.Booking).where(core.Booking.reference == order.booking_reference).with_for_update())
+            if not booking:
+                raise HTTPException(409, "booking_not_found")
+            if booking.email.lower() != order.email.lower() or booking.amount_cents != order.amount_cents:
+                raise HTTPException(409, "booking_payment_mismatch")
+            first_paid_transition = booking.payment_status != "paid"
+            booking.payment_status = "paid"
+            booking.payment_method = "sumup"
+            booking.status = "reserved"
+            order.credited = True
+            if first_paid_transition:
+                email_job = core.booking_email_data(booking)
+        elif not order.credited:
             user = db.scalar(select(core.User).where(func.lower(core.User.email) == order.email.lower()))
             if user:
                 profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
-                if profile:
-                    profile.credits += order.credits
-                    order.credited = True
-    elif status in {"FAILED", "EXPIRED"} and order.status == "pending":
+                if not profile:
+                    profile = core.CustomerProfile(user_id=user.id)
+                    db.add(profile)
+                    db.flush()
+                profile.credits += order.credits
+                order.credited = True
+    elif status in {"FAILED", "EXPIRED", "CANCELLED", "CANCELED"} and order.status != "paid":
         order.status = "failed" if status == "FAILED" else "cancelled"
+        if order.booking_reference:
+            booking = db.scalar(select(core.Booking).where(core.Booking.reference == order.booking_reference).with_for_update())
+            if booking and booking.payment_status != "paid":
+                booking.payment_status = "failed" if status == "FAILED" else "cancelled"
+                booking.payment_method = "sumup"
+                booking.status = "cancelled"
     db.commit()
+    if email_job:
+        if background_tasks is not None:
+            background_tasks.add_task(core.send_transactional_email, *email_job)
+        else:
+            core.send_transactional_email(*email_job)
     return order
 
 
@@ -202,25 +255,44 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
     if not os.getenv("SUMUPAPIKEY", "").strip() or not merchant:
         raise HTTPException(503, "sumup_not_configured")
     reference = data.reference.strip()[:80]
-    if not reference or not data.items:
+    if not reference:
         raise HTTPException(400, "invalid_checkout")
+
+    email = str(data.customer.email).strip().lower()
+    booking = None
+    booking_reference = (data.bookingReference or "").strip()[:40] or None
     total = 0
     credits = 0
     names = []
-    for item in data.items:
-        product = SHOP_PRODUCTS.get(item.id)
-        quantity = min(10, max(1, item.quantity))
-        if not product:
-            raise HTTPException(400, "unknown_product")
-        total += product["price"] * quantity
-        credits += product["credits"] * quantity
-        names.append(f"{quantity}× {product['name']}")
-    email = str(data.customer.email).strip().lower()
+
+    if booking_reference:
+        booking = db.scalar(select(core.Booking).where(core.Booking.reference == booking_reference).with_for_update())
+        if not booking or booking.status != "reserved" or booking.payment_status != "pending":
+            raise HTTPException(409, "booking_not_payable")
+        if booking.email.lower() != email:
+            raise HTTPException(409, "booking_customer_mismatch")
+        if booking.amount_cents <= 0:
+            raise HTTPException(409, "booking_amount_invalid")
+        total = booking.amount_cents
+        names = [f"Class booking {booking.reference}"]
+    else:
+        if not data.items:
+            raise HTTPException(400, "invalid_checkout")
+        for item in data.items:
+            product = SHOP_PRODUCTS.get(item.id)
+            quantity = min(10, max(1, item.quantity))
+            if not product:
+                raise HTTPException(400, "unknown_product")
+            total += product["price"] * quantity
+            credits += product["credits"] * quantity
+            names.append(f"{quantity}× {product['name']}")
+
     existing = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.reference == reference))
     if existing:
-        if existing.email != email or existing.amount_cents != total:
+        if existing.email != email or existing.amount_cents != total or existing.booking_reference != booking_reference:
             raise HTTPException(409, "reference_conflict")
         raise HTTPException(409, "checkout_already_created")
+
     order = core.PaymentOrder(
         reference=reference,
         email=email,
@@ -228,20 +300,19 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         last_name=data.customer.lastName.strip(),
         amount_cents=total,
         credits=credits,
+        booking_reference=booking_reference,
     )
     db.add(order)
     db.commit()
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-    origin = f"{proto}://{host}"
+
+    origin = _checkout_origin(request)
     try:
         checkout = _sumup_request("/v0.1/checkouts", method="POST", payload={
             "checkout_reference": reference,
-            "amount": round(total / 100, 2),
+            "amount": float(Decimal(total) / Decimal(100)),
             "currency": "EUR",
             "merchant_code": merchant,
             "description": ("Classy Pilates · " + ", ".join(names))[:255],
-            "return_url": f"{origin}/api/checkout/sumup-return",
             "redirect_url": f"{origin}/api/checkout/sumup-return?reference={reference}",
             "hosted_checkout": {"enabled": True},
         })
@@ -249,38 +320,61 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
             raise HTTPException(502, "sumup_checkout_incomplete")
         order.provider_payment_id = str(checkout["id"])
         db.commit()
-        return {"ok": True, "url": checkout["hosted_checkout_url"], "checkoutId": checkout["id"], "reference": reference}
+        return {
+            "ok": True,
+            "provider": "sumup",
+            "hosted_checkout_url": checkout["hosted_checkout_url"],
+            "url": checkout["hosted_checkout_url"],
+            "checkoutId": checkout["id"],
+            "reference": reference,
+            "bookingReference": booking_reference,
+        }
     except HTTPException:
         order.status = "failed"
+        if booking_reference:
+            booking = db.scalar(select(core.Booking).where(core.Booking.reference == booking_reference).with_for_update())
+            if booking and booking.payment_status == "pending":
+                booking.payment_status = "failed"
+                booking.payment_method = "sumup"
+                booking.status = "cancelled"
         db.commit()
         raise
 
 
 @app.post("/api/checkout/sumup-return", status_code=204)
-def sumup_webhook(event: dict, db: Session = Depends(core.db_session)):
-    if event.get("event_type") != "CHECKOUT_STATUS_CHANGED" or not event.get("id"):
+def sumup_webhook(event: dict, background_tasks: BackgroundTasks, db: Session = Depends(core.db_session)):
+    checkout_id = str(event.get("id") or event.get("checkout_id") or "").strip()
+    if not checkout_id:
+        reference = str(event.get("checkout_reference") or "").strip()[:80]
+        if reference:
+            order = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.reference == reference))
+            checkout_id = order.provider_payment_id if order and order.provider_payment_id else ""
+    if not checkout_id:
         return Response(status_code=204)
-    checkout = _sumup_request(f"/v0.1/checkouts/{event['id']}")
-    _sync_sumup_order(checkout, db)
+    checkout = _sumup_request(f"/v0.1/checkouts/{checkout_id}")
+    _sync_sumup_order(checkout, db, background_tasks)
     return Response(status_code=204)
 
 
 @app.get("/api/checkout/sumup-return")
-def sumup_return(reference: str, request: Request, db: Session = Depends(core.db_session)):
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-    origin = f"{proto}://{host}"
+def sumup_return(reference: str, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(core.db_session)):
+    origin = _checkout_origin(request)
     order = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.reference == reference[:80]))
     if not order or not order.provider_payment_id:
         return RedirectResponse(f"{origin}/shop?payment=failed&provider=sumup")
     try:
         checkout = _sumup_request(f"/v0.1/checkouts/{order.provider_payment_id}")
-        _sync_sumup_order(checkout, db)
-        status = str(checkout.get("status", "")).upper()
-        payment = "success" if status == "PAID" else ("failed" if status in {"FAILED", "EXPIRED"} else "pending")
+        synced = _sync_sumup_order(checkout, db, background_tasks)
+        state = synced.status if synced else "failed"
+        payment = "success" if state == "paid" else ("failed" if state in {"failed", "cancelled"} else "pending")
     except HTTPException:
-        payment = "failed"
-    return RedirectResponse(f"{origin}/shop?payment={payment}&provider=sumup&reference={reference[:80]}")
+        payment = "pending"
+
+    if order.booking_reference:
+        return RedirectResponse(
+            f"{origin}/?payment={payment}&provider=sumup&flow=booking&bookingReference={order.booking_reference}&reference={order.reference}#schedule"
+        )
+    return RedirectResponse(f"{origin}/shop?payment={payment}&provider=sumup&reference={order.reference}")
 
 
 def _drop_route(path: str, method: str):
@@ -629,8 +723,8 @@ def public_booking_v2(data: PublicBookingInV2, user: Optional[core.User] = Depen
     booking = core.Booking(
         reference=ref, class_id=c.id, customer_name=(data.firstName + " " + data.lastName).strip(),
         email=data.email.lower(), phone=data.phone, spot_number=data.spot,
-        payment_method="class_credit" if use_credit else data.paymentMethod,
-        payment_status="paid" if use_credit else "pending", amount_cents=0 if use_credit else (2800 if data.paymentMethod else 0),
+        payment_method="class_credit" if use_credit else "sumup",
+        payment_status="paid" if use_credit else "pending", amount_cents=0 if use_credit else 2800,
     )
     db.add(booking)
     db.flush()

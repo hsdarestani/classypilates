@@ -266,6 +266,7 @@ class PaymentOrder(Base):
     credits: Mapped[int] = mapped_column(Integer)
     provider: Mapped[str] = mapped_column(String(30), default="sumup")
     provider_payment_id: Mapped[Optional[str]] = mapped_column(String(120), unique=True, nullable=True, index=True)
+    booking_reference: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")
     credited: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -286,6 +287,14 @@ def migrate_schema():
     if "description" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE classes ADD COLUMN description TEXT NOT NULL DEFAULT ''"))
+
+    inspector = inspect(engine)
+    if inspector.has_table("payment_orders"):
+        payment_columns = {column["name"] for column in inspector.get_columns("payment_orders")}
+        if "booking_reference" not in payment_columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE payment_orders ADD COLUMN booking_reference VARCHAR(40)"))
+                connection.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_orders_booking_reference ON payment_orders (booking_reference)"))
 
 
 migrate_schema()
