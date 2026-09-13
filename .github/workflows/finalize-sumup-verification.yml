@@ -1,0 +1,47 @@
+name: Finalize SumUp Verification
+
+on:
+  push:
+    branches: [fix/sumup-production-ready]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sumup-production-ready
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply final verification hardening
+        run: python scripts/finalize_sumup_verification.py
+
+      - name: Run requested checks
+        run: |
+          python -m py_compile server/main.py server/feedback_app.py
+          node --check public/booking-flow.js
+          node --check public/shop.js
+          git diff --check
+          if grep -RIni --exclude-dir=.git --include='*.py' --include='*.js' --include='*.html' --include='*.css' 'stripe' server public; then exit 1; fi
+          if grep -Ein 'PRESENTATION_PAYMENT|Payment is simulated|No real charge|Confirm demo payment|completeDemoBooking' public/booking-flow.js; then exit 1; fi
+          if grep -Ein 'savePreparedOrder|provider_not_connected|Checkout ready|No charge is made until then' public/shop.js; then exit 1; fi
+
+      - name: Commit final code
+        run: |
+          git config user.name 'classy-sumup-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add server/feedback_app.py public/booking-flow.js public/shop.js
+          git commit -m 'fix: verify SumUp returns server-side' || exit 0
+          git push origin HEAD:fix/sumup-production-ready
