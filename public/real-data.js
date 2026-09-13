@@ -15,6 +15,7 @@
    */
   const LOCAL_COACH_PHOTOS=[
     {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',cardPosition:'50% 35%'},
+    {match:name=>/^anna$/.test(name),src:'/anna.jpg',cardPosition:'50% 35%'},
     {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',cardPosition:'50% 35%'},
     {match:name=>/^luca\b/.test(name),src:'/luca.jpg',cardPosition:'50% 35%'},
     {match:name=>/^zora\b/.test(name),src:'/zora.jpg',cardPosition:'50% 35%'}
