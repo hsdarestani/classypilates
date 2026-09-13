@@ -1,13 +1,13 @@
 # Classy Production Deployment Status
 
 - Workflow status: **success**
-- Commit: `0ea4913eacca13ee5284496e84b0dbbc8861d97e`
-- Checked at: `2026-09-13T11:19:33Z`
+- Commit: `fee0086398cccab01f2505c4a8ca193a3649a206`
+- Checked at: `2026-09-13T11:20:24Z`
 - Local API health: `{"ok":true,"service":"classy-production"}`
 
 ## Remote containers
 ```
-NAME                  IMAGE                                                                     COMMAND                  SERVICE   CREATED         STATUS                 PORTS
-classypilates-api-1   sha256:97acff7d0d066c60ddf49d9832c201ed7d434736da8355b32e3625984d83973e   "uvicorn runtime_app…"   api       9 minutes ago   Up 9 minutes           127.0.0.1:8787->8000/tcp
-classypilates-db-1    postgres:16-alpine                                                        "docker-entrypoint.s…"   db        2 weeks ago     Up 2 weeks (healthy)   5432/tcp
+NAME                  IMAGE                                                                     COMMAND                  SERVICE   CREATED          STATUS                 PORTS
+classypilates-api-1   sha256:4031314d5c29b58e3649e66b26244810121e28ed23c4280351c3b9d388351fde   "uvicorn runtime_app…"   api       28 seconds ago   Up 27 seconds          127.0.0.1:8787->8000/tcp
+classypilates-db-1    postgres:16-alpine                                                        "docker-entrypoint.s…"   db        2 weeks ago      Up 2 weeks (healthy)   5432/tcp
 ```
