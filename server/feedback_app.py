@@ -313,6 +313,7 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
             "currency": "EUR",
             "merchant_code": merchant,
             "description": ("Classy Pilates · " + ", ".join(names))[:255],
+            "return_url": f"{origin}/api/checkout/sumup-return",
             "redirect_url": f"{origin}/api/checkout/sumup-return?reference={reference}",
             "hosted_checkout": {"enabled": True},
         })
@@ -367,14 +368,37 @@ def sumup_return(reference: str, request: Request, background_tasks: BackgroundT
         synced = _sync_sumup_order(checkout, db, background_tasks)
         state = synced.status if synced else "failed"
         payment = "success" if state == "paid" else ("failed" if state in {"failed", "cancelled"} else "pending")
-    except HTTPException:
-        payment = "pending"
+    except HTTPException as exc:
+        payment = "pending" if exc.status_code in {502, 503} else "failed"
 
     if order.booking_reference:
         return RedirectResponse(
             f"{origin}/?payment={payment}&provider=sumup&flow=booking&bookingReference={order.booking_reference}&reference={order.reference}#schedule"
         )
     return RedirectResponse(f"{origin}/shop?payment={payment}&provider=sumup&reference={order.reference}")
+
+
+@app.get("/api/checkout/status")
+def checkout_status(reference: str, background_tasks: BackgroundTasks, db: Session = Depends(core.db_session)):
+    normalized = reference.strip()[:80]
+    if not normalized:
+        raise HTTPException(400, "invalid_reference")
+    order = db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.reference == normalized))
+    if not order:
+        raise HTTPException(404, "payment_order_not_found")
+    if order.provider_payment_id:
+        checkout = _sumup_request(f"/v0.1/checkouts/{order.provider_payment_id}")
+        synced = _sync_sumup_order(checkout, db, background_tasks)
+        if synced:
+            order = synced
+    return {
+        "ok": True,
+        "provider": "sumup",
+        "reference": order.reference,
+        "bookingReference": order.booking_reference,
+        "status": order.status,
+        "paid": order.status == "paid",
+    }
 
 
 def _drop_route(path: str, method: str):
