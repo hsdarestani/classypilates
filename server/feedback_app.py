@@ -515,7 +515,7 @@ def staff_memberships(user: core.User = Depends(core.require("customers.view")),
             "status": row.status, "provider_status": row.provider_status, "starts_on": row.starts_on,
             "next_charge_at": row.next_charge_at.isoformat() if row.next_charge_at else None,
         })
-    return {"memberships": result, "automatic_debit_ready": bool(os.getenv("STRIPE_SECRET_KEY") or os.getenv("SEPA_PROVIDER_KEY"))}
+    return {"memberships": result, "automatic_debit_ready": bool(os.getenv("SEPA_PROVIDER_KEY"))}
 
 
 @app.post("/api/staff/memberships")
@@ -530,7 +530,7 @@ def create_membership(data: MembershipIn, user: core.User = Depends(core.require
     except Exception:
         raise HTTPException(400, "invalid_start_date")
     next_charge = datetime.combine(start, datetime.min.time(), tzinfo=BERLIN).astimezone(timezone.utc)
-    provider_ready = bool(os.getenv("STRIPE_SECRET_KEY") or os.getenv("SEPA_PROVIDER_KEY"))
+    provider_ready = bool(os.getenv("SEPA_PROVIDER_KEY"))
     membership = Membership(
         customer_user_id=customer.id, amount_cents=data.amount_cents, credits_per_month=data.credits_per_month,
         payment_method=data.payment_method, status="active", provider_status="ready" if provider_ready else "pending_provider",

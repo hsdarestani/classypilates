@@ -11,13 +11,7 @@
   const emailOK=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const phoneOK=v=>String(v||'').replace(/\D/g,'').length>=7;
   const payMethods=[
-    {id:'card',name:'Karte',detail:'Visa · Mastercard · Amex',mark:'CARD'},
-    {id:'apple_pay',name:'Apple Pay',detail:'Face ID / Touch ID',mark:' Pay'},
-    {id:'google_pay',name:'Google Pay',detail:'Google Wallet',mark:'G Pay'},
-    {id:'paypal',name:'PayPal',detail:'PayPal Checkout',mark:'PayPal'},
-    {id:'klarna',name:'Klarna',detail:'Flexible payment',mark:'Klarna.'},
-    {id:'sepa',name:'SEPA',detail:'Lastschrift',mark:'SEPA'},
-    {id:'link',name:'Link',detail:'Fast checkout by Stripe',mark:'Link'}
+    {id:'sumup',name:'Secure checkout',detail:'Pay securely with SumUp',mark:'SumUp'}
   ];
   let wizard=null;
 
@@ -42,7 +36,7 @@
   function setProgress(step){const labels=['Class','Spot','Details','Payment','Done'];const progress=labels.map((x,i)=>`<span class="${i+1<=step?'done':''} ${i+1===step?'active':''}"><i>${i+1<step?'✓':i+1}</i><b>${x}</b></span>`).join('');return `<div class="booking-progress-v2">${progress}</div>`}
   function setDrawer(title,html,step){$('#drawerTitle').textContent=title;$('#drawerBody').innerHTML=setProgress(step)+html;$('#bookingDrawer')?.classList.add('booking-v2');openDrawer()}
 
-  function startWizard(r){wizard={class:r,spot:null,payment:'card',details:read('cpWizardCustomer',{}),mode:state.mode==='first'?'register':'login'};renderClassStep()}
+  function startWizard(r){wizard={class:r,spot:null,payment:'sumup',details:read('cpWizardCustomer',{}),mode:state.mode==='first'?'register':'login'};renderClassStep()}
   function renderClassStep(){const r=wizard.class;const available=Math.max(0,Number(r.spots)||0);setDrawer('Reserve your class',`${classSummary(r)}<div class="wizard-panel"><div class="wizard-kicker">YOUR SESSION</div><h4>Your class is selected.</h4><p>Review the coach, studio and time. Next, choose your preferred spot in the studio.</p><div class="class-facts"><div><span>LEVEL</span><b>All Levels</b></div><div><span>AVAILABLE</span><b>${available} spots</b></div><div><span>ARRIVE</span><b>10 min early</b></div></div><button class="drawer-action" id="goSpot">Continue · Choose spot</button><button class="drawer-action secondary" id="cancelV2">Cancel</button></div>`,1);$('#goSpot')?.addEventListener('click',renderSpotStep);$('#cancelV2')?.addEventListener('click',closeDrawer)}
 
   function seatState(index,r){const occupied=Math.min(Number(r.capacity)||0,Math.max(0,Number(r.reserved)||0));if(index<=occupied)return'taken';if(index===Math.min((Number(r.capacity)||1),occupied+1))return'recommended';return'available'}
