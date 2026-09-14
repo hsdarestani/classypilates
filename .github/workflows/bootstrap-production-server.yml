@@ -2,6 +2,8 @@ name: Bootstrap Classy Production Server
 
 on:
   workflow_dispatch:
+  push:
+    branches: [server-bootstrap]
 
 permissions:
   contents: read
