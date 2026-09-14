@@ -1,0 +1,86 @@
+name: Bootstrap Classy Production Server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Prepare fresh Ubuntu server
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          if [ ! -f /etc/os-release ]; then
+            echo "Cannot identify operating system." >&2
+            exit 1
+          fi
+          . /etc/os-release
+          if [ "${ID:-}" != "ubuntu" ]; then
+            echo "Expected Ubuntu, found ${PRETTY_NAME:-unknown}." >&2
+            exit 1
+          fi
+
+          apt-get update
+          apt-get install -y ca-certificates curl openssl nginx certbot python3-certbot-nginx
+
+          if ! command -v docker >/dev/null 2>&1; then
+            curl -fsSL https://get.docker.com | sh
+          fi
+          if ! docker compose version >/dev/null 2>&1; then
+            apt-get update
+            apt-get install -y docker-compose-plugin
+          fi
+
+          systemctl enable --now docker
+          systemctl enable --now nginx
+
+          mkdir -p /opt/classypilates
+          cd /opt/classypilates
+          touch .env
+
+          ensure_value() {
+            key="$1"
+            value="$2"
+            if ! grep -q "^${key}=" .env; then
+              printf '%s=%s\n' "$key" "$value" >> .env
+            fi
+          }
+
+          ensure_secret() {
+            key="$1"
+            bytes="$2"
+            current="$(sed -n "s/^${key}=//p" .env | head -n1)"
+            if [ -z "$current" ]; then
+              sed -i "/^${key}=/d" .env
+              printf '%s=%s\n' "$key" "$(openssl rand -hex "$bytes")" >> .env
+            fi
+          }
+
+          ensure_value POSTGRES_DB classy
+          ensure_value POSTGRES_USER classy
+          ensure_secret POSTGRES_PASSWORD 24
+          ensure_secret JWT_SECRET 32
+          ensure_value JWT_TTL_HOURS 24
+          chmod 600 .env
+
+          echo "Ubuntu: ${PRETTY_NAME}"
+          docker --version
+          docker compose version
+          nginx -v
+          echo "Base production secrets initialized in /opt/classypilates/.env"
+          REMOTE
