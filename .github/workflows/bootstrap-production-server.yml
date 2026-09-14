@@ -86,3 +86,5 @@ jobs:
           nginx -v
           echo "Base production secrets initialized in /opt/classypilates/.env"
           REMOTE
+
+# bootstrap trigger
