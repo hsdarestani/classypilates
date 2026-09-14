@@ -7,6 +7,8 @@
     {match:name=>/^ouafaa\b/.test(name),src:'/Ouafaa.jpeg',schedulePosition:'50% 40%'},
     {match:name=>/^arja\b/.test(name),src:'/Arja.jpeg',schedulePosition:'50% 40%'},
     {match:name=>/^sophie\b/.test(name),src:'/Sophie.jpg',schedulePosition:'50% 40%'},
+    {match:name=>/^schahrzad\b/.test(name),src:'/Schahrzad.jpg',schedulePosition:'50% 40%'},
+    {match:name=>/^sani\b/.test(name),src:'/Sani.jpg',schedulePosition:'50% 40%'},
     {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',schedulePosition:'50% 38%'},
     {match:name=>/^luca\b/.test(name),src:'/luca.jpg',schedulePosition:'50% 50%'},
     {match:name=>/^zora\b/.test(name),src:'/zora.jpg',schedulePosition:'50% 40%'}
