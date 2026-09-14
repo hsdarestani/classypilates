@@ -18,6 +18,7 @@
     {match:name=>/^anna$/.test(name),src:'/anna.jpg',cardPosition:'50% 24%'},
     {match:name=>/^ouafaa\b/.test(name),src:'/Ouafaa.jpeg',cardPosition:'50% 35%'},
     {match:name=>/^arja\b/.test(name),src:'/Arja.jpeg',cardPosition:'50% 35%'},
+    {match:name=>/^sophie\b/.test(name),src:'/Sophie.jpg',cardPosition:'50% 35%'},
     {match:name=>/^sayna\b/.test(name),src:'/sayna.jpg',cardPosition:'50% 35%'},
     {match:name=>/^luca\b/.test(name),src:'/luca.jpg',cardPosition:'50% 35%'},
     {match:name=>/^zora\b/.test(name),src:'/zora.jpg',cardPosition:'50% 35%'}
