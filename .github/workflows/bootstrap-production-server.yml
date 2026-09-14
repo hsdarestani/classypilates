@@ -49,8 +49,8 @@ jobs:
           fi
 
           systemctl enable --now docker
-          systemctl enable --now nginx
 
+          # Initialize persistent application secrets before touching the web server.
           mkdir -p /opt/classypilates
           cd /opt/classypilates
           touch .env
@@ -80,11 +80,37 @@ jobs:
           ensure_value JWT_TTL_HOURS 24
           chmod 600 .env
 
+          echo "=== Port 80 before nginx ==="
+          ss -ltnp | grep -E '(:80[[:space:]])' || true
+          command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:80 -sTCP:LISTEN || true
+
+          # Alfahosting images may have Apache/lighttpd enabled by default.
+          # This server is dedicated to Classy, so disable only these known
+          # conflicting web servers. Unknown listeners are left untouched.
+          if systemctl is-active --quiet apache2; then
+            echo "Disabling default Apache on port 80"
+            systemctl disable --now apache2
+          fi
+          if systemctl is-active --quiet lighttpd; then
+            echo "Disabling default lighttpd on port 80"
+            systemctl disable --now lighttpd
+          fi
+
+          if ss -ltnp | grep -E '(:80[[:space:]])' >/dev/null 2>&1; then
+            echo "Port 80 is still occupied by an unknown service; refusing to stop it automatically." >&2
+            ss -ltnp | grep -E '(:80[[:space:]])' >&2 || true
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}' >&2 || true
+            exit 2
+          fi
+
+          systemctl enable nginx
+          systemctl restart nginx
+          nginx -t
+
           echo "Ubuntu: ${PRETTY_NAME}"
           docker --version
           docker compose version
           nginx -v
           echo "Base production secrets initialized in /opt/classypilates/.env"
+          echo "Bootstrap complete"
           REMOTE
-
-# bootstrap trigger
