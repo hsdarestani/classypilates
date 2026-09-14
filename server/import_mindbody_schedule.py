@@ -168,6 +168,7 @@ def import_schedule(source: Path, dry_run: bool = False) -> dict[str, int]:
             result = connection.execute(sessions.insert().values(
                 studio_id=target_studio_id,
                 title=title,
+                description=str(class_row.get("description") or "").strip(),
                 class_type=class_type(title),
                 coach_id=coach_id,
                 starts_at=source_starts_at,
