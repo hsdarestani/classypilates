@@ -1,0 +1,109 @@
+name: Deploy Classy Legacy Production
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - DEPLOYMENT_STATUS.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classy-legacy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deploy tools
+        run: sudo apt-get update && sudo apt-get install -y sshpass rsync
+
+      - name: Upload release to legacy server
+        env:
+          OLD_HOST: ${{ secrets.OLD_HOST }}
+          OLD_PASS: ${{ secrets.OLD_PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$OLD_HOST" && test -n "$OLD_PASS"
+          export SSHPASS="$OLD_PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$OLD_HOST" 'mkdir -p /opt/classypilates'
+          sshpass -e rsync -az --delete \
+            --exclude='.git' --exclude='.env' --exclude='__pycache__' \
+            -e 'ssh -o StrictHostKeyChecking=no' ./ root@"$OLD_HOST":/opt/classypilates/
+
+      - name: Build and verify legacy production
+        env:
+          OLD_HOST: ${{ secrets.OLD_HOST }}
+          OLD_PASS: ${{ secrets.OLD_PASS }}
+          SMTP_PASS: ${{ secrets.CLASSY_SMTP_PASS }}
+          MINDBODY_API_KEY: ${{ secrets.MINDBODY_API_KEY }}
+          MINDBODY_SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
+          MINDBODY_STAFF_USERNAME: ${{ secrets.MINDBODY_STAFF_USERNAME }}
+          MINDBODY_STAFF_PASSWORD: ${{ secrets.MINDBODY_STAFF_PASSWORD }}
+          SUMUPAPIKEY: ${{ secrets.SUMUPAPIKEY }}
+          SUMUPMERCHANT: ${{ secrets.SUMUPMERCHANT }}
+        run: |
+          set -euo pipefail
+          test -n "$OLD_HOST" && test -n "$OLD_PASS"
+          test -n "$SMTP_PASS"
+          test -n "$MINDBODY_API_KEY" && test -n "$MINDBODY_SITE_ID"
+          test -n "$MINDBODY_STAFF_USERNAME" && test -n "$MINDBODY_STAFF_PASSWORD"
+          test -n "$SUMUPAPIKEY" && test -n "$SUMUPMERCHANT"
+
+          export SSHPASS="$OLD_PASS"
+          SMTP_PASS_B64="$(printf '%s' "$SMTP_PASS" | base64 -w0)"
+          MINDBODY_API_KEY_B64="$(printf '%s' "$MINDBODY_API_KEY" | base64 -w0)"
+          MINDBODY_SITE_ID_B64="$(printf '%s' "$MINDBODY_SITE_ID" | base64 -w0)"
+          MINDBODY_STAFF_USERNAME_B64="$(printf '%s' "$MINDBODY_STAFF_USERNAME" | base64 -w0)"
+          MINDBODY_STAFF_PASSWORD_B64="$(printf '%s' "$MINDBODY_STAFF_PASSWORD" | base64 -w0)"
+          SUMUPAPIKEY_B64="$(printf '%s' "$SUMUPAPIKEY" | base64 -w0)"
+          SUMUPMERCHANT_B64="$(printf '%s' "$SUMUPMERCHANT" | base64 -w0)"
+
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$OLD_HOST" \
+            "SMTP_PASS_B64='$SMTP_PASS_B64' MINDBODY_API_KEY_B64='$MINDBODY_API_KEY_B64' MINDBODY_SITE_ID_B64='$MINDBODY_SITE_ID_B64' MINDBODY_STAFF_USERNAME_B64='$MINDBODY_STAFF_USERNAME_B64' MINDBODY_STAFF_PASSWORD_B64='$MINDBODY_STAFF_PASSWORD_B64' SUMUPAPIKEY_B64='$SUMUPAPIKEY_B64' SUMUPMERCHANT_B64='$SUMUPMERCHANT_B64' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          touch .env
+
+          SMTP_PASSWORD="$(printf '%s' "$SMTP_PASS_B64" | base64 -d)"
+          MINDBODY_API_KEY_VALUE="$(printf '%s' "$MINDBODY_API_KEY_B64" | base64 -d)"
+          MINDBODY_SITE_ID_VALUE="$(printf '%s' "$MINDBODY_SITE_ID_B64" | base64 -d)"
+          MINDBODY_STAFF_USERNAME_VALUE="$(printf '%s' "$MINDBODY_STAFF_USERNAME_B64" | base64 -d)"
+          MINDBODY_STAFF_PASSWORD_VALUE="$(printf '%s' "$MINDBODY_STAFF_PASSWORD_B64" | base64 -d)"
+          SUMUPAPIKEY_VALUE="$(printf '%s' "$SUMUPAPIKEY_B64" | base64 -d)"
+          SUMUPMERCHANT_VALUE="$(printf '%s' "$SUMUPMERCHANT_B64" | base64 -d)"
+
+          sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d;/^MINDBODY_API_KEY=/d;/^MINDBODY_SITE_ID=/d;/^MINDBODY_STAFF_USERNAME=/d;/^MINDBODY_STAFF_PASSWORD=/d;/^SUMUPAPIKEY=/d;/^SUMUPMERCHANT=/d' .env
+          {
+            printf '%s\n' 'SMTP_HOST=host267.alfahosting-server.de'
+            printf '%s\n' 'SMTP_PORT=465'
+            printf '%s\n' 'SMTP_USER=booking@classypilates.de'
+            printf 'SMTP_PASS=%s\n' "$SMTP_PASSWORD"
+            printf '%s\n' 'SMTP_FROM=Classy Pilates <booking@classypilates.de>'
+            printf '%s\n' 'SMTP_SSL=true'
+            printf '%s\n' 'SMTP_STARTTLS=false'
+            printf 'MINDBODY_API_KEY=%s\n' "$MINDBODY_API_KEY_VALUE"
+            printf 'MINDBODY_SITE_ID=%s\n' "$MINDBODY_SITE_ID_VALUE"
+            printf 'MINDBODY_STAFF_USERNAME=%s\n' "$MINDBODY_STAFF_USERNAME_VALUE"
+            printf 'MINDBODY_STAFF_PASSWORD=%s\n' "$MINDBODY_STAFF_PASSWORD_VALUE"
+            printf 'SUMUPAPIKEY=%s\n' "$SUMUPAPIKEY_VALUE"
+            printf 'SUMUPMERCHANT=%s\n' "$SUMUPMERCHANT_VALUE"
+          } >> .env
+          chmod 600 .env
+
+          docker compose up -d --build --remove-orphans
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8787/api/health
+          curl -fsS http://127.0.0.1:8787/api/checkout/create | grep -q '"provider":"sumup"'
+          docker compose ps
+          REMOTE
