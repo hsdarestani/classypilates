@@ -1,0 +1,108 @@
+name: Ensure Classy New Domain
+
+on:
+  workflow_run:
+    workflows: ["Deploy Classy Production"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classy-new-domain
+  cancel-in-progress: false
+
+jobs:
+  ensure-domain:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install DNS and SSH tools
+        run: sudo apt-get update && sudo apt-get install -y dnsutils sshpass curl
+
+      - name: Verify DNS points to the new production server
+        env:
+          HOST: ${{ secrets.HOST }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST"
+          RESOLVED="$(dig +short A new.classypilates.de | sort -u)"
+          echo "new.classypilates.de resolves to:"
+          printf '%s\n' "$RESOLVED"
+          test -n "$RESOLVED"
+          if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf '%s\n' "$RESOLVED" | grep -Fxq "$HOST"
+          fi
+
+      - name: Configure Nginx and Let's Encrypt on the new server
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          if ! command -v nginx >/dev/null 2>&1; then
+            apt-get update
+            apt-get install -y nginx
+          fi
+          if ! command -v certbot >/dev/null 2>&1; then
+            apt-get update
+            apt-get install -y certbot python3-certbot-nginx
+          fi
+
+          test -f /etc/nginx/snippets/classy-routes.conf
+
+          # The production deploy prepares the HTTP vhost for this hostname.
+          # Recreate it here if it is ever missing, then let Certbot install TLS.
+          if ! nginx -T 2>/dev/null | grep -q 'server_name new.classypilates.de;'; then
+            cat > /etc/nginx/sites-available/new.classypilates.de <<'NGINX'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name new.classypilates.de;
+              include /etc/nginx/snippets/classy-routes.conf;
+          }
+          NGINX
+            ln -sfn /etc/nginx/sites-available/new.classypilates.de /etc/nginx/sites-enabled/new.classypilates.de
+          fi
+
+          nginx -t
+          systemctl enable --now nginx
+          systemctl reload nginx
+
+          certbot --nginx \
+            -d new.classypilates.de \
+            --non-interactive \
+            --agree-tos \
+            --register-unsafely-without-email \
+            --redirect \
+            --keep-until-expiring
+
+          systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+          nginx -t
+          systemctl reload nginx
+
+          curl -fsS http://127.0.0.1:8787/api/health | grep -q '"ok":true'
+          REMOTE
+
+      - name: Verify new domain over valid HTTPS
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 24); do
+            if curl -fsS --max-time 15 https://new.classypilates.de/api/health | grep -q '"ok":true' \
+              && curl -fsS --max-time 15 https://new.classypilates.de/api/checkout/create | grep -q '"provider":"sumup"' \
+              && curl -fsSL --max-time 15 https://new.classypilates.de/login | grep -q 'ONE LOGIN'; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ok" = "1"
+          curl -fsSI --max-time 15 http://new.classypilates.de/ | grep -qi '^location: https://new.classypilates.de/'
