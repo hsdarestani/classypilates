@@ -33,6 +33,28 @@
   // Floating schedule action appears only after the hero, keeping first screen clean.
   if(hero){const floating=document.createElement('a');floating.className='floating-book';floating.href='#schedule';floating.innerHTML='<i></i><span>Book a class</span><b>↗</b>';document.body.appendChild(floating);const fio=new IntersectionObserver(([entry])=>floating.classList.toggle('show',!entry.isIntersecting),{threshold:.15});fio.observe(hero)}
 
+  // Keep every WhatsApp entry point on the current Classy contact number.
+  // wa.me requires the international format without +, spaces or leading zero.
+  const WHATSAPP_URL='https://wa.me/4951328533996';
+  function syncWhatsAppLinks(){
+    $$('a[href*="wa.me"]').forEach(link=>{
+      link.href=WHATSAPP_URL;
+      link.target='_blank';
+      link.rel='noopener';
+      link.setAttribute('aria-label','WhatsApp Classy Pilates · 05132 8533996');
+    });
+    $$('.studio-hover-actions').forEach(wrap=>{
+      const link=wrap.querySelector('a[href^="tel:"],a[aria-label*="Call"],a[aria-label*="WhatsApp"]');
+      if(!link)return;
+      link.href=WHATSAPP_URL;
+      link.target='_blank';
+      link.rel='noopener';
+      link.setAttribute('aria-label','WhatsApp Classy Pilates · 05132 8533996');
+    });
+  }
+  syncWhatsAppLinks();
+  new MutationObserver(syncWhatsAppLinks).observe(document.body,{childList:true,subtree:true});
+
   // Shop cart feedback when cart count changes.
   const count=$('#cartCount'),cart=$('#cartTrigger');if(count&&cart){let old=count.textContent;new MutationObserver(()=>{if(count.textContent===old)return;old=count.textContent;cart.classList.remove('cart-bump');void cart.offsetWidth;cart.classList.add('cart-bump')}).observe(count,{childList:true,characterData:true,subtree:true})}
 })();
