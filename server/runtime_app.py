@@ -29,9 +29,26 @@ def _issue_bearer_token(self) -> str:
 mindbody_sync.WriteClient.issue_token = _issue_bearer_token
 
 
-# Mindbody can expose a cancelled roster entry as LateCancelled rather than the
-# two names used by the original mirror. Teach the shared value helper that alias
-# so Mindbody-origin late cancellations also stop consuming local capacity.
+# We own customer-facing transactional mail, so prevent Mindbody from emitting a
+# second generic class confirmation for website-origin bookings.
+def _add_to_class_without_provider_email(self, client_id: str, class_id: str):
+    return self._write(
+        "class/addclienttoclass",
+        {
+            "ClientId": client_id,
+            "ClassId": int(class_id),
+            "RequirePayment": False,
+            "SendEmail": False,
+        },
+    )
+
+
+mindbody_sync.WriteClient.add_to_class = _add_to_class_without_provider_email
+
+
+# Mindbody can expose a cancelled roster entry through cancellation flags or the
+# visit Status. Normalize all known forms so cancelled reservations never keep a
+# local spot occupied.
 _original_value = mindbody_sync._value
 
 
@@ -40,13 +57,85 @@ def _mindbody_value(row: dict, *names: str, default=None):
     if value is not None:
         return value
     if any(name in {"Cancelled", "IsCancelled"} for name in names):
-        late_cancelled = _original_value(row, "LateCancelled", "lateCancelled", default=None)
-        if late_cancelled is not None:
-            return late_cancelled
+        flags = [
+            row.get(key)
+            for key in ("LateCancelled", "lateCancelled", "EarlyCancelled", "earlyCancelled")
+            if row.get(key) is not None
+        ]
+        if any(bool(flag) for flag in flags):
+            return True
+        status = str(row.get("Status") or row.get("status") or "").strip().casefold()
+        if status == "cancelled":
+            return True
+        if flags:
+            return False
     return default
 
 
 mindbody_sync._value = _mindbody_value
+
+
+# Use VisitId when Mindbody returned one so a website cancellation removes the
+# exact mirrored visit. Failed upstream cancellations remain retryable.
+def _cancel_local_booking_hardened(booking_id: int) -> None:
+    with core.SessionLocal() as db:
+        booking = db.scalar(
+            select(core.Booking)
+            .options(joinedload(core.Booking.klass))
+            .where(core.Booking.id == booking_id)
+            .with_for_update()
+        )
+        if (
+            not booking
+            or booking.source != "website"
+            or not booking.mindbody_client_id
+            or not booking.klass.mindbody_class_id
+        ):
+            return
+        try:
+            payload = {
+                "ClientId": booking.mindbody_client_id,
+                "ClassId": int(booking.klass.mindbody_class_id),
+                "LateCancel": False,
+            }
+            visit_id = str(booking.mindbody_visit_id or "").strip()
+            if visit_id.isdigit():
+                payload["VisitId"] = int(visit_id)
+            mindbody_sync.WriteClient.from_env()._write("class/removeclientfromclass", payload)
+            booking.mindbody_sync_status = "cancelled"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = datetime.now(timezone.utc)
+        except Exception as exc:
+            booking.mindbody_sync_status = "cancel_failed"
+            booking.mindbody_sync_error = str(exc)[:1500]
+        db.commit()
+
+
+mindbody_sync.cancel_local_booking = _cancel_local_booking_hardened
+
+_original_retry_pending = mindbody_sync.retry_pending
+
+
+def _retry_pending_hardened() -> int:
+    retried = _original_retry_pending()
+    with core.SessionLocal() as db:
+        cancellation_ids = list(
+            db.scalars(
+                select(core.Booking.id)
+                .where(
+                    core.Booking.source == "website",
+                    core.Booking.status == "cancelled",
+                    core.Booking.mindbody_sync_status == "cancel_failed",
+                )
+                .limit(100)
+            )
+        )
+    for booking_id in cancellation_ids:
+        mindbody_sync.cancel_local_booking(booking_id)
+    return retried + len(cancellation_ids)
+
+
+mindbody_sync.retry_pending = _retry_pending_hardened
 
 
 # A booking created on this website can later be cancelled by staff directly in
@@ -64,16 +153,21 @@ def _visit_value(row: dict, *names: str, default=None):
 
 
 def _is_cancelled_visit(visit: dict) -> bool:
-    return bool(
-        _visit_value(
-            visit,
+    flags = [
+        visit.get(key)
+        for key in (
             "Cancelled",
             "IsCancelled",
             "LateCancelled",
             "lateCancelled",
-            default=False,
+            "EarlyCancelled",
+            "earlyCancelled",
         )
-    )
+        if visit.get(key) is not None
+    ]
+    if any(bool(flag) for flag in flags):
+        return True
+    return str(visit.get("Status") or visit.get("status") or "").strip().casefold() == "cancelled"
 
 
 def _reconcile_remote_website_cancellations() -> int:
