@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 import feedback_app as feedback
 import main as core
+import password_reset  # registers secure account recovery routes
 
 app = feedback.app
 
