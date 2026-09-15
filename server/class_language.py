@@ -16,6 +16,7 @@ class ClassLanguage(core.Base):
     language: Mapped[str] = mapped_column(String(8), default="de")
 
 
+core.ClassLanguage = ClassLanguage
 core.Base.metadata.create_all(core.engine)
 
 
@@ -26,8 +27,11 @@ _base_class_dict = core.class_dict
 
 def class_dict_with_language(c: core.ClassSession, db: Session):
     payload = _base_class_dict(c, db)
-    row = db.get(ClassLanguage, c.id)
-    payload["language"] = (row.language if row else "de").lower()
+    language = getattr(c, "_class_language", None)
+    if language is None:
+        row = db.get(ClassLanguage, c.id)
+        language = row.language if row else "de"
+    payload["language"] = str(language).lower()
     return payload
 
 

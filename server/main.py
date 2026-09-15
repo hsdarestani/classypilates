@@ -22,7 +22,7 @@ from openpyxl import load_workbook
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, func, inspect, select, text
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, joinedload, mapped_column, relationship, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/classy.db")
 JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
@@ -468,7 +468,9 @@ async def store_coach_photo(file: UploadFile, coach: Coach, db: Session):
     return coach_dict(coach)
 
 def class_dict(c: ClassSession, db: Session):
-    live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
+    live_reserved = getattr(c, "_live_reserved", None)
+    if live_reserved is None:
+        live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
     imported_reserved = max(0, int(c.imported_bookings or 0))
     reserved = min(c.capacity, imported_reserved + live_reserved)
     starts_at = c.starts_at
@@ -1436,12 +1438,33 @@ def public_schedule(
         raise HTTPException(422, "invalid_date_range")
     now = datetime.now(timezone.utc)
     visible_from = max(as_utc(start), now)
-    q=select(ClassSession).where(
+    q=select(ClassSession).options(
+        joinedload(ClassSession.studio),
+        joinedload(ClassSession.coach),
+    ).where(
         ClassSession.starts_at >= visible_from,
         ClassSession.starts_at < end,
         ClassSession.status == "active",
     ).order_by(ClassSession.starts_at).limit(1200)
     rows=db.scalars(q).all()
+    class_ids = [row.id for row in rows]
+    if class_ids:
+        live_counts = dict(db.execute(
+            select(Booking.class_id, func.count(Booking.id))
+            .where(Booking.class_id.in_(class_ids), Booking.status == "reserved")
+            .group_by(Booking.class_id)
+        ).all())
+        for row in rows:
+            row._live_reserved = int(live_counts.get(row.id, 0))
+
+        language_model = globals().get("ClassLanguage")
+        if language_model is not None:
+            languages = dict(db.execute(
+                select(language_model.class_id, language_model.language)
+                .where(language_model.class_id.in_(class_ids))
+            ).all())
+            for row in rows:
+                row._class_language = str(languages.get(row.id, "de")).lower()
     return {"classes":[class_dict(c,db) for c in rows], "from": from_, "to": to}
 
 FALLBACK_COACHES = {"Anna", "Andrea", "Christina", "Gabriella", "Ida", "Jessi", "Kimberley", "Melina", "Nathalie", "Sani", "Zora", "Laetitia"}

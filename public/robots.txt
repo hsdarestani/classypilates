@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /admin
+Disallow: /coach
+Disallow: /login
+Disallow: /staff
+
+Sitemap: https://classypilates.de/sitemap.xml

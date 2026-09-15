@@ -72,7 +72,18 @@ jobs:
           MINDBODY_STAFF_PASSWORD_VALUE="$(printf '%s' "$MINDBODY_STAFF_PASSWORD_B64" | base64 -d)"
           SUMUPAPIKEY_VALUE="$(printf '%s' "$SUMUPAPIKEY_B64" | base64 -d)"
           SUMUPMERCHANT_VALUE="$(printf '%s' "$SUMUPMERCHANT_B64" | base64 -d)"
-          touch .env
+          if [ ! -f .env ]; then
+            POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+            JWT_SECRET="$(openssl rand -hex 32)"
+            {
+              printf '%s\n' 'POSTGRES_DB=classy'
+              printf '%s\n' 'POSTGRES_USER=classy'
+              printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+              printf 'JWT_SECRET=%s\n' "$JWT_SECRET"
+              printf '%s\n' 'JWT_TTL_HOURS=24'
+            } > .env
+            chmod 600 .env
+          fi
           sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d;/^MINDBODY_API_KEY=/d;/^MINDBODY_SITE_ID=/d;/^MINDBODY_STAFF_USERNAME=/d;/^MINDBODY_STAFF_PASSWORD=/d;/^SUMUPAPIKEY=/d;/^SUMUPMERCHANT=/d' .env
           {
             printf '%s\n' 'SMTP_HOST=host267.alfahosting-server.de'
@@ -115,19 +126,6 @@ jobs:
             fi
           fi
 
-          if [ ! -f .env ]; then
-            POSTGRES_PASSWORD="$(openssl rand -hex 24)"
-            JWT_SECRET="$(openssl rand -hex 32)"
-            cat > .env <<EOF
-          POSTGRES_DB=classy
-          POSTGRES_USER=classy
-          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-          JWT_SECRET=${JWT_SECRET}
-          JWT_TTL_HOURS=24
-          EOF
-            chmod 600 .env
-          fi
-
           docker compose up -d --build --remove-orphans
           docker compose exec -T api python - <<'PY'
           import os, smtplib, ssl
@@ -150,6 +148,9 @@ jobs:
           docker compose exec -T api python import_mindbody_schedule.py \
             --source /app/data/mindbody_schedule_2026-04-01_to_2027-08-24.json.gz </dev/null
           curl -fsS http://127.0.0.1:8787/api/health
+          curl -fsS --max-time 5 -o /tmp/classy-schedule-smoke.json 'http://127.0.0.1:8787/api/schedule'
+          grep -q '"classes":\[' /tmp/classy-schedule-smoke.json
+          rm -f /tmp/classy-schedule-smoke.json
 
           EMAIL_ONLY_CODE=$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/api/bookings?email=privacy-check@example.com')
           test "$EMAIL_ONLY_CODE" = "422"
@@ -208,6 +209,15 @@ jobs:
             cat > /etc/nginx/snippets/classy-routes.conf <<'NGINX_ROUTES'
               root /opt/classypilates/public;
               index index.html;
+
+              add_header X-Content-Type-Options "nosniff" always;
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+              add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+              location ~ /\.(?!well-known/) {
+                  deny all;
+              }
 
               location /api/ {
                   proxy_pass http://127.0.0.1:8787;

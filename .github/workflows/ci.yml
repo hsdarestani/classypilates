@@ -26,9 +26,22 @@ jobs:
 
       - name: Syntax checks
         run: |
-          python -m py_compile server/main.py server/feedback_app.py
-          node --check public/booking-flow.js
-          node --check public/shop.js
+          python -m py_compile server/*.py
+          for file in public/*.js; do node --check "$file"; done
+          python - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          public = Path("public")
+          required = [
+              "index.html", "shop.html", "login.html", "account.html",
+              "robots.txt", "sitemap.xml",
+          ]
+          missing = [name for name in required if not (public / name).is_file()]
+          if missing:
+              raise SystemExit(f"Missing production assets: {', '.join(missing)}")
+          ElementTree.parse(public / "sitemap.xml")
+          PY
 
       - name: Diff check
         env:
