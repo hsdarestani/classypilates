@@ -115,3 +115,8 @@ def edit_class_v3(
     if not klass:
         raise HTTPException(404, "not_found")
     return core.class_dict(klass, db)
+
+
+# Registers admin/customer presentation helpers after the base API is available.
+# runtime_app performs final route de-duplication after importing this module.
+import ui_polish  # noqa: E402,F401
