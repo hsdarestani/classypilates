@@ -88,7 +88,18 @@ jobs:
           nginx -t
           systemctl reload nginx
 
-          curl -fsS http://127.0.0.1:8787/api/health | grep -q '"ok":true'
+          # Mindbody connection verification may recreate the API container at the
+          # same time as this workflow. Retry instead of reporting a false domain
+          # failure during that short restart window.
+          api_ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8787/api/health | grep -q '"ok":true'; then
+              api_ok=1
+              break
+            fi
+            sleep 2
+          done
+          test "$api_ok" = "1"
           REMOTE
 
       - name: Verify new domain over valid HTTPS
