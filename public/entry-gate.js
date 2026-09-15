@@ -21,8 +21,14 @@
   requestedStyle.dataset.clientRequestedUi='1';
   requestedStyle.textContent=`
     #passes .pass-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+    #schedule .booking-topline.client-choice-removed{justify-content:flex-end}
+    .client-type-choice{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:22px 0 4px}
+    .client-type-choice button{appearance:none;border:1px solid rgba(24,23,20,.18);background:#fff;border-radius:18px;padding:20px;text-align:left;cursor:pointer;min-height:116px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+    .client-type-choice button:hover,.client-type-choice button:focus-visible{transform:translateY(-2px);border-color:#171713;box-shadow:0 12px 30px rgba(23,23,19,.08);outline:none}
+    .client-type-choice b{display:block;font-size:16px;margin-bottom:8px;color:#171713}
+    .client-type-choice span{display:block;font-size:12px;line-height:1.55;color:#6e6a63}
     @media(max-width:980px){#passes .pass-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
-    @media(max-width:620px){#passes .pass-grid{grid-template-columns:1fr!important}}
+    @media(max-width:620px){#passes .pass-grid{grid-template-columns:1fr!important}.client-type-choice{grid-template-columns:1fr}.client-type-choice button{min-height:0;padding:17px}}
   `;
   document.head.appendChild(requestedStyle);
 
@@ -37,6 +43,11 @@
       fitCard.setAttribute('aria-label',isDe?'Classy Fitness öffnen':'Open Classy Fitness');
     }
     gate.querySelectorAll('.experience-card-icon').forEach(icon=>icon.remove());
+
+    const bookingTabs=document.querySelector('#schedule .booking-tabs');
+    if(bookingTabs)bookingTabs.remove();
+    const bookingTopline=document.querySelector('#schedule .booking-topline');
+    if(bookingTopline)bookingTopline.classList.add('client-choice-removed');
 
     const passGrid=document.querySelector('#passes .pass-grid');
     if(passGrid){
@@ -64,6 +75,31 @@
   }
 
   applyClientRequestedUi();
+
+  const bookingOpenClass=typeof window.openClass==='function'?window.openClass:null;
+  if(bookingOpenClass){
+    window.openClass=function(r){
+      if(!r||Number(r.spots)<=0)return bookingOpenClass(r);
+      const isDe=document.documentElement.lang==='de';
+      const title=document.querySelector('#drawerTitle');
+      const drawer=document.querySelector('#drawerBody');
+      const shell=document.querySelector('#bookingDrawer');
+      if(!title||!drawer||typeof window.openDrawer!=='function')return bookingOpenClass(r);
+      if(shell)shell.classList.add('booking-v2');
+      title.textContent=isDe?'Wie möchtest du fortfahren?':'How would you like to continue?';
+      const summary=typeof window.selectedSummary==='function'?window.selectedSummary(r):'';
+      drawer.innerHTML=`${summary}<div class="wizard-panel"><div class="wizard-kicker">${isDe?'BEVOR WIR BUCHEN':'BEFORE WE BOOK'}</div><h4>${isDe?'Bist du schon bei Classy?':'Are you already with Classy?'}</h4><p>${isDe?'Wähle eine Option. Danach öffnen wir direkt den passenden Login- oder Registrierungsbereich.':'Choose one option and we will open the correct sign-in or registration section immediately.'}</p><div class="client-type-choice"><button type="button" data-client-kind="returning"><b>${isDe?'Bestehender Kunde':'Returning client'}</b><span>${isDe?'Mit deinem bestehenden Classy Konto anmelden.':'Sign in with your existing Classy account.'}</span></button><button type="button" data-client-kind="new"><b>${isDe?'Neuer Kunde':'New client'}</b><span>${isDe?'Ein Classy Konto erstellen und mit der Buchung fortfahren.':'Create your Classy account and continue the booking.'}</span></button></div><button class="drawer-action secondary" id="cancelClientChoice" type="button">${isDe?'Abbrechen':'Cancel'}</button></div>`;
+      window.openDrawer();
+      const continueWith=mode=>{
+        state.mode=mode==='new'?'first':'returning';
+        bookingOpenClass(r);
+        setTimeout(()=>document.querySelector('#goSpot')?.click(),0);
+      };
+      drawer.querySelector('[data-client-kind="returning"]')?.addEventListener('click',()=>continueWith('returning'));
+      drawer.querySelector('[data-client-kind="new"]')?.addEventListener('click',()=>continueWith('new'));
+      drawer.querySelector('#cancelClientChoice')?.addEventListener('click',()=>window.closeDrawer?.());
+    };
+  }
 
   const remember=(choice)=>{try{sessionStorage.setItem('cpExperienceChoice',choice)}catch(_){}};
   const current=()=>{try{return sessionStorage.getItem('cpExperienceChoice')}catch(_){return null}};
