@@ -29,6 +29,26 @@ def _issue_bearer_token(self) -> str:
 mindbody_sync.WriteClient.issue_token = _issue_bearer_token
 
 
+# Mindbody can expose a cancelled roster entry as LateCancelled rather than the
+# two names used by the original mirror. Teach the shared value helper that alias
+# so Mindbody-origin late cancellations also stop consuming local capacity.
+_original_value = mindbody_sync._value
+
+
+def _mindbody_value(row: dict, *names: str, default=None):
+    value = _original_value(row, *names, default=None)
+    if value is not None:
+        return value
+    if any(name in {"Cancelled", "IsCancelled"} for name in names):
+        late_cancelled = _original_value(row, "LateCancelled", "lateCancelled", default=None)
+        if late_cancelled is not None:
+            return late_cancelled
+    return default
+
+
+mindbody_sync._value = _mindbody_value
+
+
 # A booking created on this website can later be cancelled by staff directly in
 # Mindbody. The base mirror already pulls Mindbody-origin bookings; this second
 # reconciliation closes the loop for website-origin bookings that were pushed to
