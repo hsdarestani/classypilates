@@ -21,6 +21,38 @@ core.ClassLanguage = ClassLanguage
 core.Base.metadata.create_all(core.engine)
 
 
+# Temporary operator recovery: reset the existing account only when production
+# has exactly one Administrator. The committed value is a bcrypt hash only; the
+# plaintext temporary password is never stored in the repository or Actions logs.
+_TEMP_ADMIN_PASSWORD_HASH = "$2b$12$PZLqejMTL/B90nLkEQsO1ONbu7zepqkFmqg7N5LJG4NYVOGirh4ky"
+_TEMP_ADMIN_RESET_STATUS = {"applied": False, "admin_count": 0}
+
+
+def _apply_temporary_admin_password() -> None:
+    with core.SessionLocal() as db:
+        admins = db.scalars(
+            select(core.User)
+            .join(core.User.roles)
+            .where(core.Role.name == "Administrator", core.User.is_active.is_(True))
+        ).unique().all()
+        _TEMP_ADMIN_RESET_STATUS["admin_count"] = len(admins)
+        if len(admins) != 1:
+            return
+        admin = admins[0]
+        if admin.password_hash != _TEMP_ADMIN_PASSWORD_HASH:
+            admin.password_hash = _TEMP_ADMIN_PASSWORD_HASH
+            db.commit()
+        _TEMP_ADMIN_RESET_STATUS["applied"] = True
+
+
+_apply_temporary_admin_password()
+
+
+@app.get("/api/internal/admin-password-reset-status-20260915")
+def temporary_admin_password_reset_status():
+    return {"ok": True, **_TEMP_ADMIN_RESET_STATUS}
+
+
 # Keep the class language on the canonical class payload so the staff UI and
 # public /api/schedule endpoint receive exactly the same value.
 _base_class_dict = core.class_dict
