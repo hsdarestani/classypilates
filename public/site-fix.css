@@ -54,6 +54,57 @@
     width:auto!important;
     z-index:4!important;
   }
+
+  /* Keep every live class self-contained on phones. The previous compact grid
+     let the availability/reserve area spill into the following class row. */
+  .class-list{padding-left:16px!important;padding-right:16px!important}
+  .class-row{
+    grid-template-columns:78px minmax(0,1fr) 104px!important;
+    grid-template-areas:
+      "time name coach"
+      "time reserve reserve"!important;
+    align-items:start!important;
+    column-gap:12px!important;
+    row-gap:14px!important;
+    min-height:0!important;
+    padding:20px 0 22px!important;
+    overflow:visible!important;
+  }
+  .class-time{grid-area:time!important;align-self:start!important}
+  .class-name{grid-area:name!important;min-width:0!important;padding-right:2px!important}
+  .class-name b{line-height:1.28!important;overflow-wrap:anywhere!important}
+  .class-coach{
+    grid-area:coach!important;
+    display:grid!important;
+    grid-template-columns:32px minmax(0,1fr)!important;
+    column-gap:8px!important;
+    align-items:center!important;
+    min-width:0!important;
+  }
+  .class-coach .coach-avatar{width:32px!important;height:32px!important}
+  .class-coach>span,.class-coach>b{min-width:0!important}
+  .class-coach>b{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+  .class-location{display:none!important}
+  .reserve-wrap{
+    grid-area:reserve!important;
+    display:flex!important;
+    align-items:center!important;
+    justify-content:flex-start!important;
+    flex-wrap:wrap!important;
+    gap:10px 14px!important;
+    min-width:0!important;
+    text-align:left!important;
+    margin:0!important;
+    padding:0!important;
+  }
+  .reserve-wrap .spots{margin:0!important;min-width:76px!important;white-space:nowrap!important}
+  .reserve-wrap .reserve-btn{
+    position:static!important;
+    margin:0!important;
+    min-width:118px!important;
+    width:auto!important;
+    max-width:100%!important;
+  }
 }
 
 @media(max-width:430px){
@@ -61,4 +112,15 @@
   .hero-copy{top:128px!important}
   .hero-actions{gap:14px!important;margin-top:22px!important}
   .hero-card{bottom:24px!important}
+  .class-row{
+    grid-template-columns:70px minmax(0,1fr) 92px!important;
+    column-gap:10px!important;
+    padding:18px 0 20px!important;
+  }
+  .class-time b{font-size:18px!important}
+  .class-name b{font-size:13px!important}
+  .class-coach{grid-template-columns:30px minmax(0,1fr)!important;column-gap:7px!important}
+  .class-coach .coach-avatar{width:30px!important;height:30px!important}
+  .reserve-wrap{gap:9px 12px!important}
+  .reserve-wrap .reserve-btn{min-width:112px!important;height:42px!important}
 }
