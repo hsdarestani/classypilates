@@ -30,6 +30,18 @@
     });
   }
 
+  function removeEmojiStyleArrows(){
+    const root=$('#accountApp');if(!root)return;
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+    const nodes=[];let node;
+    while((node=walker.nextNode()))nodes.push(node);
+    nodes.forEach(textNode=>{
+      const current=textNode.nodeValue||'';
+      if(!current.includes('↗'))return;
+      textNode.nodeValue=current.replace(/\s*↗\uFE0F?/g,'');
+    });
+  }
+
   async function injectPayments(){
     const hero=$('.credit-hero');if(!hero||$('#sumupHistory'))return;
     const panel=document.createElement('section');panel.className='account-panel sumup-history';panel.id='sumupHistory';
@@ -50,6 +62,6 @@
   }
 
   let queued=false;
-  const run=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;ensureScrim();improveGiftCopy();improveAutomaticPlace();clarifyCredits();injectPayments()})};
-  new MutationObserver(run).observe(document.body,{childList:true,subtree:true});run();
+  const run=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;ensureScrim();improveGiftCopy();improveAutomaticPlace();clarifyCredits();injectPayments();removeEmojiStyleArrows()})};
+  new MutationObserver(run).observe(document.body,{childList:true,subtree:true,characterData:true});run();
 })();
