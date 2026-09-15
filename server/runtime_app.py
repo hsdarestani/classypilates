@@ -2,7 +2,7 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
 import feedback_app as feedback
@@ -152,6 +152,19 @@ def _visit_value(row: dict, *names: str, default=None):
     return default
 
 
+def _as_int(row: dict, *names: str):
+    value = _visit_value(row, *names, default=None)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+
 def _is_cancelled_visit(visit: dict) -> bool:
     flags = [
         visit.get(key)
@@ -253,9 +266,105 @@ def _reconcile_remote_website_cancellations() -> int:
     return cancelled
 
 
+def _reconcile_mindbody_availability() -> int:
+    """Make Mindbody the source of truth for public bookable spots.
+
+    The historical importer may have stored a larger local capacity. The base mirror
+    used max(local, remote), which meant a later lower Mindbody capacity could never
+    reduce the website capacity. Reconcile the next two weeks from the live Mindbody
+    class payload and add only the synthetic occupancy needed to reproduce Mindbody's
+    actual public availability.
+    """
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(days=15)
+    client = mindbody_sync.WriteClient.from_env()
+    remote_classes: list[dict] = []
+    offset = 0
+    while True:
+        payload = client.get_classes(
+            start_date_time=now.isoformat(),
+            end_date_time=end.isoformat(),
+            limit=200,
+            offset=offset,
+        )
+        batch = [
+            item
+            for item in mindbody_sync._extract_list(payload, ("Classes", "classes", "Items"))
+            if isinstance(item, dict)
+        ]
+        remote_classes.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+
+    corrected = 0
+    with core.SessionLocal() as db:
+        local_rows = db.scalars(
+            select(core.ClassSession).where(
+                core.ClassSession.starts_at >= now,
+                core.ClassSession.starts_at < end,
+                core.ClassSession.mindbody_class_id.is_not(None),
+            )
+        ).all()
+        by_remote_id = {str(row.mindbody_class_id): row for row in local_rows if row.mindbody_class_id}
+        class_ids = [row.id for row in local_rows]
+        live_counts = {}
+        if class_ids:
+            live_counts = dict(
+                db.execute(
+                    select(core.Booking.class_id, func.count(core.Booking.id))
+                    .where(
+                        core.Booking.class_id.in_(class_ids),
+                        core.Booking.status == "reserved",
+                    )
+                    .group_by(core.Booking.class_id)
+                ).all()
+            )
+
+        for remote in remote_classes:
+            remote_id = str(_visit_value(remote, "Id", "ID", "ClassId", default="") or "")
+            klass = by_remote_id.get(remote_id)
+            if not klass:
+                continue
+
+            remote_capacity = _as_int(remote, "MaxCapacity", "Capacity")
+            if remote_capacity is None or remote_capacity < 0:
+                continue
+
+            total_booked = _as_int(remote, "TotalBooked", "TotalClients")
+            web_capacity = _as_int(remote, "WebCapacity")
+            total_web_booked = _as_int(remote, "TotalWebBooked")
+
+            # Always accept Mindbody capacity exactly; never preserve an older,
+            # larger local/imported capacity.
+            klass.capacity = remote_capacity
+
+            if total_booked is not None:
+                physical_available = max(0, remote_capacity - max(0, total_booked))
+                available = physical_available
+                if web_capacity is not None and total_web_booked is not None:
+                    web_available = max(0, web_capacity - max(0, total_web_booked))
+                    available = min(available, web_available)
+
+                target_reserved = max(0, remote_capacity - available)
+                local_reserved = int(live_counts.get(klass.id, 0))
+                # imported_bookings acts as a non-PII occupancy remainder so the
+                # public API exposes the same number of spots as Mindbody even if
+                # a roster row is temporarily unavailable to this integration.
+                klass.imported_bookings = max(0, target_reserved - local_reserved)
+                klass.source_bookings_total = max(0, total_booked)
+
+            klass.mindbody_synced_at = now
+            corrected += 1
+
+        db.commit()
+    return corrected
+
+
 def _sync_from_mindbody_hardened() -> dict[str, int]:
     counts = _original_sync_from_mindbody()
     counts["remote_website_cancelled"] = _reconcile_remote_website_cancellations()
+    counts["availability_corrected"] = _reconcile_mindbody_availability()
     return counts
 
 
