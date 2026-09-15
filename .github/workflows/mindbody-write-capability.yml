@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - .github/workflows/mindbody-write-capability.yml
+      - server/mindbody_sync.py
+      - server/runtime_app.py
 
 permissions:
   contents: read
@@ -14,7 +16,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify API and token capability without business-data writes
+      - name: Verify API, user token and Bearer-authenticated read
         env:
           API_KEY: ${{ secrets.MINDBODY_API_KEY }}
           SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
@@ -24,29 +26,52 @@ jobs:
           set -euo pipefail
           test -n "$API_KEY" && test -n "$SITE_ID" && test -n "$STAFF_USERNAME" && test -n "$STAFF_PASSWORD"
 
-          READ_STATUS="$(curl -sS -o /tmp/read.json -w '%{http_code}'             -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" -H 'Accept: application/json'             'https://api.mindbodyonline.com/public/v6/site/locations')"
+          READ_STATUS="$(curl -sS -o /tmp/read.json -w '%{http_code}' \
+            -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" -H 'Accept: application/json' \
+            'https://api.mindbodyonline.com/public/v6/site/locations')"
           test "$READ_STATUS" = "200"
-          echo "Mindbody read access: OK"
+          echo "Mindbody public read access: OK"
 
-          TOKEN_STATUS="$(curl -sS -o /tmp/token.json -w '%{http_code}'             -X POST -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID"             -H 'Accept: application/json' -H 'Content-Type: application/json'             --data "$(jq -n --arg u "$STAFF_USERNAME" --arg p "$STAFF_PASSWORD" '{Username:$u,Password:$p}')"             'https://api.mindbodyonline.com/public/v6/usertoken/issue')"
+          TOKEN_STATUS="$(curl -sS -o /tmp/token.json -w '%{http_code}' \
+            -X POST -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" \
+            -H 'Accept: application/json' -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg u "$STAFF_USERNAME" --arg p "$STAFF_PASSWORD" '{Username:$u,Password:$p}')" \
+            'https://api.mindbodyonline.com/public/v6/usertoken/issue')"
+          test "$TOKEN_STATUS" = "200"
 
-          python3 - "$TOKEN_STATUS" <<'PY'
+          TOKEN="$(python3 - <<'PY'
+          import json
+          payload = json.load(open('/tmp/token.json', encoding='utf-8'))
+          token = payload.get('AccessToken') or payload.get('accessToken') or payload.get('Token') or payload.get('token')
+          if not token:
+              raise SystemExit('Mindbody did not return a user token')
+          print(token)
+          PY
+          )"
+          echo "::add-mask::$TOKEN"
+          echo "Mindbody user token: OK"
+
+          AUTH_STATUS="$(curl -sS -o /tmp/auth-read.json -w '%{http_code}' \
+            -H "API-Key: $API_KEY" -H "SiteId: $SITE_ID" \
+            -H "Authorization: Bearer $TOKEN" -H 'Accept: application/json' \
+            'https://api.mindbodyonline.com/public/v6/client/clients?Limit=1')"
+
+          python3 - "$AUTH_STATUS" <<'PY'
           import json, sys
           status = int(sys.argv[1])
           try:
-              payload = json.load(open('/tmp/token.json', encoding='utf-8'))
+              payload = json.load(open('/tmp/auth-read.json', encoding='utf-8'))
           except Exception:
               payload = {}
-          token = payload.get('AccessToken') or payload.get('accessToken') or payload.get('Token') or payload.get('token')
-          if status == 200 and token:
-              print('Mindbody write authentication: USER_TOKEN_AVAILABLE')
+          if status == 200:
+              print('Mindbody Bearer-authenticated staff read: OK')
               raise SystemExit(0)
           error = payload.get('Error') or payload.get('error') or {}
           if isinstance(error, dict):
               code = error.get('Code') or error.get('code') or error.get('errorCode') or 'unknown'
-              message = error.get('Message') or error.get('message') or error.get('errorMessage') or 'credentials were not accepted for a user token'
+              message = error.get('Message') or error.get('message') or error.get('errorMessage') or 'authenticated request failed'
           else:
-              code, message = 'unknown', str(error or 'credentials were not accepted for a user token')
-          print(f'Mindbody write authentication: USER_TOKEN_UNAVAILABLE HTTP={status} code={code} message={message}')
-          raise SystemExit(3)
+              code, message = 'unknown', str(error or 'authenticated request failed')
+          print(f'Mindbody authenticated read failed: HTTP={status} code={code} message={message}')
+          raise SystemExit(4)
           PY
