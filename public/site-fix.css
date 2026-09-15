@@ -31,29 +31,46 @@
 }
 
 @media(max-width:780px){
-  /* The copy and the live-schedule card used to share the same absolute space
-     on short iPhone viewports. Give the hero enough vertical room and reserve
-     a dedicated lower area for the card. */
+  /* Mobile hero uses normal document flow so translated copy and the live card
+     can never occupy the same vertical space, regardless of phone height. */
   .hero{
     height:auto!important;
-    min-height:980px!important;
+    min-height:0!important;
+    display:flex!important;
+    flex-direction:column!important;
+    justify-content:flex-start!important;
+    padding:145px 20px 34px!important;
+    overflow:hidden!important;
   }
   .hero-copy{
-    top:145px!important;
+    position:relative!important;
+    inset:auto!important;
+    top:auto!important;
     bottom:auto!important;
-    left:20px!important;
-    right:20px!important;
+    left:auto!important;
+    right:auto!important;
     transform:none!important;
+    width:100%!important;
     max-width:620px!important;
+    z-index:3!important;
   }
+  .hero-copy h1{margin-bottom:24px!important}
+  .hero-lead{margin-bottom:0!important}
   .hero-actions{margin-top:28px!important}
   .hero-card{
-    left:20px!important;
-    right:20px!important;
-    bottom:28px!important;
-    width:auto!important;
+    position:relative!important;
+    inset:auto!important;
+    top:auto!important;
+    bottom:auto!important;
+    left:auto!important;
+    right:auto!important;
+    width:100%!important;
+    max-width:620px!important;
+    margin:30px 0 0!important;
     z-index:4!important;
+    flex:0 0 auto!important;
   }
+  .scroll-mark{display:none!important}
 
   /* Keep every live class self-contained on phones. The previous compact grid
      let the availability/reserve area spill into the following class row. */
@@ -108,10 +125,10 @@
 }
 
 @media(max-width:430px){
-  .hero{min-height:940px!important}
-  .hero-copy{top:128px!important}
+  .hero{padding:128px 18px 28px!important}
+  .hero-copy{width:100%!important}
   .hero-actions{gap:14px!important;margin-top:22px!important}
-  .hero-card{bottom:24px!important}
+  .hero-card{margin-top:24px!important}
   .class-row{
     grid-template-columns:70px minmax(0,1fr) 92px!important;
     column-gap:10px!important;
