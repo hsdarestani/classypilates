@@ -73,16 +73,39 @@ def _online_credit_orders_total(db: Session, status: str) -> int:
     )
 
 
-def _sumup_count(db: Session, status: str) -> int:
-    return int(
-        db.scalar(
-            select(func.count(core.PaymentOrder.id)).where(
-                core.PaymentOrder.provider == "sumup",
-                core.PaymentOrder.status == status,
-            )
-        )
-        or 0
+def _valid_pending_sumup_filter():
+    payable_booking_refs = select(core.Booking.reference).where(
+        core.Booking.status == "reserved",
+        core.Booking.payment_status == "pending",
     )
+    return (
+        core.PaymentOrder.provider == "sumup",
+        core.PaymentOrder.status == "pending",
+        (
+            core.PaymentOrder.booking_reference.is_(None)
+            | core.PaymentOrder.booking_reference.in_(payable_booking_refs)
+        ),
+    )
+
+
+def _sumup_count(db: Session, status: str) -> int:
+    query = select(func.count(core.PaymentOrder.id)).where(core.PaymentOrder.provider == "sumup")
+    if status == "pending":
+        query = query.where(*_valid_pending_sumup_filter()[1:])
+    else:
+        query = query.where(core.PaymentOrder.status == status)
+    return int(db.scalar(query) or 0)
+
+
+def _sumup_amount(db: Session, status: str) -> int:
+    query = select(func.coalesce(func.sum(core.PaymentOrder.amount_cents), 0)).where(
+        core.PaymentOrder.provider == "sumup"
+    )
+    if status == "pending":
+        query = query.where(*_valid_pending_sumup_filter()[1:])
+    else:
+        query = query.where(core.PaymentOrder.status == status)
+    return int(db.scalar(query) or 0)
 
 
 @app.get("/api/staff/dashboard")
@@ -152,7 +175,8 @@ def polished_finance(
     booking_pending = int(
         db.scalar(
             select(func.coalesce(func.sum(core.Booking.amount_cents), 0)).where(
-                core.Booking.payment_status == "pending"
+                core.Booking.payment_status == "pending",
+                core.Booking.status == "reserved",
             )
         )
         or 0
@@ -194,7 +218,11 @@ def polished_finance(
             "reference": booking.reference,
             "email": booking.email,
             "amount_cents": booking.amount_cents,
-            "payment_status": booking.payment_status,
+            "payment_status": (
+                "cancelled"
+                if booking.status == "cancelled" and booking.payment_status == "pending"
+                else booking.payment_status
+            ),
             "payment_method": booking.payment_method or "—",
             "provider": "sumup" if booking.payment_method == "sumup" else booking.payment_method or "—",
             "kind": "class_booking",
@@ -241,24 +269,8 @@ def polished_finance(
         "sumup_configured": sumup_configured,
         "sumup_paid_orders": _sumup_count(db, "paid"),
         "sumup_pending_orders": _sumup_count(db, "pending"),
-        "sumup_paid_cents": int(
-            db.scalar(
-                select(func.coalesce(func.sum(core.PaymentOrder.amount_cents), 0)).where(
-                    core.PaymentOrder.provider == "sumup",
-                    core.PaymentOrder.status == "paid",
-                )
-            )
-            or 0
-        ),
-        "sumup_pending_cents": int(
-            db.scalar(
-                select(func.coalesce(func.sum(core.PaymentOrder.amount_cents), 0)).where(
-                    core.PaymentOrder.provider == "sumup",
-                    core.PaymentOrder.status == "pending",
-                )
-            )
-            or 0
-        ),
+        "sumup_paid_cents": _sumup_amount(db, "paid"),
+        "sumup_pending_cents": _sumup_amount(db, "pending"),
     }
 
 
