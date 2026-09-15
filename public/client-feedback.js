@@ -14,12 +14,12 @@
     $$('.classy-quick-dock a').forEach(a=>{
       const label=(a.getAttribute('aria-label')||a.textContent||'').toLowerCase(),slot=a.querySelector('.dock-icon');if(!slot)return;
       if(label.includes('instagram'))slot.innerHTML=iconInstagram;
-      if(label.includes('call')||label.includes('whatsapp')){a.href='https://wa.me/4915253816033';a.target='_blank';a.rel='noopener';a.setAttribute('aria-label','WhatsApp Classy Pilates');slot.innerHTML=iconWhatsapp;const b=a.querySelector('b');if(b)b.textContent='WhatsApp'}
+      if(label.includes('call')||label.includes('whatsapp')){a.href='https://wa.me/4951328533996';a.target='_blank';a.rel='noopener';a.setAttribute('aria-label','WhatsApp Classy Pilates');slot.innerHTML=iconWhatsapp;const b=a.querySelector('b');if(b)b.textContent='WhatsApp'}
     });
     $$('.studio-hover-actions a').forEach(a=>{
       const label=(a.getAttribute('aria-label')||a.textContent||'').toLowerCase();
       if(label.includes('instagram')){const text=a.querySelector('span:last-child')?.textContent||'Instagram';a.innerHTML=`<span class="brand-action-icon">${iconInstagram}</span><span>${text}</span>`}
-      if(label.includes('call')||label.includes('whatsapp')){a.href='https://wa.me/4915253816033';a.target='_blank';a.rel='noopener';a.setAttribute('aria-label','WhatsApp');a.innerHTML=`<span class="brand-action-icon">${iconWhatsapp}</span><span>WhatsApp</span>`}
+      if(label.includes('call')||label.includes('whatsapp')){a.href='https://wa.me/4951328533996';a.target='_blank';a.rel='noopener';a.setAttribute('aria-label','WhatsApp');a.innerHTML=`<span class="brand-action-icon">${iconWhatsapp}</span><span>WhatsApp</span>`}
     });
   }
 
