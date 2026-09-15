@@ -303,9 +303,10 @@ def migrate_schema():
     if "description" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE classes ADD COLUMN description TEXT NOT NULL DEFAULT ''"))
+    timestamp_type = "DATETIME" if engine.dialect.name == "sqlite" else "TIMESTAMP WITH TIME ZONE"
     class_additions = {
         "mindbody_class_id": "VARCHAR(80)",
-        "mindbody_synced_at": "DATETIME",
+        "mindbody_synced_at": timestamp_type,
     }
     with engine.begin() as connection:
         for name, sql_type in class_additions.items():
@@ -319,7 +320,7 @@ def migrate_schema():
         "mindbody_client_id": "VARCHAR(100)",
         "mindbody_sync_status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
         "mindbody_sync_error": "TEXT NOT NULL DEFAULT ''",
-        "mindbody_synced_at": "DATETIME",
+        "mindbody_synced_at": timestamp_type,
     }
     with engine.begin() as connection:
         for name, sql_type in booking_additions.items():
