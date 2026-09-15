@@ -61,26 +61,10 @@
     const copy=panel.querySelector('.panel-head p:last-child');if(copy)copy.textContent='Sell 1, 5, 10, 20, 30 or 50 credits to a customer account or as a gift code.';
   }
 
+  // Historical SEPA recurring-membership prototype intentionally remains dormant.
+  // Production commerce is handled by SumUp Hosted Checkout instead.
   async function enhanceMembership(){
-    const passPanel=document.querySelector('.pass-sale-panel');
-    if(!passPanel||document.querySelector('#membershipPanel'))return;
-    const customerSelect=document.querySelector('#passCustomer');
-    if(!customerSelect)return;
-    const panel=document.createElement('section');
-    panel.className='panel membership-panel';panel.id='membershipPanel';
-    const start=new Date();start.setDate(start.getDate()+1);
-    panel.innerHTML=`<div class="panel-head"><div><p class="kicker">MONTHLY MEMBERSHIP</p><h2>Recurring membership</h2><p>Create a monthly membership with SEPA as the preferred debit method. Bank details are never stored here; the payment-provider mandate is connected separately.</p></div></div><div class="form-grid membership-form"><label>CUSTOMER<select id="membershipCustomer">${customerSelect.innerHTML}</select></label><label>MONTHLY PRICE (€)<input id="membershipAmount" type="number" min="0.01" step="0.01" placeholder="e.g. 99.00"></label><label>CREDITS / MONTH<input id="membershipCredits" type="number" min="1" step="1" placeholder="e.g. 4"></label><label>START DATE<input id="membershipStart" type="date" value="${start.toISOString().slice(0,10)}"></label><label>PAYMENT<select id="membershipPayment"><option value="sepa">SEPA Lastschrift</option></select></label><div class="membership-provider" id="membershipProvider">Checking provider status…</div><div><button class="primary" id="createMembership">Create monthly membership</button></div></div><div class="membership-list" id="membershipList"></div>`;
-    passPanel.insertAdjacentElement('afterend',panel);
-    const load=async()=>{
-      try{const r=await authFetch('/api/staff/memberships');const d=await r.json();document.querySelector('#membershipProvider').innerHTML=d.automatic_debit_ready?'<b>Provider ready</b><small>SEPA automation can be connected to the provider mandate.</small>':'<b>SEPA provider connection required</b><small>The membership is stored now; automatic bank debit needs the provider credentials/mandate connection.</small>';document.querySelector('#membershipList').innerHTML=(d.memberships||[]).length?`<h3>Current memberships</h3>${d.memberships.slice(0,8).map(m=>`<div class="membership-row"><span><b>${m.customer}</b><small>${m.email}</small></span><span><b>${moneyEuros(m.amount_cents)} / month</b><small>${m.credits_per_month} credits · ${m.payment_method.toUpperCase()}</small></span><span class="status ${m.status==='active'?'active':''}">${m.status}</span><small>${m.provider_status}</small></div>`).join('')}`:'<div class="empty">No monthly memberships yet.</div>'}catch(_){document.querySelector('#membershipProvider').textContent='Membership service unavailable.'}
-    };
-    document.querySelector('#createMembership').addEventListener('click',async()=>{
-      const amount=Math.round(Number(String(document.querySelector('#membershipAmount').value).replace(',','.'))*100),credits=Number(document.querySelector('#membershipCredits').value),customer_id=Number(document.querySelector('#membershipCustomer').value),starts_on=document.querySelector('#membershipStart').value;
-      if(!amount||amount<1||!credits||credits<1||!customer_id||!starts_on)return;
-      const r=await authFetch('/api/staff/memberships',{method:'POST',body:JSON.stringify({customer_id,amount_cents:amount,credits_per_month:credits,starts_on,payment_method:'sepa'})});
-      if(!r.ok)return;await load();
-    });
-    load();
+    return;
   }
 
   function enhanceMonthlyRecurrence(){
@@ -114,6 +98,6 @@
   }
 
   let scheduled=false;
-  const run=()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;enhancePassSale();enhanceMembership();enhanceMonthlyRecurrence();annotateLanguages();enhanceNotifications()})};
+  const run=()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;enhancePassSale();enhanceMonthlyRecurrence();annotateLanguages();enhanceNotifications()})};
   new MutationObserver(run).observe(document.body,{childList:true,subtree:true});run();
 })();
