@@ -1,6 +1,7 @@
 import os
 import feedback_app as feedback
 import class_language  # registers DE/EN class-language routes and payloads
+import mindbody_sync  # registers the production two-way booking mirror
 
 app = feedback.app
 
@@ -16,4 +17,5 @@ def capabilities():
         'credit_packs': [1, 5, 10, 20, 30, 50],
         'class_recurrence': 'monthly',
         'monthly_memberships': True,
+        'mindbody_mirror': mindbody_sync.capability_status(),
     }

@@ -6,6 +6,7 @@ import re
 import secrets
 import smtplib
 import ssl
+import html
 from email.message import EmailMessage
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -52,12 +53,19 @@ def send_transactional_email(to_email: str, subject: str, heading: str, paragrap
     msg["Subject"] = subject
     text = heading + "\n\n" + "\n\n".join(paragraphs) + "\n\nClassy Pilates Frankfurt"
     msg.set_content(text)
-    body = "".join(f"<p style=\"margin:0 0 16px\">{p}</p>" for p in paragraphs)
+    safe_heading = html.escape(heading)
+    body = "".join(f'<p style="margin:0 0 14px;line-height:1.65">{html.escape(str(p))}</p>' for p in paragraphs)
     msg.add_alternative(
-        f"""<!doctype html><html><body style="margin:0;background:#f4f1ec;padding:32px 16px;font-family:Arial,sans-serif;color:#171717">
-        <div style="max-width:600px;margin:auto;background:#fff;padding:36px;border-radius:18px">
-        <h1 style="font-size:25px;margin:0 0 24px">{heading}</h1>{body}
-        <p style="margin:28px 0 0;font-weight:700">Classy Pilates Frankfurt</p></div></body></html>""",
+        f"""<!doctype html><html><head><meta name="viewport" content="width=device-width"></head>
+        <body style="margin:0;background:#eee9e1;font-family:Arial,Helvetica,sans-serif;color:#1c1b19">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eee9e1"><tr><td style="padding:28px 12px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;margin:auto;background:#fff;border-radius:24px;overflow:hidden">
+        <tr><td style="background:#171715;color:#fff;padding:24px 32px;font-size:18px;letter-spacing:2px;font-weight:700">CLASSY PILATES <span style="color:#cabda9">FRANKFURT</span></td></tr>
+        <tr><td style="padding:38px 32px"><div style="width:44px;height:4px;background:#b9a88f;margin-bottom:24px"></div>
+        <h1 style="font-family:Georgia,serif;font-size:30px;line-height:1.15;margin:0 0 24px;font-weight:500">{safe_heading}</h1>{body}
+        <div style="margin-top:28px;padding-top:22px;border-top:1px solid #e8e2d9;font-size:13px;color:#706b64;line-height:1.6">Classy Pilates Frankfurt<br><a href="https://classypilates.de" style="color:#706b64">classypilates.de</a></div>
+        </td></tr></table><div style="max-width:620px;margin:14px auto 0;text-align:center;color:#89837a;font-size:11px">This is an automatic service email.</div>
+        </td></tr></table></body></html>""",
         subtype="html",
     )
     try:
@@ -184,6 +192,8 @@ class ClassSession(Base):
     capacity: Mapped[int] = mapped_column(Integer, default=10)
     imported_bookings: Mapped[int] = mapped_column(Integer, default=0)
     source_bookings_total: Mapped[int] = mapped_column(Integer, default=0)
+    mindbody_class_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, unique=True, index=True)
+    mindbody_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="active")
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     coach: Mapped[Optional[Coach]] = relationship()
@@ -202,6 +212,12 @@ class Booking(Base):
     payment_status: Mapped[str] = mapped_column(String(30), default="pending")
     payment_method: Mapped[str] = mapped_column(String(60), default="")
     amount_cents: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(30), default="website", index=True)
+    mindbody_visit_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True, index=True)
+    mindbody_client_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mindbody_sync_status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    mindbody_sync_error: Mapped[str] = mapped_column(Text, default="")
+    mindbody_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     klass: Mapped[ClassSession] = relationship()
 
@@ -287,6 +303,28 @@ def migrate_schema():
     if "description" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE classes ADD COLUMN description TEXT NOT NULL DEFAULT ''"))
+    class_additions = {
+        "mindbody_class_id": "VARCHAR(80)",
+        "mindbody_synced_at": "DATETIME",
+    }
+    with engine.begin() as connection:
+        for name, sql_type in class_additions.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE classes ADD COLUMN {name} {sql_type}"))
+
+    booking_columns = {column["name"] for column in inspect(engine).get_columns("bookings")}
+    booking_additions = {
+        "source": "VARCHAR(30) NOT NULL DEFAULT 'website'",
+        "mindbody_visit_id": "VARCHAR(100)",
+        "mindbody_client_id": "VARCHAR(100)",
+        "mindbody_sync_status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
+        "mindbody_sync_error": "TEXT NOT NULL DEFAULT ''",
+        "mindbody_synced_at": "DATETIME",
+    }
+    with engine.begin() as connection:
+        for name, sql_type in booking_additions.items():
+            if name not in booking_columns:
+                connection.execute(text(f"ALTER TABLE bookings ADD COLUMN {name} {sql_type}"))
 
     inspector = inspect(engine)
     if inspector.has_table("payment_orders"):
@@ -817,6 +855,8 @@ def customer_cancel_booking(reference: str, background_tasks: BackgroundTasks, u
         booking.payment_method = "class_credit_refunded"
     db.commit()
     background_tasks.add_task(send_transactional_email, *cancellation_email_data(booking))
+    from mindbody_sync import cancel_local_booking
+    background_tasks.add_task(cancel_local_booking, booking.id)
     return {"ok": True}
 
 @app.get("/api/customer/waitlist")
@@ -1263,9 +1303,9 @@ def staff_bookings(user: User = Depends(require("bookings.view")), db: Session =
         rows = [b for b in rows if b.klass.coach_id == user.coach.id]
     imported_total = db.scalar(select(func.coalesce(func.sum(ClassSession.source_bookings_total), 0))) or 0
     return {
-        "bookings": [{"id":b.id,"reference":b.reference,"class_id":b.class_id,"class_name":b.klass.title,"starts_at":b.klass.starts_at.isoformat(),"studio":b.klass.studio.name,"customer_name":b.customer_name,"email":b.email,"phone":b.phone,"spot_number":b.spot_number,"status":b.status,"payment_status":b.payment_status,"payment_method":b.payment_method,"amount_cents":b.amount_cents} for b in rows],
+        "bookings": [{"id":b.id,"reference":b.reference,"class_id":b.class_id,"class_name":b.klass.title,"starts_at":b.klass.starts_at.isoformat(),"studio":b.klass.studio.name,"customer_name":b.customer_name,"email":b.email,"phone":b.phone,"spot_number":b.spot_number,"status":b.status,"payment_status":b.payment_status,"payment_method":b.payment_method,"amount_cents":b.amount_cents,"source":b.source,"mindbody_sync_status":b.mindbody_sync_status,"mindbody_sync_error":b.mindbody_sync_error,"mindbody_visit_id":b.mindbody_visit_id} for b in rows],
         "imported_booking_count": int(imported_total),
-        "imported_booking_mode": "aggregated_without_personal_data",
+        "imported_booking_mode": "live_mirror_with_customer_data" if any(b.source == "mindbody" for b in rows) else "aggregated_without_personal_data",
     }
 
 @app.patch("/api/staff/bookings/{booking_id}")
@@ -1568,10 +1608,12 @@ def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session 
         b.payment_method = "class_credit_refunded"
     db.commit()
     background_tasks.add_task(send_transactional_email, *cancellation_email_data(b))
+    from mindbody_sync import cancel_local_booking
+    background_tasks.add_task(cancel_local_booking, b.id)
     return {"ok":True}
 
 @app.post("/api/waitlist")
-def join_waitlist(data: WaitlistIn, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
+def join_waitlist(data: WaitlistIn, background_tasks: BackgroundTasks, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=db.get(ClassSession,data.classId)
     if not c: raise HTTPException(404,"not_found")
     live_reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
@@ -1584,4 +1626,10 @@ def join_waitlist(data: WaitlistIn, user: Optional[User] = Depends(optional_user
         db.add(CustomerWaitlistLink(waitlist_id=w.id, user_id=user.id))
     db.commit()
     pos=db.scalar(select(func.count(Waitlist.id)).where(Waitlist.class_id==c.id,Waitlist.created_at<=w.created_at)) or 1
+    starts = as_utc(c.starts_at).astimezone(ZoneInfo("Europe/Berlin"))
+    background_tasks.add_task(send_transactional_email, data.email.lower(), f"Warteliste · {c.title}", "Du bist auf der Warteliste", [
+        f"{c.title} · {starts.strftime('%d.%m.%Y um %H:%M Uhr')} · {c.studio.name}",
+        f"Deine aktuelle Position: {pos}",
+        "Wir informieren dich, sobald ein Platz frei wird.",
+    ])
     return {"position":pos}
