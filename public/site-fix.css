@@ -3,3 +3,62 @@
 .studio-card .studio-arrow{display:none!important}.studio-card .studio-hover-actions{justify-content:flex-end!important}.studio-card .studio-hover-actions button[data-studio-book]{display:none!important}
 .classfit-coming-soon-bg{background:linear-gradient(90deg,rgba(5,6,5,.88) 0%,rgba(5,6,5,.35) 50%,rgba(5,6,5,.72) 100%),url('/IMG-20260831-WA0001.jpg') center/cover no-repeat!important}
 .schedule-footer a{border:0;background:none;font-weight:700;text-decoration:underline;cursor:pointer}
+
+/* 2026-09-16 mobile overlap fixes */
+@media(max-width:900px){
+  /* Keep the always-visible studio contact actions away from the studio title. */
+  .studio-card .studio-hover-actions{
+    left:auto!important;
+    right:16px!important;
+    top:16px!important;
+    bottom:auto!important;
+    width:auto!important;
+    opacity:1!important;
+    transform:none!important;
+    pointer-events:auto!important;
+  }
+  .studio-card .studio-hover-actions>a:first-child{margin-left:0!important}
+  .studio-card .studio-hover-actions a,
+  .studio-card .studio-hover-actions button{
+    width:44px!important;
+    height:44px!important;
+    padding:0!important;
+    justify-content:center!important;
+    background:rgba(15,15,14,.72)!important;
+    border:1px solid rgba(255,255,255,.55)!important;
+  }
+  .studio-card .studio-hover-actions span{display:none!important}
+}
+
+@media(max-width:780px){
+  /* The copy and the live-schedule card used to share the same absolute space
+     on short iPhone viewports. Give the hero enough vertical room and reserve
+     a dedicated lower area for the card. */
+  .hero{
+    height:auto!important;
+    min-height:980px!important;
+  }
+  .hero-copy{
+    top:145px!important;
+    bottom:auto!important;
+    left:20px!important;
+    right:20px!important;
+    transform:none!important;
+    max-width:620px!important;
+  }
+  .hero-actions{margin-top:28px!important}
+  .hero-card{
+    left:20px!important;
+    right:20px!important;
+    bottom:28px!important;
+    width:auto!important;
+    z-index:4!important;
+  }
+}
+
+@media(max-width:430px){
+  .hero{min-height:940px!important}
+  .hero-copy{top:128px!important}
+  .hero-actions{gap:14px!important;margin-top:22px!important}
+  .hero-card{bottom:24px!important}
+}
