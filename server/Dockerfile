@@ -9,6 +9,7 @@ COPY class_language.py .
 COPY runtime_app.py .
 COPY import_mindbody_schedule.py .
 COPY mindbody_api.py .
+COPY mindbody_sync.py .
 COPY data ./data
 RUN mkdir -p /data/uploads
 EXPOSE 8000

@@ -237,10 +237,15 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                 booking.status = "cancelled"
     db.commit()
     if email_job:
+        booking_id = booking.id
         if background_tasks is not None:
             background_tasks.add_task(core.send_transactional_email, *email_job)
+            from mindbody_sync import sync_local_booking
+            background_tasks.add_task(sync_local_booking, booking_id)
         else:
             core.send_transactional_email(*email_job)
+            from mindbody_sync import sync_local_booking
+            sync_local_booking(booking_id)
     return order
 
 
@@ -465,23 +470,9 @@ def _send_notification(notification_id: int, recipient: str, subject: str, body:
     try:
         if not host:
             raise RuntimeError("SMTP_HOST is not configured")
-        msg = EmailMessage()
-        msg["From"] = sender
-        msg["To"] = recipient
-        msg["Subject"] = subject
-        msg.set_content(body)
-        if use_ssl:
-            client = smtplib.SMTP_SSL(host, port, timeout=15, context=ssl.create_default_context())
-        else:
-            client = smtplib.SMTP(host, port, timeout=15)
-        with client:
-            client.ehlo()
-            if use_starttls and not use_ssl:
-                client.starttls(context=ssl.create_default_context())
-                client.ehlo()
-            if user:
-                client.login(user, password)
-            client.send_message(msg)
+        paragraphs = [part.strip() for part in body.split("\n\n") if part.strip()]
+        heading = paragraphs.pop(0) if paragraphs else subject
+        core.send_transactional_email(recipient, subject, heading, paragraphs)
     except Exception as exc:
         status, error = "failed", str(exc)[:1500]
     with core.SessionLocal() as db:
@@ -712,7 +703,7 @@ def sell_class_pass_v2(data: ClassPassSaleInV2, user: core.User = Depends(core.r
 
 
 @app.post("/api/bookings")
-def public_booking_v2(data: PublicBookingInV2, user: Optional[core.User] = Depends(core.optional_user), db: Session = Depends(core.db_session)):
+def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks, user: Optional[core.User] = Depends(core.optional_user), db: Session = Depends(core.db_session)):
     base = core.PublicBookingIn(
         classId=data.classId, email=data.email, firstName=data.firstName, lastName=data.lastName, phone=data.phone,
         spot=data.spot, paymentMethod=data.paymentMethod, studioId=data.studioId, title=data.title, classType=data.classType,
@@ -765,6 +756,10 @@ def public_booking_v2(data: PublicBookingInV2, user: Optional[core.User] = Depen
         sepa_mandate_accepted_at=datetime.now(timezone.utc) if data.sepaMandateAccepted else None,
     ))
     db.commit()
+    if use_credit:
+        from mindbody_sync import sync_local_booking
+        background_tasks.add_task(sync_local_booking, booking.id)
+        background_tasks.add_task(core.send_transactional_email, *core.booking_email_data(booking))
     return {"booking": {"reference": ref}, "payment_status": booking.payment_status, "credit_used": use_credit, "credits_remaining": profile.credits if profile else None, "language": language}
 
 
