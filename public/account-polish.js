@@ -37,8 +37,8 @@
     while((node=walker.nextNode()))nodes.push(node);
     nodes.forEach(textNode=>{
       const current=textNode.nodeValue||'';
-      if(!current.includes('↗'))return;
-      textNode.nodeValue=current.replace(/\s*↗\uFE0F?/g,'');
+      if(!current.includes(''))return;
+      textNode.nodeValue=current.replace(/\s*\uFE0F?/g,'');
     });
   }
 

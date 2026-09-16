@@ -6,7 +6,7 @@
   const VOUCHER_KEY='cpBookingVoucher';
   const lang=()=>{const saved=sessionStorage.getItem(LANG_KEY);if(saved==='de'||saved==='en')return saved;return document.documentElement.lang==='de'?'de':'en'};
   const classLang=()=>{const saved=sessionStorage.getItem(CLASS_LANG_KEY);return saved==='en'?'en':'de'};
-  const flag=l=>l==='de'?'🇩🇪':'🇬🇧';
+  const flag=l=>l==='de'?'':'';
   const iconInstagram='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>';
   const iconWhatsapp='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.3c.2 2 1.8 4.1 4.2 5.3.7.3 1.3.4 1.8-.2l.8-1-2.2-1.1-.6.8c-.2.2-.5.2-.8.1-1.1-.6-2-1.4-2.6-2.5-.2-.3-.1-.6.1-.8l.6-.6-.9-2.1-.4.1Z"/></svg>';
 
@@ -27,7 +27,7 @@
     const go=$('#goPayment');if(!go||$('#bookingLanguage'))return;
     const panel=go.closest('.wizard-panel');if(!panel)return;
     const anchor=panel.querySelector('.wizard-check');
-    const box=document.createElement('div');box.id='bookingLanguage';box.className='booking-language-select';box.innerHTML=`<div><span>BOOKING LANGUAGE</span><small>Urgent class-change emails will use this language.</small></div><div class="language-choice"><button type="button" data-booking-lang="de">🇩🇪 DE</button><button type="button" data-booking-lang="en">🇬🇧 EN</button></div>`;
+    const box=document.createElement('div');box.id='bookingLanguage';box.className='booking-language-select';box.innerHTML=`<div><span>BOOKING LANGUAGE</span><small>Urgent class-change emails will use this language.</small></div><div class="language-choice"><button type="button" data-booking-lang="de"> DE</button><button type="button" data-booking-lang="en"> EN</button></div>`;
     if(anchor)panel.insertBefore(box,anchor);else panel.insertBefore(box,go.parentElement);
     const set=l=>{sessionStorage.setItem(LANG_KEY,l);$$('[data-booking-lang]',box).forEach(b=>b.classList.toggle('active',b.dataset.bookingLang===l));decorateLanguage()};
     $$('[data-booking-lang]',box).forEach(b=>b.addEventListener('click',()=>set(b.dataset.bookingLang)));set(lang());

@@ -70,7 +70,7 @@
     if(smallPrint){
       let link=smallPrint.querySelector('[data-all-payment-methods]');
       if(!link){smallPrint.textContent='';link=document.createElement('a');link.href='/shop';link.dataset.allPaymentMethods='1';smallPrint.appendChild(link)}
-      syncText(link,isDe?'Alle Zahlungsarten ansehen ↗':'View all payment methods ↗');
+      syncText(link,isDe?'Alle Zahlungsarten ansehen ':'View all payment methods ');
     }
   }
 
