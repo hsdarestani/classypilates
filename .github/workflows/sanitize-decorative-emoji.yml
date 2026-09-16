@@ -1,0 +1,113 @@
+name: Sanitize decorative emoji glyphs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - '.github/workflows/sanitize-decorative-emoji.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: classy-emoji-sanitizer
+  cancel-in-progress: true
+
+jobs:
+  sanitize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Remove decorative emoji-like glyphs from public UI sources
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          allowed = {'.html', '.js', '.css', '.json', '.txt', '.xml'}
+
+          # Characters that have caused emoji-style rendering on iOS/Safari or are
+          # decorative emoji in UI labels. Functional text arrows such as ← and →
+          # are intentionally preserved.
+          literal_replacements = {
+              '\u2197\ufe0f': '',  # ↗️
+              '\u2197': '',        # ↗
+              '\u27a1\ufe0f': '',  # ➡️
+              '\u27a1': '',        # ➡
+              '&nearr;': '',
+              '&#8599;': '',
+              '&#x2197;': '',
+              '&#X2197;': '',
+          }
+
+          # Emoji presentation ranges. SVG/icon markup is unaffected because this
+          # only strips literal Unicode emoji characters from source text.
+          emoji_re = re.compile(
+              '['
+              '\U0001F1E6-\U0001F1FF'  # flags
+              '\U0001F300-\U0001F5FF'  # misc pictographs
+              '\U0001F600-\U0001F64F'  # emoticons
+              '\U0001F680-\U0001F6FF'  # transport/map
+              '\U0001F700-\U0001F77F'
+              '\U0001F780-\U0001F7FF'
+              '\U0001F800-\U0001F8FF'
+              '\U0001F900-\U0001F9FF'
+              '\U0001FA00-\U0001FAFF'
+              ']'
+          )
+
+          changed = []
+          for path in Path('public').rglob('*'):
+              if not path.is_file() or path.suffix.lower() not in allowed:
+                  continue
+              try:
+                  old = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+
+              new = old
+              for src, dst in literal_replacements.items():
+                  new = new.replace(src, dst)
+              new = emoji_re.sub('', new)
+              # Remove emoji-variation selector so remaining symbols render as text,
+              # not platform emoji, where a source used an explicit VS16.
+              new = new.replace('\ufe0f', '')
+
+              if new != old:
+                  path.write_text(new, encoding='utf-8')
+                  changed.append(str(path))
+
+          print(f'Changed {len(changed)} files')
+          for p in changed:
+              print(' -', p)
+          PY
+
+      - name: Validate JavaScript and whitespace
+        shell: bash
+        run: |
+          set -e
+          for f in public/*.js; do
+            [ -f "$f" ] && node --check "$f"
+          done
+          git diff --check
+
+      - name: Commit sanitized UI sources
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No decorative emoji glyphs found.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public
+          git commit -m 'chore: remove decorative emoji glyphs [skip ci]'
+          git push origin HEAD:main
