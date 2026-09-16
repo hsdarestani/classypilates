@@ -97,12 +97,12 @@ jobs:
           booking = Path('public/booking-flow.js')
           text = booking.read_text(encoding='utf-8')
           text = text.replace("const PHONE='+4915253816033';", "const PHONE='+4951328533996';")
-          old_quick = "dock.innerHTML=`<a href=\"tel:${PHONE}\" aria-label=\"Call Classy Pilates\"><span class=\"dock-icon\">☎</span><b>Call</b></a><a href=\"#schedule\" aria-label=\"Book a class\"><span class=\"dock-icon\">＋</span><b>Book</b></a><a href=\"${INSTAGRAM}\" target=\"_blank\" rel=\"noopener\" aria-label=\"Open Instagram\"><span class=\"dock-icon\">◎</span><b>Instagram</b></a>`"
-          new_quick = f"dock.innerHTML=`<a href=\"tel:${{PHONE}}\" aria-label=\"Call Classy Pilates\"><span class=\"dock-icon\">{phone_svg}</span><b>Call</b></a><a href=\"#schedule\" aria-label=\"Book a class\"><span class=\"dock-icon\">{plus_svg}</span><b>Book</b></a><a href=\"${{INSTAGRAM}}\" target=\"_blank\" rel=\"noopener\" aria-label=\"Open Instagram\"><span class=\"dock-icon\">{instagram_svg}</span><b>Instagram</b></a>`"
-          text = text.replace(old_quick, new_quick)
-          old_actions = "wrap.innerHTML=`<a href=\"tel:${PHONE}\" data-no-studio-click aria-label=\"Call\">☎ <span>Call</span></a><button type=\"button\" data-studio-book><span>Book</span> </button><a href=\"${INSTAGRAM}\" target=\"_blank\" rel=\"noopener\" data-no-studio-click aria-label=\"Instagram\">◎ <span>Instagram</span></a>`"
-          new_actions = f"wrap.innerHTML=`<a href=\"tel:${{PHONE}}\" data-no-studio-click aria-label=\"Call\">{phone_svg}<span>Call</span></a><button type=\"button\" data-studio-book>{plus_svg}<span>Book</span></button><a href=\"${{INSTAGRAM}}\" target=\"_blank\" rel=\"noopener\" data-no-studio-click aria-label=\"Instagram\">{instagram_svg}<span>Instagram</span></a>`"
-          text = text.replace(old_actions, new_actions)
+          text = text.replace('<span class="dock-icon">☎</span>', '<span class="dock-icon">' + phone_svg + '</span>')
+          text = text.replace('<span class="dock-icon">＋</span>', '<span class="dock-icon">' + plus_svg + '</span>')
+          text = text.replace('<span class="dock-icon">◎</span>', '<span class="dock-icon">' + instagram_svg + '</span>')
+          text = text.replace('aria-label="Call">☎ <span>Call</span>', 'aria-label="Call">' + phone_svg + '<span>Call</span>')
+          text = text.replace('data-studio-book><span>Book</span> </button>', 'data-studio-book>' + plus_svg + '<span>Book</span></button>')
+          text = text.replace('aria-label="Instagram">◎ <span>Instagram</span>', 'aria-label="Instagram">' + instagram_svg + '<span>Instagram</span>')
           booking.write_text(text, encoding='utf-8')
 
           changed=[]
@@ -118,8 +118,6 @@ jobs:
                   p.write_text(new,encoding='utf-8')
                   changed.append(filename)
 
-          if booking.read_text(encoding='utf-8') != Path('public/booking-flow.js').read_text(encoding='utf-8'):
-              pass
           print('Targeted cleanup completed')
           print('\n'.join(changed))
           PY
