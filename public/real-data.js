@@ -33,6 +33,31 @@
   const coachPhotoUrl=coach=>String(coach?.photo_url||'').trim();
   const cssUrl=value=>String(value||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');
 
+  async function syncStudioProfiles(){
+    const payload=await api('/api/studios');
+    if(!Array.isArray(payload.studios)||!payload.studios.length||typeof studios==='undefined')return;
+    const fallback=new Map(studios.map(studio=>[studio.id,{...studio}]));
+    const next=payload.studios.map(row=>{
+      const old=fallback.get(row.id)||{};
+      return {
+        ...old,
+        id:row.id,
+        name:row.name||old.name||row.id,
+        short:row.short_name||row.name||old.short||row.id,
+        address:row.address||'',
+        type:row.public_type||old.type||'Pilates',
+        image:row.image_url||old.image||'',
+        description:row.description||'',
+        capacity:Number(row.capacity)||Number(old.capacity)||10,
+      };
+    });
+    studios.splice(0,studios.length,...next);
+    const selected=typeof state!=='undefined'?state.location:'all';
+    if(typeof renderLocations==='function')renderLocations();
+    const location=$('#locationFilter');if(location&&next.some(studio=>studio.id===selected))location.value=selected;
+    if(typeof renderStudios==='function')renderStudios();
+  }
+
   function renderOverview(data){
     const metrics=$('#realMetrics');
     if(metrics)metrics.innerHTML=[
@@ -99,5 +124,6 @@
     const [overview,coaches,classes]=await Promise.all([api('/api/public/overview'),api('/api/public/coaches'),api('/api/public/classes')]);
     renderOverview(overview);renderCoaches(coaches.coaches||[]);renderCatalog(classes.classes||[]);
   }
+  syncStudioProfiles().catch(()=>{});
   load().catch(()=>{const range=$('#realDataRange');if(range)range.textContent='Live data could not be loaded.'});
 })();
