@@ -15,9 +15,9 @@ class StudioProfile(core.Base):
     __tablename__ = "studio_profiles"
 
     studio_id: Mapped[str] = mapped_column(ForeignKey("studios.id", ondelete="CASCADE"), primary_key=True)
-    name_override: Mapped[str] = mapped_column(String(160), default="")
-    address_override: Mapped[str] = mapped_column(String(255), default="")
-    capacity_override: Mapped[int] = mapped_column(Integer, default=0)
+    name_override: Mapped[str | None] = mapped_column(String(160), nullable=True, default=None)
+    address_override: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    capacity_override: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     short_name: Mapped[str] = mapped_column(String(160), default="")
     public_type: Mapped[str] = mapped_column(String(160), default="")
     image_url: Mapped[str] = mapped_column(String(800), default="")
@@ -97,13 +97,13 @@ def _restore_studio_overrides() -> None:
             studio = db.get(core.Studio, profile.studio_id)
             if not studio:
                 continue
-            if profile.name_override:
+            if profile.name_override is not None:
                 studio.name = profile.name_override
                 changed = True
-            if profile.address_override:
+            if profile.address_override is not None:
                 studio.address = profile.address_override
                 changed = True
-            if profile.capacity_override > 0:
+            if profile.capacity_override is not None and profile.capacity_override > 0:
                 studio.capacity = profile.capacity_override
                 changed = True
         if changed:
@@ -125,9 +125,9 @@ def studio_dict(studio: core.Studio, db: Session) -> dict:
 
     return {
         "id": studio.id,
-        "name": profile.name_override if profile and profile.name_override else studio.name,
-        "address": profile.address_override if profile and profile.address_override else (studio.address or ""),
-        "capacity": int(profile.capacity_override if profile and profile.capacity_override > 0 else (studio.capacity or 1)),
+        "name": profile.name_override if profile and profile.name_override is not None else studio.name,
+        "address": profile.address_override if profile and profile.address_override is not None else (studio.address or ""),
+        "capacity": int(profile.capacity_override if profile and profile.capacity_override is not None and profile.capacity_override > 0 else (studio.capacity or 1)),
         "short_name": value("short_name", studio.name),
         "public_type": value("public_type", "Pilates"),
         "image_url": value("image_url", ""),
