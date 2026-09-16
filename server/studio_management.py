@@ -15,6 +15,9 @@ class StudioProfile(core.Base):
     __tablename__ = "studio_profiles"
 
     studio_id: Mapped[str] = mapped_column(ForeignKey("studios.id", ondelete="CASCADE"), primary_key=True)
+    name_override: Mapped[str] = mapped_column(String(160), default="")
+    address_override: Mapped[str] = mapped_column(String(255), default="")
+    capacity_override: Mapped[int] = mapped_column(Integer, default=0)
     short_name: Mapped[str] = mapped_column(String(160), default="")
     public_type: Mapped[str] = mapped_column(String(160), default="")
     image_url: Mapped[str] = mapped_column(String(800), default="")
@@ -86,6 +89,30 @@ def _profile(db: Session, studio_id: str) -> StudioProfile | None:
     return db.get(StudioProfile, studio_id)
 
 
+def _restore_studio_overrides() -> None:
+    """Re-apply admin edits after the legacy seed has populated canonical studios."""
+    with core.SessionLocal() as db:
+        changed = False
+        for profile in db.scalars(select(StudioProfile)).all():
+            studio = db.get(core.Studio, profile.studio_id)
+            if not studio:
+                continue
+            if profile.name_override:
+                studio.name = profile.name_override
+                changed = True
+            if profile.address_override:
+                studio.address = profile.address_override
+                changed = True
+            if profile.capacity_override > 0:
+                studio.capacity = profile.capacity_override
+                changed = True
+        if changed:
+            db.commit()
+
+
+_restore_studio_overrides()
+
+
 def studio_dict(studio: core.Studio, db: Session) -> dict:
     defaults = STUDIO_DEFAULTS.get(studio.id, {})
     profile = _profile(db, studio.id)
@@ -98,9 +125,9 @@ def studio_dict(studio: core.Studio, db: Session) -> dict:
 
     return {
         "id": studio.id,
-        "name": studio.name,
-        "address": studio.address or "",
-        "capacity": int(studio.capacity or 1),
+        "name": profile.name_override if profile and profile.name_override else studio.name,
+        "address": profile.address_override if profile and profile.address_override else (studio.address or ""),
+        "capacity": int(profile.capacity_override if profile and profile.capacity_override > 0 else (studio.capacity or 1)),
         "short_name": value("short_name", studio.name),
         "public_type": value("public_type", "Pilates"),
         "image_url": value("image_url", ""),
@@ -131,9 +158,10 @@ def staff_studios(
 ):
     return {
         "studios": _all_studios(db),
+        "can_edit": core.can(user, "classes.edit"),
         "mindbody_note": (
             "Public studio details are local Classy data. Mindbody class sync keeps using the stable studio ID/location mapping, "
-            "so editing a public name, address, image or capacity does not rename a Mindbody location."
+            "so editing a public name, address, image or default capacity does not rename a Mindbody location."
         ),
     }
 
@@ -149,8 +177,10 @@ def update_studio(
     if not studio:
         raise HTTPException(404, "studio_not_found")
 
-    studio.name = data.name.strip()
-    studio.address = data.address.strip()
+    name = data.name.strip()
+    address = data.address.strip()
+    studio.name = name
+    studio.address = address
     studio.capacity = data.capacity
 
     profile = _profile(db, studio_id)
@@ -158,6 +188,9 @@ def update_studio(
         profile = StudioProfile(studio_id=studio_id)
         db.add(profile)
 
+    profile.name_override = name
+    profile.address_override = address
+    profile.capacity_override = data.capacity
     profile.short_name = data.short_name.strip()
     profile.public_type = data.public_type.strip()
     profile.image_url = data.image_url.strip()
