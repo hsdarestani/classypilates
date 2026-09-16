@@ -12,7 +12,7 @@
   document.head.appendChild(style);
 
   const normal=value=>String(value||'de').toLowerCase()==='en'?'en':'de';
-  const badge=value=>normal(value)==='en'?' EN':' DE';
+  const badge=value=>normal(value)==='en'?'EN':'DE';
 
   function rememberClasses(data){
     (data?.classes||[]).forEach(row=>languages.set(Number(row.id),normal(row.language)));
@@ -48,7 +48,7 @@
   function languageLabel(id,current='de'){
     const label=document.createElement('label');
     label.className='class-language-field';
-    label.innerHTML=`LANGUAGE<select id="${id}"><option value="de"> DE</option><option value="en"> EN</option></select><small>Language used for this class</small>`;
+    label.innerHTML=`LANGUAGE<select id="${id}"><option value="de">DE</option><option value="en">EN</option></select><small>Language used for this class</small>`;
     $('select',label).value=normal(current);
     return label;
   }

@@ -85,7 +85,7 @@
       const match=row.textContent.match(/CP-[A-Z0-9-]+/);if(!match)return;
       const pref=map.get(match[0]);if(!pref)return;
       const first=row.querySelector('div,span');if(!first)return;
-      const badge=document.createElement('span');badge.className='booking-lang-flag';badge.textContent=pref.language==='de'?' DE':' EN';badge.title=pref.sepa?`SEPA mandate · IBAN •••• ${pref.iban_last4}`:'Booking language';first.appendChild(badge);
+      const badge=document.createElement('span');badge.className='booking-lang-flag';badge.textContent=pref.language==='de'?'DE':'EN';badge.title=pref.sepa?`SEPA mandate · IBAN •••• ${pref.iban_last4}`:'Booking language';first.appendChild(badge);
     });
   }
 

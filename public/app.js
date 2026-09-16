@@ -72,7 +72,7 @@ function renderLocations(){
 }
 function renderStudios(){
   const grid=$('#studioGrid'); if(!grid)return;
-  grid.innerHTML=studios.map((s,i)=>`<article class="studio-card" data-studio="${s.id}" tabindex="0" role="button" aria-label="Open schedule for ${esc(s.name)}"><div class="studio-photo" style="background-image:url('${s.image}')"></div><span class="studio-arrow"></span><div class="studio-info"><span>0${i+1} · ${esc(s.type)}</span><h3>${esc(s.name)}</h3><p>${esc(s.address)}</p></div></article>`).join('');
+  grid.innerHTML=studios.map((s,i)=>`<article class="studio-card" data-studio="${s.id}" tabindex="0" role="button" aria-label="Open schedule for ${esc(s.name)}"><div class="studio-photo" style="background-image:url('${s.image}')"></div><div class="studio-info"><span>0${i+1} · ${esc(s.type)}</span><h3>${esc(s.name)}</h3><p>${esc(s.address)}</p></div></article>`).join('');
   $$('.studio-card').forEach(card=>{
     const open=()=>{state.location=card.dataset.studio;$('#locationFilter').value=state.location;renderSchedule();$('#schedule').scrollIntoView({behavior:'smooth'})};
     card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}})
@@ -167,7 +167,7 @@ function renderMyBookings(){
   const bookings=readJson('cpBookings',[]).filter(b=>b.status!=='cancelled');const waitlist=readJson('cpWaitlist',[]);
   const bookingHtml=bookings.map(b=>`<div class="selected-class"><div class="line"><span>${esc(b.date)} · ${esc(b.time)}</span><b>${esc(b.name)}</b></div><div class="line"><span>Studio</span><b>${esc(b.studio)}</b></div><div class="line"><span>Booking</span><b>${esc(b.ref)}</b></div><button class="drawer-action secondary" data-cancel-ref="${esc(b.ref)}" type="button">Cancel booking</button></div>`).join('');
   const waitHtml=waitlist.map(w=>`<div class="selected-class"><div class="line"><span>Waitlist · ${esc(w.date)} · ${esc(w.time)}</span><b>${esc(w.name)}</b></div><div class="line"><span>Studio</span><b>${esc(w.studio)}</b></div><button class="drawer-action secondary" data-wait-remove="${esc(w.id)}" type="button">Leave waitlist</button></div>`).join('');
-  $('#drawerBody').innerHTML=(bookingHtml||waitHtml)?`<div class="drawer-step"><p>Bookings and waitlists on this device.</p>${bookingHtml}${waitHtml}</div>`:`<div class="confirmation"><div class="big-check" style="background:#d8d0c1;color:#151513"></div><h4>No bookings yet.</h4><p>Choose a class in the schedule and reserve your spot.</p><button class="drawer-action" id="goSchedule" type="button">Schedule</button></div>`;
+  $('#drawerBody').innerHTML=(bookingHtml||waitHtml)?`<div class="drawer-step"><p>Bookings and waitlists on this device.</p>${bookingHtml}${waitHtml}</div>`:`<div class="confirmation"><h4>No bookings yet.</h4><p>Choose a class in the schedule and reserve your spot.</p><button class="drawer-action" id="goSchedule" type="button">Schedule</button></div>`;
   openDrawer();$('#goSchedule')?.addEventListener('click',()=>{closeDrawer();$('#schedule').scrollIntoView({behavior:'smooth'})});$$('[data-cancel-ref]').forEach(btn=>btn.addEventListener('click',()=>cancelBooking(btn.dataset.cancelRef)));$$('[data-wait-remove]').forEach(btn=>btn.addEventListener('click',()=>removeWaitlist(btn.dataset.waitRemove)));
 }
 function openNotify(){
@@ -183,7 +183,7 @@ function openNotify(){
 function openPass(passKey){
   const pass=PASSES[passKey];if(!pass){window.open(BUY_URL,'_blank','noopener');return}
   $('#drawerTitle').textContent='Class Pass';
-  $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>${esc(pass.name)}</h4><div class="credit-box"><span>Price</span><b>${esc(pass.price)}</b></div><p>Purchases currently continue through the existing Classy Pilates sales page so payments remain uninterrupted during the transition.</p><button class="drawer-action" id="buyPass" type="button">Continue securely to purchase </button><button class="drawer-action secondary" id="cancelPass" type="button">Cancel</button></div>`;
+  $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>${esc(pass.name)}</h4><div class="credit-box"><span>Price</span><b>${esc(pass.price)}</b></div><p>Purchases currently continue through the existing Classy Pilates sales page so payments remain uninterrupted during the transition.</p><button class="drawer-action" id="buyPass" type="button">Continue securely to purchase</button><button class="drawer-action secondary" id="cancelPass" type="button">Cancel</button></div>`;
   openDrawer();$('#cancelPass')?.addEventListener('click',closeDrawer);$('#buyPass')?.addEventListener('click',()=>{window.open(BUY_URL,'_blank','noopener');closeDrawer()});
 }
 function showToast(title,text){
