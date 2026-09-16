@@ -117,6 +117,6 @@ def edit_class_v3(
     return core.class_dict(klass, db)
 
 
-# Registers admin/customer presentation helpers after the base API is available.
-# runtime_app performs final route de-duplication after importing this module.
+# Register public/admin studio metadata and presentation helpers after the base API.
+import studio_management  # noqa: E402,F401
 import ui_polish  # noqa: E402,F401
