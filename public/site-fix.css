@@ -141,6 +141,12 @@
     width:auto!important;
     max-width:100%!important;
   }
+
+  /* The mobile menu is fixed, but the header is 70px tall and starts below the
+     30px announcement bar until the page is scrolled. Keep the menu below the
+     actual header in both states so the first item never hides underneath it. */
+  .header:not(.scrolled) + .mobile-menu{top:100px!important}
+  .header.scrolled + .mobile-menu{top:62px!important}
 }
 
 @media(max-width:430px){
