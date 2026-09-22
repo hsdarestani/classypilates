@@ -356,14 +356,23 @@ def main():
         """)).all()
         issues["paid_sumup_booking_without_paid_order"] = len(paid_sumup_without_order)
 
-        duplicate_active_coach_names = db.execute(text("""
-            SELECT lower(regexp_replace(trim(display_name), '\\s+', ' ', 'g')) AS name_key, count(*) AS n
-            FROM coaches
-            WHERE active=true
-            GROUP BY lower(regexp_replace(trim(display_name), '\\s+', ' ', 'g'))
-            HAVING count(*) > 1
-        """)).all() if core.engine.dialect.name != "sqlite" else []
+        active_coaches = db.scalars(
+            select(core.Coach).where(core.Coach.active == True)
+        ).all()
+        canonical_local_groups = {}
+        for coach in active_coaches:
+            key = mb._coach_name_key(coach.display_name)
+            if key:
+                canonical_local_groups.setdefault(key, []).append(coach.id)
+        duplicate_active_coach_names = {
+            key: ids for key, ids in canonical_local_groups.items() if len(ids) > 1
+        }
         issues["duplicate_active_coach_names"] = len(duplicate_active_coach_names)
+        if duplicate_active_coach_names and len(samples) < 30:
+            samples.append({
+                "type":"duplicate_active_coach_names",
+                "groups":dict(list(duplicate_active_coach_names.items())[:10]),
+            })
 
         duplicate_coach_remote_map = db.execute(text("""
             SELECT remote_id, count(*) AS n
@@ -373,6 +382,39 @@ def main():
             HAVING count(*) > 1
         """)).all()
         issues["duplicate_coach_remote_mapping"] = len(duplicate_coach_remote_map)
+
+        scheduled_staff_ids = set()
+        for remote in remotes:
+            staff = remote.get("Staff") or remote.get("staff") or {}
+            remote_staff_id = mb._remote_staff_id(staff)
+            if remote_staff_id:
+                scheduled_staff_ids.add(remote_staff_id)
+
+        full_staff = mb._load_remote_staff(client)
+        remote_alias_groups = {}
+        for row in full_staff:
+            remote_id = mb._remote_staff_id(row)
+            payload = mb._remote_staff_payload(row)
+            key = mb._coach_name_key(payload["display_name"])
+            if remote_id and key:
+                remote_alias_groups.setdefault(key, []).append((remote_id, payload["active"]))
+
+        active_unscheduled_aliases = 0
+        scheduled_alias_collisions = 0
+        for key, rows in remote_alias_groups.items():
+            scheduled = [remote_id for remote_id, _ in rows if remote_id in scheduled_staff_ids]
+            if len(scheduled) > 1:
+                scheduled_alias_collisions += 1
+            if len(scheduled) == 1:
+                primary = scheduled[0]
+                active_unscheduled_aliases += sum(
+                    1 for remote_id, active in rows
+                    if remote_id != primary and active
+                )
+
+        issues["active_unscheduled_staff_aliases"] = active_unscheduled_aliases
+        issues["scheduled_staff_alias_collisions"] = scheduled_alias_collisions
+        issues["remote_staff_directory_count"] = len(full_staff)
 
         required_indexes = {
             "classes": {"ux_classes_mindbody_class_id"},
@@ -484,12 +526,14 @@ def main():
         "multiple_active_orders_per_booking","paid_order_without_booking",
         "paid_sumup_booking_without_paid_order",
         "duplicate_active_coach_names","duplicate_coach_remote_mapping",
+        "active_unscheduled_staff_aliases","scheduled_staff_alias_collisions",
         "missing_integrity_indexes",
         "remote_visits_missing_local","local_visits_missing_remote","roster_audit_errors",
     ]
     result = {
         "ok": all(int(issues.get(k, 0)) == 0 for k in critical_keys),
         "remote_classes": len(remotes),
+        "remote_staff_directory_count": int(issues.get("remote_staff_directory_count", 0)),
         "roster_classes_checked": int(issues.get("roster_classes_checked", 0)),
         "issues": {k:int(issues.get(k,0)) for k in critical_keys},
         "samples": samples,
