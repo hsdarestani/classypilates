@@ -1713,8 +1713,17 @@ def _sync_class_availability(
         changed = True
 
     if normalized_total is not None:
-        if int(klass.source_bookings_total or 0) != normalized_total:
-            klass.source_bookings_total = normalized_total
+        # GetClasses summary counts can transiently lag the actual roster. Never
+        # reopen spots from a lower summary alone after a higher provider-backed
+        # occupancy has already been observed. Exact decreases are accepted by
+        # _reconcile_class_roster once the roster itself confirms them.
+        source_floor = max(
+            normalized_total,
+            local_reserved,
+            max(0, int(klass.source_bookings_total or 0)),
+        )
+        if int(klass.source_bookings_total or 0) != source_floor:
+            klass.source_bookings_total = source_floor
             changed = True
     elif available == 0 and int(klass.source_bookings_total or 0) < target_reserved:
         # Diagnostic aggregate only. Public spots are controlled by imported_bookings.
