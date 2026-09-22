@@ -878,11 +878,16 @@ def _sync_staff_profiles(
     remote_rows = list(unique_remote.values())
 
     counts["staff_remote"] = len(remote_rows)
-    counts["staff_duplicates_merged"] = _merge_duplicate_coaches(db)
+    # Historical accidental duplicates were cleaned once. Do not keep merging by
+    # display name: two real coaches can legitimately share the same name.
+    counts["staff_duplicates_merged"] = 0
     locals_ = db.scalars(select(core.Coach)).all()
-    by_name = {(x.display_name or "").strip().casefold(): x for x in locals_ if (x.display_name or "").strip()}
-    state_rows = db.execute(text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")).mappings().all() if locals_ else []
+    state_rows = db.execute(
+        text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")
+    ).mappings().all() if locals_ else []
+
     local_by_remote: dict[str, core.Coach] = {}
+    locals_with_remote: set[int] = set()
     for state in state_rows:
         if state.get("remote_id"):
             try:
@@ -891,6 +896,18 @@ def _sync_staff_profiles(
                 coach = None
             if coach:
                 local_by_remote[str(state["remote_id"])] = coach
+                locals_with_remote.add(coach.id)
+
+    # Name matching is only a one-time bridge for an old local profile that has
+    # never been connected to a Mindbody Staff ID. Once an ID is assigned, that
+    # Coach row is never reused for another provider identity.
+    unmapped_by_name: dict[str, list[core.Coach]] = {}
+    for coach in locals_:
+        if coach.id in locals_with_remote:
+            continue
+        key = _coach_name_key(coach.display_name)
+        if key:
+            unmapped_by_name.setdefault(key, []).append(coach)
 
     mapped: dict[str, core.Coach] = {}
     seen_local_ids: set[int] = set()
@@ -899,7 +916,10 @@ def _sync_staff_profiles(
         if not remote_id:
             continue
         rp = _remote_staff_payload(remote)
-        coach = local_by_remote.get(remote_id) or by_name.get(rp["display_name"].casefold())
+        coach = local_by_remote.get(remote_id)
+        if coach is None:
+            candidates = unmapped_by_name.get(_coach_name_key(rp["display_name"]), [])
+            coach = next((row for row in candidates if row.id not in seen_local_ids), None)
         if coach is None:
             coach = core.Coach(
                 display_name=rp["display_name"] or f"Mindbody Staff {remote_id}",
@@ -910,8 +930,8 @@ def _sync_staff_profiles(
             db.add(coach)
             db.flush()
             counts["staff_created_local"] += 1
-            by_name[_coach_name_key(coach.display_name)] = coach
         seen_local_ids.add(coach.id)
+        local_by_remote[remote_id] = coach
         mapped[remote_id] = coach
 
         state = _state_row(db, "coach", coach.id)
