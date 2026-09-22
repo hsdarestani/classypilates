@@ -363,6 +363,83 @@ def _reconcile_mindbody_availability() -> int:
     return corrected
 
 
+PENDING_HOLD_TTL_SECONDS = max(900, int(os.getenv("MINDBODY_PENDING_HOLD_TTL_SECONDS", "1800")))
+
+
+def _cleanup_stale_booking_holds() -> int:
+    """Release Mindbody holds for abandoned SumUp bookings after verifying payment."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=PENDING_HOLD_TTL_SECONDS)
+    released = 0
+
+    with core.SessionLocal() as db:
+        stale_ids = list(db.scalars(
+            select(core.Booking.id).where(
+                core.Booking.source == "website",
+                core.Booking.status == "reserved",
+                core.Booking.payment_status == "pending",
+                core.Booking.payment_method == "sumup",
+                core.Booking.created_at < cutoff,
+            ).limit(100)
+        ))
+
+    for booking_id in stale_ids:
+        should_cancel = False
+        with core.SessionLocal() as db:
+            booking = db.get(core.Booking, booking_id)
+            if not booking or booking.status != "reserved" or booking.payment_status != "pending":
+                continue
+            order = db.scalar(
+                select(core.PaymentOrder)
+                .where(core.PaymentOrder.booking_reference == booking.reference)
+                .order_by(core.PaymentOrder.created_at.desc())
+                .limit(1)
+            )
+            if order and order.status == "paid":
+                continue
+            if order and order.provider_payment_id:
+                try:
+                    checkout = feedback._sumup_request(f"/v0.1/checkouts/{order.provider_payment_id}")
+                    synced = feedback._sync_sumup_order(checkout, db, None)
+                    if synced and synced.status == "paid":
+                        continue
+                    if synced and synced.status in {"failed", "cancelled"}:
+                        should_cancel = True
+                    elif synced and synced.status == "pending":
+                        # A stale checkout that is still pending is treated as abandoned
+                        # after the configured hold TTL.
+                        should_cancel = True
+                except Exception:
+                    # Never release a hold when payment state cannot be verified.
+                    continue
+            else:
+                should_cancel = True
+
+        if not should_cancel:
+            continue
+
+        # Remove provider hold first; if that fails, leave a retryable cancel_failed marker.
+        mindbody_sync.cancel_local_booking(booking_id)
+        with core.SessionLocal() as db:
+            booking = db.get(core.Booking, booking_id)
+            if not booking or booking.payment_status == "paid":
+                continue
+            booking.status = "cancelled"
+            booking.payment_status = "cancelled"
+            if booking.mindbody_sync_status != "cancelled":
+                booking.mindbody_sync_status = "cancel_failed"
+            order = db.scalar(
+                select(core.PaymentOrder)
+                .where(core.PaymentOrder.booking_reference == booking.reference)
+                .order_by(core.PaymentOrder.created_at.desc())
+                .limit(1)
+            )
+            if order and order.status != "paid":
+                order.status = "cancelled"
+            db.commit()
+            released += 1
+    return released
+
+
 def _sync_from_mindbody_hardened() -> dict[str, int]:
     thread_name = threading.current_thread().name
 
@@ -373,6 +450,7 @@ def _sync_from_mindbody_hardened() -> dict[str, int]:
         counts = mindbody_sync.sync_staff_and_assignments()
         if thread_name == "mindbody-mirror":
             counts["remote_website_cancelled"] = _reconcile_remote_website_cancellations()
+            counts["stale_booking_holds_released"] = _cleanup_stale_booking_holds()
         return counts
 
     # Explicit/full roster jobs still mirror individual Mindbody visits and then
