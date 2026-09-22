@@ -569,8 +569,8 @@ def main():
 
             roster_classes_checked += 1
             visits = [
-                row for row in mb._extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
-                if isinstance(row, dict) and not visit_cancelled(row)
+                row for row in mb._extract_class_visits(payload)
+                if not visit_cancelled(row)
             ]
             remote_active_ids = {visit_identity(row, remote_id) for row in visits}
             remote_summary_total = as_int(remote, "TotalBooked", "TotalClients")
