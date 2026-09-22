@@ -1,0 +1,95 @@
+name: Coach Integrity Cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/coach-integrity-cleanup.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classy-coach-integrity-cleanup
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH helper
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Merge Classy coach aliases immediately
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 root@"$HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          import json
+          from datetime import datetime, timedelta, timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+
+          client = mb.WriteClient.from_env()
+          now = datetime.now(timezone.utc)
+          end = now + timedelta(days=45)
+          classes = []
+          offset = 0
+          while True:
+              payload = client.get_classes(
+                  start_date_time=now.isoformat(),
+                  end_date_time=end.isoformat(),
+                  limit=200,
+                  offset=offset,
+              )
+              batch = [
+                  x for x in mb._extract_list(payload, ("Classes","classes","Items"))
+                  if isinstance(x, dict)
+              ]
+              classes.extend(batch)
+              if len(batch) < 200:
+                  break
+              offset += len(batch)
+
+          scheduled_ids = mb._scheduled_staff_ids(classes)
+
+          with core.SessionLocal() as db:
+              before = list(db.scalars(select(core.Coach).where(core.Coach.active == True)).all())
+              merged = mb._merge_duplicate_coaches(
+                  db,
+                  scheduled_remote_ids=scheduled_ids,
+              )
+              db.commit()
+              after = list(db.scalars(select(core.Coach).where(core.Coach.active == True)).all())
+
+              groups = {}
+              for coach in after:
+                  key = mb._coach_name_key(coach.display_name)
+                  groups.setdefault(key, []).append({
+                      "id": coach.id,
+                      "name": coach.display_name,
+                      "user_id": coach.user_id,
+                      "photo": bool(coach.photo_url),
+                  })
+              duplicates = {k:v for k,v in groups.items() if k and len(v) > 1}
+
+              print(json.dumps({
+                  "scheduled_staff_ids": len(scheduled_ids),
+                  "active_before": len(before),
+                  "merged": merged,
+                  "active_after": len(after),
+                  "duplicate_canonical_groups_after": duplicates,
+              }, ensure_ascii=False, sort_keys=True))
+              if duplicates:
+                  raise SystemExit("Local coach aliases remain after cleanup")
+          PY
+          REMOTE
