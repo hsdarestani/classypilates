@@ -924,7 +924,17 @@ def customer_leave_waitlist(waitlist_id: int, user: User = Depends(customer_only
     )
     if not row:
         raise HTTPException(404, "waitlist_not_found")
-    db.delete(row); db.commit()
+    if row.mindbody_waitlist_entry_id:
+        from mindbody_sync import remove_remote_waitlist
+        try:
+            remove_remote_waitlist(row.mindbody_waitlist_entry_id)
+        except Exception as exc:
+            row.mindbody_sync_status = "remove_failed"
+            row.mindbody_sync_error = str(exc)[:1500]
+            db.commit()
+            raise HTTPException(503, "mindbody_waitlist_unavailable") from exc
+    db.delete(row)
+    db.commit()
     return {"ok": True}
 
 @app.get("/api/customer/profile")
@@ -1676,22 +1686,108 @@ def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session 
 
 @app.post("/api/waitlist")
 def join_waitlist(data: WaitlistIn, background_tasks: BackgroundTasks, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
-    c=db.get(ClassSession,data.classId)
-    if not c: raise HTTPException(404,"not_found")
-    live_reserved=db.scalar(select(func.count(Booking.id)).where(Booking.class_id==c.id,Booking.status=="reserved")) or 0
-    reserved=int(c.imported_bookings or 0)+int(live_reserved)
-    if reserved<c.capacity: raise HTTPException(409,"spots_available")
-    existing=db.scalar(select(Waitlist).where(Waitlist.class_id==c.id,Waitlist.email==data.email.lower()))
-    if existing: raise HTTPException(409,"already_waitlisted")
-    w=Waitlist(class_id=c.id,email=data.email.lower());db.add(w);db.flush()
-    if user and portal_for(user) == "/account" and user.email.lower() == data.email.lower():
-        db.add(CustomerWaitlistLink(waitlist_id=w.id, user_id=user.id))
-    db.commit()
-    pos=db.scalar(select(func.count(Waitlist.id)).where(Waitlist.class_id==c.id,Waitlist.created_at<=w.created_at)) or 1
+    c = db.get(ClassSession, data.classId)
+    if not c:
+        raise HTTPException(404, "not_found")
+
+    if c.mindbody_class_id:
+        from mindbody_sync import refresh_class_availability_strict
+        try:
+            refreshed = refresh_class_availability_strict(c.id)
+        except Exception as exc:
+            raise HTTPException(503, "mindbody_waitlist_unavailable") from exc
+        if int(refreshed.get("spots", 0) or 0) > 0:
+            raise HTTPException(409, "spots_available")
+
+    live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
+    reserved = int(c.imported_bookings or 0) + int(live_reserved)
+    if reserved < c.capacity:
+        raise HTTPException(409, "spots_available")
+
+    email = data.email.lower()
+    existing = db.scalar(select(Waitlist).where(Waitlist.class_id == c.id, Waitlist.email == email))
+    if existing:
+        raise HTTPException(409, "already_waitlisted")
+
+    first_name = data.firstName.strip()
+    last_name = data.lastName.strip()
+    if user and portal_for(user) == "/account" and user.email.lower() == email:
+        first_name = first_name or user.first_name
+        last_name = last_name or user.last_name
+
+    remote_client_id = None
+    remote_entry_id = None
+    if c.mindbody_class_id:
+        from mindbody_sync import add_remote_waitlist
+        try:
+            remote_client_id, remote_entry_id = add_remote_waitlist(
+                class_id=str(c.mindbody_class_id),
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                phone=data.phone.strip(),
+            )
+        except Exception as exc:
+            if "waitlist_name_required" in str(exc):
+                raise HTTPException(422, "waitlist_name_required") from exc
+            raise HTTPException(503, "mindbody_waitlist_unavailable") from exc
+
+    reference = "WL-" + secrets.token_hex(6).upper()
+    while db.scalar(select(Waitlist.id).where(Waitlist.reference == reference)):
+        reference = "WL-" + secrets.token_hex(6).upper()
+
+    try:
+        w = Waitlist(
+            class_id=c.id,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            reference=reference,
+            mindbody_client_id=remote_client_id,
+            mindbody_waitlist_entry_id=remote_entry_id,
+            mindbody_sync_status="synced" if remote_entry_id else "local",
+            mindbody_sync_error="",
+        )
+        db.add(w)
+        db.flush()
+        if user and portal_for(user) == "/account" and user.email.lower() == email:
+            db.add(CustomerWaitlistLink(waitlist_id=w.id, user_id=user.id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        if remote_entry_id:
+            from mindbody_sync import remove_remote_waitlist
+            try:
+                remove_remote_waitlist(remote_entry_id)
+            except Exception:
+                pass
+        raise
+
+    pos = db.scalar(select(func.count(Waitlist.id)).where(Waitlist.class_id == c.id, Waitlist.created_at <= w.created_at)) or 1
     starts = as_utc(c.starts_at).astimezone(ZoneInfo("Europe/Berlin"))
-    background_tasks.add_task(send_transactional_email, data.email.lower(), f"Warteliste · {c.title}", "Du bist auf der Warteliste", [
+    background_tasks.add_task(send_transactional_email, email, f"Warteliste · {c.title}", "Du bist auf der Warteliste", [
         f"{c.title} · {starts.strftime('%d.%m.%Y um %H:%M Uhr')} · {c.studio.name}",
         f"Deine aktuelle Position: {pos}",
         "Wir informieren dich, sobald ein Platz frei wird.",
     ])
-    return {"position":pos}
+    return {"position": int(pos), "reference": reference, "synced": bool(remote_entry_id)}
+
+@app.delete("/api/waitlist")
+def leave_waitlist_public(data: WaitlistCancelIn, db: Session = Depends(db_session)):
+    reference = data.reference.strip().upper()
+    email = data.email.lower()
+    row = db.scalar(select(Waitlist).where(Waitlist.reference == reference, Waitlist.email == email))
+    if not row:
+        raise HTTPException(404, "waitlist_not_found")
+    if row.mindbody_waitlist_entry_id:
+        from mindbody_sync import remove_remote_waitlist
+        try:
+            remove_remote_waitlist(row.mindbody_waitlist_entry_id)
+        except Exception as exc:
+            row.mindbody_sync_status = "remove_failed"
+            row.mindbody_sync_error = str(exc)[:1500]
+            db.commit()
+            raise HTTPException(503, "mindbody_waitlist_unavailable") from exc
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
