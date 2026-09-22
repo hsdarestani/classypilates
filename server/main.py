@@ -1659,10 +1659,14 @@ def berlin_day(value: str, *, end: bool = False) -> datetime:
 
 @app.get("/api/schedule")
 def public_schedule(
+    response: Response,
     from_: Optional[str] = Query(default=None, alias="from"),
     to: Optional[str] = Query(default=None),
     db: Session = Depends(db_session),
 ):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     try:
         start = berlin_day(from_) if from_ else datetime.now(ZoneInfo("Europe/Berlin")).replace(hour=0, minute=0, second=0, microsecond=0)
         end = berlin_day(to, end=True) if to else start + timedelta(days=14)
