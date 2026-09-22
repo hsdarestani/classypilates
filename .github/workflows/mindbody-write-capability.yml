@@ -2,12 +2,6 @@ name: Check Mindbody Write Credentials
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/mindbody-write-capability.yml
-      - server/mindbody_sync.py
-      - server/runtime_app.py
 
 permissions:
   contents: read
