@@ -392,6 +392,22 @@ def _studio_matches(local_id: str, name: str) -> bool:
     return keys.get(local_id, local_id) in name
 
 
+def _extract_class_visits(payload: Any) -> list[dict[str, Any]]:
+    """Return visits from Mindbody GetClassVisits response.
+
+    V6 returns a Class object whose Visits collection is nested under "Class".
+    Accept the old/top-level shapes as a defensive fallback, but never assume
+    Visits lives at the response root.
+    """
+    if not isinstance(payload, dict):
+        return []
+    container = payload.get("Class") or payload.get("class") or payload
+    rows = _extract_list(container, ("Visits", "visits", "ClassVisits", "Items"))
+    if not rows and container is not payload:
+        rows = _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _extract_visit(result: dict[str, Any]) -> dict[str, Any]:
     visit = result.get("Visit") or result.get("visit") or {}
     if visit:
@@ -1872,10 +1888,7 @@ def _reconcile_class_roster(
         max(0, int(local_reserved_before)) + max(0, int(klass.imported_bookings or 0)),
     )
     payload = client.get_class_visits(remote_id)
-    visits = [
-        x for x in _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
-        if isinstance(x, dict)
-    ]
+    visits = _extract_class_visits(payload)
     active_ids: set[str] = set()
     for visit in visits:
         visit_id = str(_value(visit, "Id", "ID", "VisitId", default="") or "")
