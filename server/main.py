@@ -1784,14 +1784,13 @@ def join_waitlist(data: WaitlistIn, background_tasks: BackgroundTasks, user: Opt
                 pass
         raise
 
-    pos = db.scalar(select(func.count(Waitlist.id)).where(Waitlist.class_id == c.id, Waitlist.created_at <= w.created_at)) or 1
     starts = as_utc(c.starts_at).astimezone(ZoneInfo("Europe/Berlin"))
     background_tasks.add_task(send_transactional_email, email, f"Warteliste · {c.title}", "Du bist auf der Warteliste", [
         f"{c.title} · {starts.strftime('%d.%m.%Y um %H:%M Uhr')} · {c.studio.name}",
-        f"Deine aktuelle Position: {pos}",
+        "Dein Wartelisteneintrag wurde bestätigt.",
         "Wir informieren dich, sobald ein Platz frei wird.",
     ])
-    return {"position": int(pos), "reference": reference, "synced": bool(remote_entry_id)}
+    return {"reference": reference, "synced": bool(remote_entry_id)}
 
 @app.delete("/api/waitlist")
 def leave_waitlist_public(data: WaitlistCancelIn, db: Session = Depends(db_session)):
