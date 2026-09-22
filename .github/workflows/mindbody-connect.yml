@@ -69,7 +69,7 @@ jobs:
           STAFF_PASSWORD_B64="$(printf '%s' "$STAFF_PASSWORD" | base64 -w0)"
           export SSHPASS="$PASS"
 
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" \
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=20 root@"$HOST" \
             "API_KEY_B64='$API_KEY_B64' SITE_ID_B64='$SITE_ID_B64' STAFF_USERNAME_B64='$STAFF_USERNAME_B64' STAFF_PASSWORD_B64='$STAFF_PASSWORD_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
