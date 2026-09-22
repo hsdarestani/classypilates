@@ -630,7 +630,11 @@ def class_dict(c: ClassSession, db: Session):
     if live_reserved is None:
         live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
     imported_reserved = max(0, int(c.imported_bookings or 0))
-    reserved = min(c.capacity, imported_reserved + live_reserved)
+    provider_reserved_floor = max(0, int(c.source_bookings_total or 0))
+    reserved = min(
+        c.capacity,
+        max(imported_reserved + live_reserved, provider_reserved_floor, live_reserved),
+    )
     starts_at = c.starts_at
     if starts_at.tzinfo is None:
         starts_at = starts_at.replace(tzinfo=ZoneInfo("Europe/Berlin"))
