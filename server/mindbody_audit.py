@@ -327,6 +327,15 @@ def main():
         """)).all()
         issues["multiple_paid_orders_per_booking"] = len(duplicate_paid_orders)
 
+        duplicate_active_orders = db.execute(text("""
+            SELECT booking_reference, count(*) AS n
+            FROM payment_orders
+            WHERE booking_reference IS NOT NULL AND status IN ('pending','paid')
+            GROUP BY booking_reference
+            HAVING count(*) > 1
+        """)).all()
+        issues["multiple_active_orders_per_booking"] = len(duplicate_active_orders)
+
         paid_order_without_booking = db.execute(text("""
             SELECT po.reference
             FROM payment_orders po
@@ -443,7 +452,8 @@ def main():
         "duplicate_active_website_bookings","duplicate_active_spots",
         "duplicate_mindbody_visit_ids","duplicate_waitlist_entries",
         "duplicate_waitlist_remote_ids","multiple_paid_orders_per_booking",
-        "paid_order_without_booking","paid_sumup_booking_without_paid_order",
+        "multiple_active_orders_per_booking","paid_order_without_booking",
+        "paid_sumup_booking_without_paid_order",
         "duplicate_active_coach_names","duplicate_coach_remote_mapping",
         "remote_visits_missing_local","local_visits_missing_remote","roster_audit_errors",
     ]
