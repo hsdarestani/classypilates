@@ -121,4 +121,15 @@ jobs:
           PY
           )"
           printf 'Mindbody production sync result: %s\n' "$SYNC_RESULT"
+
+          AUDIT_RESULT="$(docker compose exec -T api python mindbody_audit.py </dev/null || true)"
+          printf 'Mindbody production audit: %s\n' "$AUDIT_RESULT"
+          python3 - "$AUDIT_RESULT" <<'PY'
+          import json, sys
+          data = json.loads(sys.argv[1])
+          if not data.get("ok"):
+              print("Mindbody production consistency audit failed:", json.dumps(data, indent=2, sort_keys=True))
+              raise SystemExit(3)
+          print("Mindbody production consistency audit OK")
+          PY
           REMOTE
