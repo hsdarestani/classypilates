@@ -249,8 +249,14 @@ class WriteClient(MindbodyClient):
         class_id: str | None = None,
         client_id: str | None = None,
         waitlist_entry_id: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"request.hidePastEntries": True, "request.limit": 100}
+        params: dict[str, Any] = {
+            "request.hidePastEntries": True,
+            "request.limit": max(1, min(200, int(limit))),
+            "request.offset": max(0, int(offset)),
+        }
         if class_id:
             params["request.classIds"] = [int(class_id)]
         if client_id:
@@ -1709,6 +1715,117 @@ def _sync_class_availability(
             changed = True
 
     return changed
+
+
+def _reconcile_class_waitlist(
+    client: WriteClient,
+    db: Session,
+    klass: core.ClassSession,
+    remote_id: str,
+    now: datetime,
+) -> dict[str, int]:
+    """Mirror one class waitlist by stable Mindbody WaitlistEntryId."""
+    result = {"remote": 0, "created": 0, "removed": 0, "unresolved": 0}
+    remote_rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        batch = client.get_waitlist_entries(
+            class_id=remote_id,
+            limit=200,
+            offset=offset,
+        )
+        remote_rows.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+
+    remote_by_id = {
+        _waitlist_entry_id(row): row
+        for row in remote_rows
+        if _waitlist_entry_id(row)
+    }
+    result["remote"] = len(remote_by_id)
+
+    local_rows = list(db.scalars(
+        select(core.Waitlist).where(core.Waitlist.class_id == klass.id)
+    ).all())
+    local_by_remote = {
+        str(row.mindbody_waitlist_entry_id): row
+        for row in local_rows
+        if row.mindbody_waitlist_entry_id
+    }
+
+    # Remove local entries that Mindbody no longer has (manual removal or promotion).
+    for entry_id, local in list(local_by_remote.items()):
+        if entry_id in remote_by_id:
+            local.mindbody_sync_status = "synced"
+            local.mindbody_sync_error = ""
+            continue
+        db.delete(local)
+        result["removed"] += 1
+
+    # Mirror waitlist rows created directly in Mindbody when enough client identity
+    # is exposed to do so safely.
+    for entry_id, remote in remote_by_id.items():
+        if entry_id in local_by_remote:
+            continue
+        client_data = remote.get("Client") or remote.get("client") or {}
+        client_id = _waitlist_client_id(remote)
+        email = str(_value(
+            remote,
+            "ClientEmail", "Email", "email",
+            default=_value(client_data, "Email", "email", default=""),
+        ) or "").strip().lower()
+        first = str(_value(
+            remote,
+            "ClientFirstName", "FirstName",
+            default=_value(client_data, "FirstName", "firstName", default=""),
+        ) or "").strip()
+        last = str(_value(
+            remote,
+            "ClientLastName", "LastName",
+            default=_value(client_data, "LastName", "lastName", default=""),
+        ) or "").strip()
+
+        if not email:
+            result["unresolved"] += 1
+            continue
+
+        existing = db.scalar(
+            select(core.Waitlist).where(
+                core.Waitlist.class_id == klass.id,
+                func.lower(core.Waitlist.email) == email,
+            )
+        )
+        if existing:
+            existing.mindbody_client_id = client_id or existing.mindbody_client_id
+            existing.mindbody_waitlist_entry_id = entry_id
+            existing.mindbody_sync_status = "synced"
+            existing.mindbody_sync_error = ""
+            continue
+
+        reference = f"MBW-{entry_id}"[:50]
+        row = core.Waitlist(
+            class_id=klass.id,
+            email=email,
+            first_name=first,
+            last_name=last,
+            reference=reference,
+            mindbody_client_id=client_id or None,
+            mindbody_waitlist_entry_id=entry_id,
+            mindbody_sync_status="synced",
+            mindbody_sync_error="",
+        )
+        db.add(row)
+        db.flush()
+        user = db.scalar(select(core.User).where(func.lower(core.User.email) == email))
+        if user and core.portal_for(user) == "/account":
+            if not db.get(core.CustomerWaitlistLink, row.id):
+                db.add(core.CustomerWaitlistLink(waitlist_id=row.id, user_id=user.id))
+        result["created"] += 1
+
+    db.commit()
+    return result
 
 
 def _reconcile_class_roster(
