@@ -98,7 +98,7 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8787/api/health >/dev/null
 
-          RESULT="$(docker compose exec -T api python mindbody_api.py)"
+          RESULT="$(docker compose exec -T api python mindbody_api.py </dev/null)"
           printf '%s\n' "$RESULT"
           python3 - "$RESULT" <<'PY'
           import json, sys
