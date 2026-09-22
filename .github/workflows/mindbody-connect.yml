@@ -1,9 +1,6 @@
 name: Connect Mindbody Production
 
 on:
-  workflow_run:
-    workflows: ["Deploy Classy Production"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
