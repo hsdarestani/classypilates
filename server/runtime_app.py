@@ -225,11 +225,7 @@ def _reconcile_remote_website_cancellations() -> int:
             except mindbody_sync.MindbodyError:
                 # Never infer cancellations when the upstream roster cannot be read.
                 continue
-            visits = [
-                item
-                for item in mindbody_sync._extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
-                if isinstance(item, dict)
-            ]
+            visits = mindbody_sync._extract_class_visits(payload)
             active_visit_ids: set[str] = set()
             active_client_ids: set[str] = set()
             for visit in visits:
