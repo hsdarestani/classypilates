@@ -53,6 +53,7 @@ _worker_guard = threading.Lock()
 def webhook_status() -> dict[str, Any]:
     return {
         "configured": bool((os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip()),
+        "subscription_configured": bool((os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()),
         "path": WEBHOOK_PATH,
         "events": len(EVENT_IDS),
         "durable_queue": True,
@@ -60,7 +61,7 @@ def webhook_status() -> dict[str, Any]:
     }
 
 
-def _ensure_event_store() -> None:
+def _ensure_event_store(*, reset_processing: bool = False) -> None:
     timestamp_type = "DATETIME" if core.engine.dialect.name == "sqlite" else "TIMESTAMP WITH TIME ZONE"
     with core.engine.begin() as connection:
         connection.execute(text(f"""
@@ -81,17 +82,18 @@ def _ensure_event_store() -> None:
             CREATE INDEX IF NOT EXISTS ix_mindbody_webhook_events_pending
             ON mindbody_webhook_events (status, next_attempt_at, created_at)
         """))
-        connection.execute(
-            text("""
-                UPDATE mindbody_webhook_events
-                SET status='failed',
-                    last_error=CASE
-                        WHEN last_error='' THEN 'worker_restarted_during_processing'
-                        ELSE last_error
-                    END
-                WHERE status='processing'
-            """)
-        )
+        if reset_processing:
+            connection.execute(
+                text("""
+                    UPDATE mindbody_webhook_events
+                    SET status='failed',
+                        last_error=CASE
+                            WHEN last_error='' THEN 'worker_restarted_during_processing'
+                            ELSE last_error
+                        END
+                    WHERE status='processing'
+                """)
+            )
 
 
 def _signature_is_valid(raw_body: bytes, supplied: str) -> bool:
@@ -134,7 +136,6 @@ def _event_start_hint(payload: dict[str, Any]) -> str | None:
 
 
 def _enqueue(payload: dict[str, Any], raw_body: bytes) -> None:
-    _ensure_event_store()
     message_id = str(payload.get("messageId") or "").strip()
     if not message_id:
         message_id = "body:" + hashlib.sha256(raw_body).hexdigest()
@@ -163,7 +164,6 @@ def _enqueue(payload: dict[str, Any], raw_body: bytes) -> None:
 
 
 def _claim_batch() -> list[dict[str, Any]]:
-    _ensure_event_store()
     now = datetime.now(timezone.utc)
     ready_before = now - timedelta(seconds=DEBOUNCE_SECONDS)
     with core.engine.begin() as connection:
@@ -371,7 +371,7 @@ def install(app) -> None:
     @app.on_event("startup")
     def start_mindbody_webhook_worker():
         global _worker_started
-        _ensure_event_store()
+        _ensure_event_store(reset_processing=True)
         if not mindbody_sync.SYNC_ENABLED:
             return
         with _worker_guard:
@@ -424,66 +424,73 @@ def _subscriptions() -> list[dict[str, Any]]:
 
 
 def prepare_subscription(webhook_url: str) -> dict[str, Any]:
-    matches = [
-        row
-        for row in _subscriptions()
-        if str(row.get("referenceId") or "") == SUBSCRIPTION_REFERENCE
-    ]
+    existing_id = (os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()
     key_present = bool((os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip())
 
-    # Keep at most one managed subscription. If its one-time signature key was
-    # lost, recreate it while still inactive so a new key can be stored safely.
-    if len(matches) > 1:
-        for duplicate in matches[1:]:
-            subscription_id = str(duplicate.get("subscriptionId") or "").strip()
-            if subscription_id:
-                _push_request("DELETE", f"subscriptions/{subscription_id}")
-        matches = matches[:1]
-
-    if matches and not key_present:
-        subscription_id = str(matches[0].get("subscriptionId") or "").strip()
-        if subscription_id:
-            _push_request("DELETE", f"subscriptions/{subscription_id}")
-        matches = []
-
-    if not matches:
-        created = _push_request(
-            "POST",
-            "subscriptions",
-            {
-                "eventIds": list(EVENT_IDS),
-                "eventSchemaVersion": 1,
-                "referenceId": SUBSCRIPTION_REFERENCE,
-                "webhookUrl": webhook_url,
-            },
-        )
+    # When both values are persisted, preserve the exact subscription/key pair.
+    # The activation step updates its URL/events/status and will surface an invalid
+    # ID without silently pairing the old signature key with another subscription.
+    if existing_id and key_present:
         return {
-            "subscription_id": str(created.get("subscriptionId") or ""),
-            "status": str(created.get("status") or ""),
-            "signature_key": str(created.get("messageSignatureKey") or ""),
-            "created": True,
+            "subscription_id": existing_id,
+            "status": "Existing",
+            "signature_key": "",
+            "created": False,
         }
 
+    # If either half of the pair was lost, deactivate all subscriptions previously
+    # managed by Classy and create a fresh PendingActivation subscription. DELETE
+    # deactivates rather than removes subscriptions in Mindbody, so activation
+    # always uses the exact new ID returned below instead of searching by reference.
+    try:
+        for row in _subscriptions():
+            reference = str(row.get("referenceId") or "")
+            subscription_id = str(row.get("subscriptionId") or "").strip()
+            if reference.startswith(SUBSCRIPTION_REFERENCE) and subscription_id:
+                try:
+                    _push_request("DELETE", f"subscriptions/{subscription_id}")
+                except Exception:
+                    pass
+    except Exception:
+        # Listing old subscriptions is cleanup only. POST below remains the source
+        # of truth for the new key/ID pair.
+        pass
+
+    unique_reference = (
+        f"{SUBSCRIPTION_REFERENCE}:"
+        f"{str(os.getenv('MINDBODY_SITE_ID') or 'site')}:"
+        f"{int(time.time())}"
+    )
+    created = _push_request(
+        "POST",
+        "subscriptions",
+        {
+            "eventIds": list(EVENT_IDS),
+            "eventSchemaVersion": 1,
+            "referenceId": unique_reference,
+            "webhookUrl": webhook_url,
+        },
+    )
+    subscription_id = str(created.get("subscriptionId") or "").strip()
+    signature_key = str(created.get("messageSignatureKey") or "").strip()
+    if not subscription_id or not signature_key:
+        raise RuntimeError("Mindbody did not return a webhook subscription ID/signature key")
     return {
-        "subscription_id": str(matches[0].get("subscriptionId") or ""),
-        "status": str(matches[0].get("status") or ""),
-        "signature_key": "",
-        "created": False,
+        "subscription_id": subscription_id,
+        "status": str(created.get("status") or ""),
+        "signature_key": signature_key,
+        "created": True,
     }
 
 
-def activate_subscription(webhook_url: str) -> dict[str, Any]:
-    matches = [
-        row
-        for row in _subscriptions()
-        if str(row.get("referenceId") or "") == SUBSCRIPTION_REFERENCE
-    ]
-    if not matches:
-        raise RuntimeError("Managed Mindbody webhook subscription was not found")
-
-    subscription_id = str(matches[0].get("subscriptionId") or "").strip()
+def activate_subscription(webhook_url: str, subscription_id: str | None = None) -> dict[str, Any]:
+    subscription_id = str(
+        subscription_id
+        or os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID")
+        or ""
+    ).strip()
     if not subscription_id:
-        raise RuntimeError("Mindbody webhook subscription has no ID")
+        raise RuntimeError("MINDBODY_WEBHOOK_SUBSCRIPTION_ID is not configured")
 
     updated = _push_request(
         "PATCH",
@@ -491,7 +498,6 @@ def activate_subscription(webhook_url: str) -> dict[str, Any]:
         {
             "eventIds": list(EVENT_IDS),
             "eventSchemaVersion": 1,
-            "referenceId": SUBSCRIPTION_REFERENCE,
             "webhookUrl": webhook_url,
             "status": "Active",
         },
@@ -507,15 +513,17 @@ def activate_subscription(webhook_url: str) -> dict[str, Any]:
 def _main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "activate"):
-        item = sub.add_parser(name)
-        item.add_argument("--webhook-url", required=True)
+    prepare = sub.add_parser("prepare")
+    prepare.add_argument("--webhook-url", required=True)
+    activate = sub.add_parser("activate")
+    activate.add_argument("--webhook-url", required=True)
+    activate.add_argument("--subscription-id", default="")
     args = parser.parse_args()
 
     if args.command == "prepare":
         result = prepare_subscription(args.webhook_url)
     else:
-        result = activate_subscription(args.webhook_url)
+        result = activate_subscription(args.webhook_url, args.subscription_id)
     print(json.dumps(result, separators=(",", ":")))
     return 0
 
