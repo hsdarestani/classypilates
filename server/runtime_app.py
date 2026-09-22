@@ -490,17 +490,21 @@ mindbody_sync.sync_from_mindbody = _sync_from_mindbody_hardened
 
 _roster_worker_started = False
 _roster_worker_guard = threading.Lock()
-ROSTER_SYNC_INTERVAL = max(3600, int(os.getenv("MINDBODY_ROSTER_SYNC_INTERVAL_SECONDS", "43200")))
-ROSTER_INITIAL_DELAY = max(600, int(os.getenv("MINDBODY_ROSTER_INITIAL_DELAY_SECONDS", "900")))
+ROSTER_SYNC_INTERVAL = max(900, int(os.getenv("MINDBODY_ROSTER_SYNC_INTERVAL_SECONDS", "3600")))
+ROSTER_INITIAL_DELAY = max(300, int(os.getenv("MINDBODY_ROSTER_INITIAL_DELAY_SECONDS", "600")))
+ROSTER_WINDOW_DAYS = max(1, min(14, int(os.getenv("MINDBODY_ROSTER_WINDOW_DAYS", "7"))))
 
 
 def _roster_loop() -> None:
-    # Availability does not depend on this worker. This slower pass exists only to
-    # refresh individual Mindbody-origin roster/customer rows.
+    # Fast sync reconciles any class whose booked count changed every few minutes.
+    # This hourly identity sweep catches the rare same-count swap (one cancellation
+    # plus one new booking) even when TotalBooked itself did not change.
     time.sleep(ROSTER_INITIAL_DELAY)
     while True:
         try:
-            _original_sync_from_mindbody()
+            result = mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
+            if result.get("errors"):
+                print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
         except Exception as exc:
             print(f"Mindbody roster cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
         time.sleep(ROSTER_SYNC_INTERVAL)
