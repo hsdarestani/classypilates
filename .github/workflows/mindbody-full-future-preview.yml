@@ -76,6 +76,7 @@ jobs:
               seen.add(key); classes.append(c)
 
           names=collections.Counter(); coaches=collections.Counter(); locations=collections.Counter()
+          staff_pairs=collections.Counter()
           capacity=booked=waitlisted=0; starts=[]
           for c in classes:
               desc=c.get('ClassDescription') or c.get('classDescription') or {}
@@ -83,6 +84,8 @@ jobs:
               loc=c.get('Location') or c.get('location') or {}
               name=(desc.get('Name') if isinstance(desc,dict) else None) or c.get('Name') or c.get('name') or '—'
               coach=(staff.get('DisplayName') or staff.get('Name') or staff.get('name') or '—') if isinstance(staff,dict) else '—'
+              staff_id=str((staff.get('Id') or staff.get('ID') or staff.get('StaffId') or staff.get('StaffID') or '—')) if isinstance(staff,dict) else '—'
+              staff_pairs[(staff_id,str(coach))]+=1
               location=(loc.get('Name') or loc.get('name') or '—') if isinstance(loc,dict) else '—'
               start=c.get('StartDateTime') or c.get('startDateTime') or ''
               names[str(name)]+=1; coaches[str(coach)]+=1; locations[str(location)]+=1
@@ -105,6 +108,24 @@ jobs:
           for n,c in names.most_common(): print(' -',n,':',c)
           print('COACHES:')
           for n,c in coaches.most_common(): print(' -',n,':',c)
+          print('COACH STAFF IDS:')
+          for (sid,n),count in staff_pairs.most_common():
+              print(' -',sid,'|',n,':',count)
+          print('COACH ALIAS GROUPS:')
+          alias_groups=collections.defaultdict(list)
+          for (sid,n),count in staff_pairs.items():
+              canonical=' '.join(str(n).strip().split())
+              if canonical.lower().startswith('coach '):
+                  canonical=canonical[6:].strip()
+              parts=canonical.split()
+              if len(parts)==2 and parts[0].lower()==parts[1].lower():
+                  canonical=parts[0]
+              alias_groups[canonical.lower()].append((sid,n,count))
+          for key,items in sorted(alias_groups.items()):
+              labels={str(name).strip().lower() for _,name,_ in items}
+              ids={sid for sid,_,_ in items}
+              if len(labels)>1 or len(ids)>1:
+                  print(' -',key,'=>',items)
           print('LOCATIONS:')
           for n,c in locations.most_common(): print(' -',n,':',c)
           PY
