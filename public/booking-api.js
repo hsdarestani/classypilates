@@ -36,7 +36,7 @@
       const waits=readJson('cpRemoteWaitlists',[]);
       const item={reference:data.reference,email,classId:r.id,name:r.name,studio:studioById(r.studio).name,date:r.date,time:r.time};
       const next=[item,...waits.filter(x=>x.reference!==data.reference)].slice(0,50);writeJson('cpRemoteWaitlists',next);
-      closeDrawer();showToast('Waitlist active','Position '+data.position+' was confirmed with Mindbody.');
+      closeDrawer();showToast('Waitlist active','Your waitlist entry was confirmed with Mindbody.');
     }catch(_){showToast('Waitlist unavailable','The waitlist could not be confirmed. No waitlist entry was created.')}
   };
   renderMyBookings=function(){
