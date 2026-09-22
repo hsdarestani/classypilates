@@ -741,10 +741,30 @@ def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
 
 
 def _canonical_coach_name(value: str) -> str:
-    parts = [part for part in str(value or "").split() if part]
+    value = " ".join(str(value or "").split()).strip()
+    if value.casefold().startswith("coach "):
+        value = value[6:].strip()
+    parts = [part for part in value.split() if part]
     if len(parts) == 2 and parts[0].casefold() == parts[1].casefold():
         parts = [parts[0]]
     return " ".join(parts)
+
+
+def _mindbody_staff_write_name(local_display_name: str, remote_row: dict[str, Any] | None = None) -> str:
+    canonical = _canonical_coach_name(local_display_name)
+    if not canonical:
+        return ""
+    raw_remote = ""
+    if remote_row:
+        raw_remote = str(_value(remote_row, "DisplayName", "displayName", default="") or "").strip()
+    if raw_remote.casefold().startswith("coach "):
+        return f"Coach {canonical}"
+    if canonical.casefold() == "classy fitness":
+        return canonical
+    # Classy Pilates' Mindbody directory uses the "Coach " role prefix for
+    # scheduled instructors. Keep that provider convention while Classy displays
+    # the cleaner canonical name.
+    return f"Coach {canonical}"
 
 
 def _coach_name_key(value: str) -> str:
@@ -762,19 +782,28 @@ def _scheduled_staff_ids(classes: list[dict[str, Any]]) -> set[str]:
 
 
 def _merge_duplicate_coaches(db: Session) -> int:
-    """Merge accidental duplicate Coach rows by exact normalized display name.
+    """Merge safe local aliases such as "Coach Andrea" / "Andrea".
 
-    Preserve rows with a login, a Classy-managed photo, profile text, and existing
-    class assignments. Historical sessions are reassigned to the survivor.
+    A group is merged only when it maps to zero or one distinct Mindbody Staff ID.
+    Groups with multiple remote IDs or multiple different login accounts are left
+    untouched for manual review.
     """
+    _ensure_sync_state()
     coaches = list(db.scalars(select(core.Coach).order_by(core.Coach.id)).all())
     if not coaches:
         return 0
+
+    state_rows = db.execute(
+        text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")
+    ).mappings().all()
+    state_by_coach = {int(row["entity_id"]): row for row in state_rows if str(row.get("entity_id") or "").isdigit()}
+
     class_counts = dict(db.execute(
         select(core.ClassSession.coach_id, func.count(core.ClassSession.id))
         .where(core.ClassSession.coach_id.is_not(None))
         .group_by(core.ClassSession.coach_id)
     ).all())
+
     groups: dict[str, list[core.Coach]] = {}
     for coach in coaches:
         key = _coach_name_key(coach.display_name)
@@ -782,8 +811,22 @@ def _merge_duplicate_coaches(db: Session) -> int:
             groups.setdefault(key, []).append(coach)
 
     merged = 0
-    for rows in groups.values():
+    for key, rows in groups.items():
         if len(rows) < 2:
+            # Normalize even a single provider-prefixed profile for Classy display.
+            only = rows[0]
+            canonical = _canonical_coach_name(only.display_name)
+            if canonical and only.display_name != canonical:
+                only.display_name = canonical
+            continue
+
+        remote_ids = {
+            str((state_by_coach.get(row.id) or {}).get("remote_id") or "")
+            for row in rows
+            if (state_by_coach.get(row.id) or {}).get("remote_id")
+        }
+        user_ids = {row.user_id for row in rows if row.user_id}
+        if len(remote_ids) > 1 or len(user_ids) > 1:
             continue
 
         def score(row: core.Coach) -> tuple[int, int]:
@@ -791,34 +834,67 @@ def _merge_duplicate_coaches(db: Session) -> int:
             if row.user_id:
                 value += 100000
             if _is_managed_local_photo(row.photo_url):
-                value += 10000
+                value += 20000
             if (row.bio or "").strip():
-                value += 1000
+                value += 5000
+            if (state_by_coach.get(row.id) or {}).get("remote_id"):
+                value += 2000
             value += int(class_counts.get(row.id, 0)) * 10
             if row.active:
                 value += 1
             return value, -row.id
 
         survivor = max(rows, key=score)
+        survivor.display_name = _canonical_coach_name(survivor.display_name) or survivor.display_name
+
         for duplicate in rows:
             if duplicate.id == survivor.id:
                 continue
-            # Never merge two separately connected login accounts automatically.
-            if duplicate.user_id and survivor.user_id and duplicate.user_id != survivor.user_id:
-                continue
-            if not survivor.photo_url and duplicate.photo_url:
+
+            dup_state = state_by_coach.get(duplicate.id)
+            survivor_state = state_by_coach.get(survivor.id)
+
+            if not survivor.user_id and duplicate.user_id:
+                survivor.user_id = duplicate.user_id
+            if not _is_managed_local_photo(survivor.photo_url) and _is_managed_local_photo(duplicate.photo_url):
+                survivor.photo_url = duplicate.photo_url
+            elif not survivor.photo_url and duplicate.photo_url:
                 survivor.photo_url = duplicate.photo_url
             if not survivor.bio and duplicate.bio:
                 survivor.bio = duplicate.bio
             survivor.active = survivor.active or duplicate.active
+
             db.execute(
                 text("UPDATE classes SET coach_id=:keep WHERE coach_id=:drop"),
                 {"keep": survivor.id, "drop": duplicate.id},
             )
-            db.execute(
-                text("DELETE FROM mindbody_sync_state WHERE entity_type='coach' AND entity_id=:drop"),
-                {"drop": str(duplicate.id)},
-            )
+
+            # Move the one allowed Mindbody Staff mapping onto the survivor before
+            # deleting the alias row.
+            if dup_state and dup_state.get("remote_id") and not (survivor_state or {}).get("remote_id"):
+                db.execute(
+                    text("DELETE FROM mindbody_sync_state WHERE entity_type='coach' AND entity_id=:drop"),
+                    {"drop": str(duplicate.id)},
+                )
+                _state_write(
+                    db,
+                    "coach",
+                    survivor.id,
+                    remote_id=str(dup_state.get("remote_id")),
+                    local_changed_at=dup_state.get("local_changed_at"),
+                    remote_changed_at=dup_state.get("remote_changed_at"),
+                    local_hash=dup_state.get("local_hash"),
+                    remote_hash=dup_state.get("remote_hash"),
+                    last_synced_at=dup_state.get("last_synced_at"),
+                    sync_error=str(dup_state.get("sync_error") or ""),
+                )
+                survivor_state = _state_row(db, "coach", survivor.id)
+            else:
+                db.execute(
+                    text("DELETE FROM mindbody_sync_state WHERE entity_type='coach' AND entity_id=:drop"),
+                    {"drop": str(duplicate.id)},
+                )
+
             db.delete(duplicate)
             merged += 1
         db.flush()
@@ -870,7 +946,8 @@ def _sync_staff_profiles(
         "staff_duplicates_merged": 0,
         "staff_unscheduled_hidden": 0,
     }
-    remote_rows = _load_remote_staff(client)
+    all_remote_rows = _load_remote_staff(client)
+    remote_rows = all_remote_rows
 
     # The Mindbody Staff endpoint is an employee directory, not a coach roster.
     # Only Staff IDs referenced by live/future classes are allowed to create or
@@ -887,9 +964,7 @@ def _sync_staff_profiles(
     remote_rows = list(unique_remote.values())
 
     counts["staff_remote"] = len(remote_rows)
-    # Historical accidental duplicates were cleaned once. Do not keep merging by
-    # display name: two real coaches can legitimately share the same name.
-    counts["staff_duplicates_merged"] = 0
+    counts["staff_duplicates_merged"] = _merge_duplicate_coaches(db)
     locals_ = db.scalars(select(core.Coach)).all()
     state_rows = db.execute(
         text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")
@@ -970,7 +1045,7 @@ def _sync_staff_profiles(
             if local_is_newer:
                 result = client.update_staff(
                     remote_id,
-                    display_name=local_payload["display_name"],
+                    display_name=_mindbody_staff_write_name(local_payload["display_name"], remote),
                     bio=local_payload["bio"],
                     active=local_payload["active"],
                 )
@@ -1030,12 +1105,48 @@ def _sync_staff_profiles(
         if coach.display_name.strip().casefold() == "classy coach":
             continue
         try:
-            result = client.add_staff(display_name=coach.display_name, bio=coach.bio or "")
+            canonical_key = _coach_name_key(coach.display_name)
+            matches = [
+                row for row in all_remote_rows
+                if _coach_name_key(_remote_staff_payload(row)["display_name"]) == canonical_key
+                and _remote_staff_id(row)
+            ]
+            unique_matches: dict[str, dict[str, Any]] = {
+                _remote_staff_id(row): row for row in matches
+            }
+            if len(unique_matches) == 1:
+                remote_id, remote_match = next(iter(unique_matches.items()))
+                mapped[remote_id] = coach
+                coach.display_name = _canonical_coach_name(coach.display_name) or coach.display_name
+                _state_write(
+                    db, "coach", coach.id,
+                    remote_id=remote_id,
+                    remote_changed_at=_remote_staff_modified(remote_match) or now,
+                    local_hash=_stable_hash(_coach_payload(coach)),
+                    remote_hash=_stable_hash(_remote_staff_payload(remote_match)),
+                    last_synced_at=now,
+                    sync_error="",
+                )
+                counts["staff_pulled"] += 1
+                continue
+            if len(unique_matches) > 1:
+                raise MindbodyError(
+                    f"Ambiguous Mindbody staff alias for {coach.display_name}: "
+                    f"{','.join(sorted(unique_matches))}"
+                )
+
+            provider_name = _mindbody_staff_write_name(coach.display_name)
+            result = client.add_staff(display_name=provider_name, bio=coach.bio or "")
             remote_id = _staff_result_id(result)
             if not remote_id:
                 raise MindbodyError("Mindbody staff creation returned no staff ID")
             if not coach.active:
-                client.update_staff(remote_id, display_name=coach.display_name, bio=coach.bio or "", active=False)
+                client.update_staff(
+                    remote_id,
+                    display_name=provider_name,
+                    bio=coach.bio or "",
+                    active=False,
+                )
             mapped[remote_id] = coach
             counts["staff_created_remote"] += 1
             _state_write(
