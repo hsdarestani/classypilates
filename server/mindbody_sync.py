@@ -1029,7 +1029,8 @@ def _ensure_local_class(
     klass = next(
         (
             x for x in local
-            if abs((core.as_utc(x.starts_at) - starts).total_seconds()) < 90
+            if not x.mindbody_class_id
+            and abs((core.as_utc(x.starts_at) - starts).total_seconds()) < 90
             and x.title.casefold() == title.casefold()
             and _studio_matches(x.studio_id, _studio_name(remote))
         ),
@@ -1185,6 +1186,27 @@ def _sync_class_availability(
     return changed
 
 
+def _cancel_unlinked_local_classes(db: Session, *, start: datetime, end: datetime) -> int:
+    """Hide local-only sessions inside the live Mindbody window.
+
+    These rows were historically created by the bundled snapshot importer. With
+    live Mindbody enabled, an active class in the live window must have a provider
+    ID; otherwise it can create phantom availability on the website.
+    """
+    rows = db.scalars(
+        select(core.ClassSession).where(
+            core.ClassSession.starts_at >= start,
+            core.ClassSession.starts_at < end,
+            core.ClassSession.status == "active",
+            core.ClassSession.mindbody_class_id.is_(None),
+        )
+    ).all()
+    for row in rows:
+        row.status = "cancelled"
+        row.mindbody_synced_at = datetime.now(timezone.utc)
+    return len(rows)
+
+
 def sync_staff_and_assignments() -> dict[str, int]:
     """Synchronize Mindbody staff profiles and upcoming class trainer assignments only.
 
@@ -1266,6 +1288,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
             counts["trainer_assignments_pulled"] += pulled
             counts["trainer_assignments_pushed"] += pushed
             counts["trainer_assignment_errors"] += assignment_errors
+        counts["local_only_cancelled"] = _cancel_unlinked_local_classes(db, start=now, end=end)
         db.commit()
     return counts
 
@@ -1352,6 +1375,7 @@ def sync_from_mindbody() -> dict[str, int]:
             klass.imported_bookings = 0  # individual mirror rows are counted by the normal booking query
             klass.source_bookings_total = len(active_ids)
             db.commit()
+        counts["local_only_cancelled"] = _cancel_unlinked_local_classes(db, start=now, end=end)
         db.commit()
     return counts
 
