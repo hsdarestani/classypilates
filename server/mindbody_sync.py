@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException
-from sqlalchemy import func, select, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session, joinedload
 
 import main as core
@@ -624,6 +624,71 @@ def _remote_class_description(remote: dict[str, Any]) -> str:
     return str(_value(desc, "Description", "description", default="") or "").strip()[:2000]
 
 
+def _dedupe_mindbody_classes(db: Session) -> int:
+    duplicate_ids = list(db.scalars(
+        select(core.ClassSession.mindbody_class_id)
+        .where(core.ClassSession.mindbody_class_id.is_not(None))
+        .group_by(core.ClassSession.mindbody_class_id)
+        .having(func.count(core.ClassSession.id) > 1)
+    ))
+    if not duplicate_ids:
+        # Older production schemas received mindbody_class_id via ALTER TABLE, so the
+        # ORM-level unique=True was never materialized as an index. Enforce it now.
+        db.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_classes_mindbody_class_id "
+            "ON classes (mindbody_class_id) WHERE mindbody_class_id IS NOT NULL"
+        ))
+        db.commit()
+        return 0
+
+    tables = set(inspect(core.engine).get_table_names())
+    merged = 0
+    for remote_id in duplicate_ids:
+        rows = list(db.scalars(
+            select(core.ClassSession)
+            .where(core.ClassSession.mindbody_class_id == remote_id)
+            .order_by(core.ClassSession.id.asc())
+        ))
+        if len(rows) < 2:
+            continue
+
+        # Keep the oldest row: it is the one most likely to already own bookings and
+        # public links from before the live Mindbody mirror was introduced.
+        survivor = rows[0]
+        for duplicate in rows[1:]:
+            if "bookings" in tables:
+                db.execute(text("UPDATE bookings SET class_id=:keep WHERE class_id=:drop"), {"keep": survivor.id, "drop": duplicate.id})
+            if "waitlist" in tables:
+                db.execute(text("UPDATE waitlist SET class_id=:keep WHERE class_id=:drop"), {"keep": survivor.id, "drop": duplicate.id})
+            if "class_notifications" in tables:
+                db.execute(text("UPDATE class_notifications SET class_id=:keep WHERE class_id=:drop"), {"keep": survivor.id, "drop": duplicate.id})
+            if "public_class_map" in tables:
+                survivor_map = db.execute(
+                    text("SELECT external_id FROM public_class_map WHERE class_id=:keep LIMIT 1"),
+                    {"keep": survivor.id},
+                ).first()
+                if survivor_map:
+                    db.execute(text("DELETE FROM public_class_map WHERE class_id=:drop"), {"drop": duplicate.id})
+                else:
+                    db.execute(text("UPDATE public_class_map SET class_id=:keep WHERE class_id=:drop"), {"keep": survivor.id, "drop": duplicate.id})
+            if "mindbody_sync_state" in tables:
+                db.execute(
+                    text("DELETE FROM mindbody_sync_state WHERE entity_type='class' AND entity_id=:drop"),
+                    {"drop": str(duplicate.id)},
+                )
+            db.delete(duplicate)
+            merged += 1
+        db.flush()
+
+    db.commit()
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_classes_mindbody_class_id "
+        "ON classes (mindbody_class_id) WHERE mindbody_class_id IS NOT NULL"
+    ))
+    db.commit()
+    return merged
+
+
 def _ensure_local_class(
     db: Session,
     local: list[core.ClassSession],
@@ -637,8 +702,18 @@ def _ensure_local_class(
     if not remote_id or not starts or not title:
         return None, False
 
-    klass = next((x for x in local if x.mindbody_class_id == remote_id), None)
+    # Mindbody's class endpoint may include earlier classes from the current day even
+    # when StartDateTime is set to "now". Look up the provider ID across the whole DB,
+    # not only the future-window list, otherwise those rows are recreated every sync.
+    klass = db.scalar(
+        select(core.ClassSession)
+        .where(core.ClassSession.mindbody_class_id == remote_id)
+        .order_by(core.ClassSession.id.asc())
+        .limit(1)
+    )
     if klass:
+        if all(x.id != klass.id for x in local):
+            local.append(klass)
         return klass, False
 
     klass = next(
@@ -726,6 +801,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
         "trainer_assignment_errors": 0,
     }
     with core.SessionLocal() as db:
+        counts["duplicate_classes_merged"] = _dedupe_mindbody_classes(db)
         staff_counts, staff_map = _sync_staff_profiles(client, db, now)
         counts.update(staff_counts)
         local = db.scalars(
@@ -769,6 +845,7 @@ def sync_from_mindbody() -> dict[str, int]:
         "trainer_assignments_pulled": 0, "trainer_assignments_pushed": 0, "trainer_assignment_errors": 0,
     }
     with core.SessionLocal() as db:
+        counts["duplicate_classes_merged"] = _dedupe_mindbody_classes(db)
         staff_counts, staff_map = _sync_staff_profiles(client, db, now)
         counts.update(staff_counts)
         local = db.scalars(select(core.ClassSession).where(core.ClassSession.starts_at >= now, core.ClassSession.starts_at < end)).all()
