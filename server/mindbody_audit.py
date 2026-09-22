@@ -169,6 +169,7 @@ def main():
 
         unlinked_future_classes = db.scalar(select(func.count(core.ClassSession.id)).where(
             core.ClassSession.starts_at >= now,
+            core.ClassSession.starts_at < end,
             core.ClassSession.status == "active",
             core.ClassSession.mindbody_class_id.is_(None),
         )) or 0
@@ -200,6 +201,26 @@ def main():
             )
         ) or 0
         issues["stale_pending_holds"] = int(stale_pending_holds)
+        if stale_pending_holds and len(samples) < 30:
+            rows = db.execute(select(
+                core.Booking.id,
+                core.Booking.reference,
+                core.Booking.mindbody_sync_status,
+                core.Booking.created_at,
+            ).where(
+                core.Booking.source == "website",
+                core.Booking.status == "reserved",
+                core.Booking.payment_status == "pending",
+                core.Booking.created_at < hold_cutoff,
+            ).limit(5)).all()
+            for row in rows:
+                samples.append({
+                    "type": "stale_pending_hold",
+                    "booking_id": row.id,
+                    "reference": row.reference,
+                    "sync_status": row.mindbody_sync_status,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                })
 
         paid_unsynced = db.scalar(select(func.count(core.Booking.id)).where(
             core.Booking.source == "website",
@@ -211,6 +232,26 @@ def main():
             core.Booking.mindbody_sync_status == "cancel_failed"
         )) or 0
         issues["paid_booking_unsynced"] = int(paid_unsynced)
+        if paid_unsynced and len(samples) < 30:
+            rows = db.execute(select(
+                core.Booking.id,
+                core.Booking.reference,
+                core.Booking.mindbody_sync_status,
+                core.Booking.mindbody_sync_error,
+            ).where(
+                core.Booking.source == "website",
+                core.Booking.status == "reserved",
+                core.Booking.payment_status == "paid",
+                core.Booking.mindbody_sync_status != "synced",
+            ).limit(5)).all()
+            for row in rows:
+                samples.append({
+                    "type": "paid_booking_unsynced",
+                    "booking_id": row.id,
+                    "reference": row.reference,
+                    "sync_status": row.mindbody_sync_status,
+                    "error": (row.mindbody_sync_error or "")[:300],
+                })
         issues["cancel_failed"] = int(cancel_failed)
 
     critical_keys = [
