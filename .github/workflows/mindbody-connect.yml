@@ -90,7 +90,8 @@ jobs:
           } >> .env
           chmod 600 .env
 
-          docker compose up -d --force-recreate api
+          # Production deployment already recreates the API. Do not restart it again here:
+          # a second recreate can race the just-completed deploy and briefly break health checks.
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
             sleep 2
