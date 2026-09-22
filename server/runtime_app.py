@@ -405,9 +405,33 @@ def _cleanup_stale_booking_holds() -> int:
                     if synced and synced.status in {"failed", "cancelled"}:
                         should_cancel = True
                     elif synced and synced.status == "pending":
-                        # A stale checkout that is still pending is treated as abandoned
-                        # after the configured hold TTL.
-                        should_cancel = True
+                        # Never release a Mindbody seat while a SumUp checkout can
+                        # still become paid. Deactivate the checkout first; only a
+                        # successful provider-side deactivation makes the hold safe
+                        # to release.
+                        try:
+                            feedback._sumup_request(
+                                f"/v0.1/checkouts/{order.provider_payment_id}",
+                                method="DELETE",
+                            )
+                            order.status = "cancelled"
+                            db.commit()
+                            should_cancel = True
+                        except Exception:
+                            # Payment may have raced the deactivation. Re-read the
+                            # provider state and keep the seat unless cancellation is
+                            # certain.
+                            try:
+                                latest = feedback._sumup_request(f"/v0.1/checkouts/{order.provider_payment_id}")
+                                latest_order = feedback._sync_sumup_order(latest, db, None)
+                                if latest_order and latest_order.status == "paid":
+                                    continue
+                                if latest_order and latest_order.status in {"failed", "cancelled"}:
+                                    should_cancel = True
+                                else:
+                                    continue
+                            except Exception:
+                                continue
                 except Exception:
                     # Never release a hold when payment state cannot be verified.
                     continue
