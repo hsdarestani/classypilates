@@ -178,9 +178,13 @@ class WriteClient(MindbodyClient):
         return self.access_token
 
     def get_class_visits(self, class_id: str) -> dict[str, Any]:
-        # Class visits contain the booking state and, when staff access permits it,
-        # the customer object needed by the private admin panel.
-        return self._authorized_get("class/classvisits", {"ClassId": class_id})
+        # V6 requires the request-scoped query key exactly as request.classID.
+        # Using ClassId is silently treated as an unfiltered/invalid request by
+        # Mindbody and can yield an empty roster instead of a clear error.
+        return self._authorized_get(
+            "class/classvisits",
+            {"request.classID": int(class_id)},
+        )
 
     def get_classes(
         self,
