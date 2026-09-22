@@ -942,6 +942,8 @@ def _deactivate_remote_staff_aliases(
     client: WriteClient,
     all_remote_rows: list[dict[str, Any]],
     scheduled_remote_ids: set[str],
+    *,
+    max_changes: int = 50,
 ) -> int:
     """Deactivate duplicate Mindbody Staff aliases that are not used by the schedule.
 
@@ -984,6 +986,8 @@ def _deactivate_remote_staff_aliases(
                 active=False,
             )
             changed += 1
+            if changed >= max_changes:
+                return changed
     return changed
 
 
@@ -1036,12 +1040,13 @@ def _sync_staff_profiles(
     all_remote_rows = _load_remote_staff(client)
     remote_rows = all_remote_rows
 
-    if allowed_remote_ids is not None:
-        counts["staff_remote_aliases_deactivated"] = _deactivate_remote_staff_aliases(
-            client,
-            all_remote_rows,
-            allowed_remote_ids,
-        )
+    # Fix Classy first so the admin/public UI never waits for the much slower
+    # provider-directory cleanup. Persist the merge before any remote network loop.
+    counts["staff_duplicates_merged"] = _merge_duplicate_coaches(
+        db,
+        scheduled_remote_ids=allowed_remote_ids,
+    )
+    db.commit()
 
     # The Mindbody Staff endpoint is an employee directory, not a coach roster.
     # Only Staff IDs referenced by live/future classes are allowed to create or
@@ -1058,10 +1063,17 @@ def _sync_staff_profiles(
     remote_rows = list(unique_remote.values())
 
     counts["staff_remote"] = len(remote_rows)
-    counts["staff_duplicates_merged"] = _merge_duplicate_coaches(
-        db,
-        scheduled_remote_ids=allowed_remote_ids,
-    )
+
+    # Provider cleanup is intentionally bounded. Remaining historical aliases are
+    # handled by later sync cycles without delaying the Classy-side merge.
+    if allowed_remote_ids is not None:
+        counts["staff_remote_aliases_deactivated"] = _deactivate_remote_staff_aliases(
+            client,
+            all_remote_rows,
+            allowed_remote_ids,
+            max_changes=50,
+        )
+
     locals_ = db.scalars(select(core.Coach)).all()
     state_rows = db.execute(
         text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")
