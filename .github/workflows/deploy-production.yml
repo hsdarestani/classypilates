@@ -355,6 +355,49 @@ jobs:
             test "$ACCOUNT_HTML_CODE" = "301"
           fi
 
+          # Configure Mindbody event delivery only after the HTTPS endpoint is
+          # reachable. The subscription is created in PendingActivation, its
+          # one-time signature key is persisted to .env, the API is restarted with
+          # that key, and only then is the subscription activated.
+          WEBHOOK_URL='https://classy.smarbiz.sbs/api/integrations/mindbody/webhook'
+          if WEBHOOK_PREPARE="$(docker compose exec -T api python mindbody_webhooks.py prepare --webhook-url "$WEBHOOK_URL" 2>/tmp/classy-webhook-prepare.err)"; then
+            WEBHOOK_KEY="$(printf '%s' "$WEBHOOK_PREPARE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("signature_key",""))')"
+            WEBHOOK_SUBSCRIPTION_ID="$(printf '%s' "$WEBHOOK_PREPARE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("subscription_id",""))')"
+            test -n "$WEBHOOK_SUBSCRIPTION_ID"
+
+            if [ -n "$WEBHOOK_KEY" ]; then
+              sed -i '/^MINDBODY_WEBHOOK_SIGNATURE_KEY=/d;/^MINDBODY_WEBHOOK_SUBSCRIPTION_ID=/d' .env
+              {
+                printf 'MINDBODY_WEBHOOK_SIGNATURE_KEY=%s\n' "$WEBHOOK_KEY"
+                printf 'MINDBODY_WEBHOOK_SUBSCRIPTION_ID=%s\n' "$WEBHOOK_SUBSCRIPTION_ID"
+              } >> .env
+              chmod 600 .env
+              unset WEBHOOK_KEY WEBHOOK_PREPARE
+              docker compose up -d --force-recreate api
+              for i in $(seq 1 30); do
+                if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
+                sleep 2
+              done
+              curl -fsS http://127.0.0.1:8787/api/health >/dev/null
+              curl -fsS http://127.0.0.1:8787/api/capabilities | grep -q '"mindbody_webhook"'
+            elif ! grep -q '^MINDBODY_WEBHOOK_SUBSCRIPTION_ID=' .env; then
+              printf 'MINDBODY_WEBHOOK_SUBSCRIPTION_ID=%s\n' "$WEBHOOK_SUBSCRIPTION_ID" >> .env
+              chmod 600 .env
+            fi
+
+            if docker compose exec -T api python mindbody_webhooks.py activate --webhook-url "$WEBHOOK_URL" --subscription-id "$WEBHOOK_SUBSCRIPTION_ID" >/tmp/classy-webhook-activate.json 2>/tmp/classy-webhook-activate.err; then
+              grep -q '"status":"Active"' /tmp/classy-webhook-activate.json
+              echo 'Mindbody webhook subscription: Active'
+            else
+              echo 'WARNING: Mindbody webhook activation unavailable; 3-minute polling fallback remains active.' >&2
+              cat /tmp/classy-webhook-activate.err >&2 || true
+            fi
+          else
+            echo 'WARNING: Mindbody webhook provisioning unavailable; 3-minute polling fallback remains active.' >&2
+            cat /tmp/classy-webhook-prepare.err >&2 || true
+          fi
+          rm -f /tmp/classy-webhook-prepare.err /tmp/classy-webhook-activate.err /tmp/classy-webhook-activate.json
+
           docker compose ps
           REMOTE
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 import feedback_app as feedback
 import class_language  # registers DE/EN class-language routes and payloads
 import mindbody_sync  # registers the production two-way booking mirror
+import mindbody_webhooks
 
 app = feedback.app
 core = mindbody_sync.core
@@ -539,7 +540,8 @@ def _roster_loop() -> None:
     time.sleep(ROSTER_INITIAL_DELAY)
     while True:
         try:
-            result = mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
+            with mindbody_sync.RECONCILE_LOCK:
+                result = mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
             if result.get("errors"):
                 print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
         except Exception as exc:
@@ -596,6 +598,7 @@ def _assert_production_booking_route() -> None:
 
 _prefer_latest_routes()
 _assert_production_booking_route()
+mindbody_webhooks.install(app)
 
 
 @app.get('/api/capabilities')
@@ -611,4 +614,5 @@ def capabilities():
         'class_recurrence': 'monthly',
         'monthly_memberships': True,
         'mindbody_mirror': mindbody_sync.capability_status(),
+        'mindbody_webhook': mindbody_webhooks.webhook_status(),
     }

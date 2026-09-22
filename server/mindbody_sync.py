@@ -24,6 +24,12 @@ INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS",
 _worker_started = False
 _worker_guard = threading.Lock()
 
+# Serialize roster/availability reconciliation across the polling mirror, manual
+# syncs, and webhook-triggered targeted refreshes. Database uniqueness remains the
+# final guard, but avoiding overlapping provider reads/writes prevents transient
+# duplicate attempts and stale counters during high-volume booking bursts.
+RECONCILE_LOCK = threading.RLock()
+
 
 def capability_status() -> dict[str, Any]:
     configured = bool(os.getenv("MINDBODY_API_KEY") and os.getenv("MINDBODY_STAFF_USERNAME") and os.getenv("MINDBODY_STAFF_PASSWORD"))
@@ -1969,6 +1975,163 @@ def _reconcile_class_roster(
     return counts
 
 
+def reconcile_remote_class(
+    remote_class_id: str,
+    *,
+    start_hint: str | None = None,
+    reconcile_roster: bool = True,
+    reconcile_waitlist: bool = True,
+    sync_coach: bool = False,
+) -> dict[str, int | bool]:
+    """Refresh one Mindbody class after a webhook event.
+
+    The webhook is only an invalidation signal. Current class metadata, capacity,
+    roster, and waitlist truth are re-read from Mindbody so duplicated or
+    out-of-order events cannot increment/decrement local counters incorrectly.
+    """
+    remote_class_id = str(remote_class_id or "").strip()
+    if not remote_class_id:
+        raise MindbodyError("Missing Mindbody class ID")
+
+    with RECONCILE_LOCK:
+        now = datetime.now(timezone.utc)
+        client = WriteClient.from_env()
+        email_jobs: list[tuple] = []
+
+        with core.SessionLocal() as db:
+            klass = db.scalar(
+                select(core.ClassSession)
+                .where(core.ClassSession.mindbody_class_id == remote_class_id)
+                .order_by(core.ClassSession.id.asc())
+                .limit(1)
+            )
+
+            # A new schedule/class may arrive before the normal mirror has created
+            # its local row. Use the canonical fast sync once, then retry the ID
+            # lookup instead of inventing a second class from webhook payload data.
+            if not klass:
+                sync_staff_and_assignments()
+                klass = db.scalar(
+                    select(core.ClassSession)
+                    .where(core.ClassSession.mindbody_class_id == remote_class_id)
+                    .order_by(core.ClassSession.id.asc())
+                    .limit(1)
+                )
+                if not klass:
+                    return {
+                        "found": False,
+                        "metadata_updated": 0,
+                        "availability_updated": 0,
+                        "roster_created": 0,
+                        "roster_cancelled": 0,
+                        "waitlist_created": 0,
+                        "waitlist_removed": 0,
+                    }
+
+            remote = None
+            hinted_start = _parse_dt(start_hint) if start_hint else None
+            if hinted_start:
+                payload = client.get_classes(
+                    start_date_time=(hinted_start - timedelta(hours=3)).isoformat(),
+                    end_date_time=(hinted_start + timedelta(hours=3)).isoformat(),
+                    limit=200,
+                    offset=0,
+                )
+                remote = next(
+                    (
+                        row
+                        for row in _extract_list(payload, ("Classes", "classes", "Items"))
+                        if isinstance(row, dict)
+                        and str(_value(row, "Id", "ID", "ClassId", default="") or "") == remote_class_id
+                    ),
+                    None,
+                )
+            if remote is None:
+                remote = _find_remote_class(client, klass)
+
+            # A moved class can fall outside the old local time window. One bounded
+            # canonical sync is safer than treating "not found in old window" as a
+            # cancellation.
+            if remote is None:
+                sync_staff_and_assignments()
+                db.refresh(klass)
+                remote = _find_remote_class(client, klass)
+            if remote is None:
+                raise MindbodyError(f"Mindbody class {remote_class_id} could not be refreshed")
+
+            metadata_updated = int(_sync_remote_class_metadata(klass, remote, now))
+
+            live_reserved = db.scalar(
+                select(func.count(core.Booking.id)).where(
+                    core.Booking.class_id == klass.id,
+                    core.Booking.status == "reserved",
+                )
+            ) or 0
+            availability_updated = int(
+                _sync_class_availability(db, klass, remote, int(live_reserved))
+            )
+
+            if sync_coach:
+                staff_ids = _scheduled_staff_ids([remote])
+                _, staff_map = _sync_staff_profiles(
+                    client,
+                    db,
+                    now,
+                    allowed_remote_ids=staff_ids,
+                )
+                _sync_class_coach(client, db, klass, remote, staff_map, now)
+
+            cancelled = _remote_class_cancelled(remote)
+            if cancelled:
+                email_jobs.extend(_apply_remote_class_cancellation(db, klass, now))
+
+            db.commit()
+            local_class_id = klass.id
+
+        roster_counts = {"created": 0, "cancelled": 0, "visits": 0, "unresolved": 0}
+        wait_counts = {"created": 0, "removed": 0, "remote": 0, "unresolved": 0}
+
+        if not cancelled and reconcile_roster:
+            with core.SessionLocal() as db:
+                klass = db.get(core.ClassSession, local_class_id)
+                if klass:
+                    roster_counts = _reconcile_class_roster(
+                        client,
+                        db,
+                        klass,
+                        remote_class_id,
+                        now,
+                    )
+
+        if not cancelled and reconcile_waitlist:
+            with core.SessionLocal() as db:
+                klass = db.get(core.ClassSession, local_class_id)
+                if klass:
+                    wait_counts = _reconcile_class_waitlist(
+                        client,
+                        db,
+                        klass,
+                        remote_class_id,
+                        now,
+                    )
+
+        for email_job in email_jobs:
+            try:
+                core.send_transactional_email(*email_job)
+            except Exception:
+                pass
+
+        return {
+            "found": True,
+            "metadata_updated": metadata_updated,
+            "availability_updated": availability_updated,
+            "roster_created": int(roster_counts.get("created", 0)),
+            "roster_cancelled": int(roster_counts.get("cancelled", 0)),
+            "waitlist_created": int(wait_counts.get("created", 0)),
+            "waitlist_removed": int(wait_counts.get("removed", 0)),
+        }
+
+
 def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
     """Force identity-level roster reconciliation for a bounded future window."""
     client = WriteClient.from_env()
@@ -2320,7 +2483,9 @@ def _loop():
     while True:
         try:
             if capability_status()["configured"]:
-                sync_from_mindbody(); retry_pending()
+                with RECONCILE_LOCK:
+                    sync_from_mindbody()
+                    retry_pending()
         except Exception as exc:
             print(f"Mindbody mirror cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
         time.sleep(SYNC_INTERVAL)
@@ -2336,10 +2501,15 @@ def start_worker():
         threading.Thread(target=_loop, name="mindbody-mirror", daemon=True).start()
 
 
+def _manual_sync_locked() -> None:
+    with RECONCILE_LOCK:
+        sync_from_mindbody()
+        retry_pending()
+
+
 @core.app.post("/api/staff/mindbody/sync")
 def manual_sync(background: BackgroundTasks, user: core.User = Depends(core.require("bookings.manage"))):
-    background.add_task(sync_from_mindbody)
-    background.add_task(retry_pending)
+    background.add_task(_manual_sync_locked)
     return {"ok": True, "queued": True}
 
 
