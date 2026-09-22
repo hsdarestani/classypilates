@@ -111,4 +111,13 @@ jobs:
               f"classes={data.get('classes_default_window')}"
           )
           PY
+
+          SYNC_RESULT="$(docker compose exec -T api python - <<'PY'
+          import json
+          import runtime_app  # applies production Mindbody patches before the sync
+          import mindbody_sync
+          print(json.dumps(mindbody_sync.sync_from_mindbody(), sort_keys=True))
+          PY
+          )"
+          printf 'Mindbody production sync result: %s\n' "$SYNC_RESULT"
           REMOTE
