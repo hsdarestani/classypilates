@@ -1621,6 +1621,40 @@ def _sync_remote_class_metadata(
     return changed
 
 
+def _apply_remote_class_cancellation(
+    db: Session,
+    klass: core.ClassSession,
+    now: datetime,
+) -> list[tuple]:
+    """Cancel all local reservations when Mindbody cancels the class instance."""
+    email_jobs: list[tuple] = []
+    rows = db.scalars(
+        select(core.Booking).where(
+            core.Booking.class_id == klass.id,
+            core.Booking.status == "reserved",
+        )
+    ).all()
+    for booking in rows:
+        booking.status = "cancelled"
+        booking.mindbody_sync_status = "cancelled_remote"
+        booking.mindbody_sync_error = ""
+        booking.mindbody_synced_at = now
+
+        if booking.payment_method == "class_credit":
+            link = db.get(core.CustomerBookingLink, booking.id)
+            profile = db.get(core.CustomerProfile, link.user_id) if link else None
+            if profile:
+                profile.credits += 1
+            booking.payment_method = "class_credit_refunded"
+
+        if booking.email and not booking.email.endswith("@private.invalid"):
+            try:
+                email_jobs.append(core.cancellation_email_data(booking))
+            except Exception:
+                pass
+    return email_jobs
+
+
 def _sync_class_availability(
     db: Session,
     klass: core.ClassSession,
@@ -1911,6 +1945,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
             break
         offset += len(batch)
 
+    cancellation_email_jobs: list[tuple] = []
     counts = {
         "classes_seen": len(classes),
         "classes_matched": 0,
@@ -1971,6 +2006,10 @@ def sync_staff_and_assignments() -> dict[str, int]:
                 reserved_counts.setdefault(klass.id, 0)
             if _sync_remote_class_metadata(klass, remote, now):
                 counts["metadata_updated"] += 1
+            if _remote_class_cancelled(remote):
+                cancellation_email_jobs.extend(
+                    _apply_remote_class_cancellation(db, klass, now)
+                )
             if _sync_class_availability(
                 db,
                 klass,
@@ -2021,6 +2060,13 @@ def sync_staff_and_assignments() -> dict[str, int]:
             except Exception:
                 db.rollback()
                 counts["roster_errors"] += 1
+
+    for email_job in cancellation_email_jobs:
+        try:
+            core.send_transactional_email(*email_job)
+        except Exception:
+            pass
+    counts["remote_class_cancellation_notifications"] = len(cancellation_email_jobs)
     return counts
 
 
