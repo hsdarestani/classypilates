@@ -538,4 +538,7 @@ jobs:
             exit 3
           fi
           echo "Production sync integrity: OK"
+
+          echo "Running live Mindbody/Classy availability audit..."
+          docker compose exec -T api python mindbody_audit.py
           REMOTE
