@@ -1317,6 +1317,9 @@ def staff_classes(user: User = Depends(require("classes.view")), db: Session = D
 
 @app.post("/api/staff/classes")
 def create_class(data: ClassIn, user: User = Depends(require("classes.create")), db: Session = Depends(db_session)):
+    from mindbody_sync import capability_status
+    if capability_status()["configured"]:
+        raise HTTPException(409, "mindbody_managed_schedule_create_in_mindbody")
     coach_id = data.coach_id
     if user.coach and not can(user, "classes.edit"):
         coach_id = user.coach.id
@@ -1349,6 +1352,17 @@ def edit_class(class_id: int, data: ClassIn, user: User = Depends(current_user),
     title = data.title.strip()
     if not 2 <= len(title) <= 180:
         raise HTTPException(400, "invalid_class_title")
+    if c.mindbody_class_id:
+        provider_field_changes = []
+        if data.studio_id != c.studio_id: provider_field_changes.append("studio")
+        if title != c.title: provider_field_changes.append("title")
+        if data.description.strip()[:2000] != (c.description or ""): provider_field_changes.append("description")
+        if data.class_type != c.class_type: provider_field_changes.append("type")
+        if abs((as_utc(data.starts_at) - as_utc(c.starts_at)).total_seconds()) > 1: provider_field_changes.append("starts_at")
+        if min(180, max(15, data.duration)) != c.duration: provider_field_changes.append("duration")
+        if min(100, max(1, data.capacity)) != c.capacity: provider_field_changes.append("capacity")
+        if provider_field_changes:
+            raise HTTPException(409, detail={"error":"mindbody_managed_schedule_fields","fields":provider_field_changes})
     c.studio_id=data.studio_id; c.title=title; c.description=data.description.strip()[:2000]; c.class_type=data.class_type; c.starts_at=data.starts_at; c.duration=min(180, max(15, data.duration)); c.capacity=min(100, max(1, data.capacity))
     if can(user, "classes.edit"): c.coach_id=data.coach_id
     db.commit(); return class_dict(c, db)
@@ -1357,6 +1371,12 @@ def edit_class(class_id: int, data: ClassIn, user: User = Depends(current_user),
 def delete_class(class_id: int, user: User = Depends(require("classes.delete")), db: Session = Depends(db_session)):
     c=db.get(ClassSession,class_id)
     if not c: raise HTTPException(404,"not_found")
+    if c.mindbody_class_id:
+        from mindbody_sync import WriteClient
+        try:
+            WriteClient.from_env().cancel_single_class(str(c.mindbody_class_id))
+        except Exception as exc:
+            raise HTTPException(503,"mindbody_class_cancellation_unavailable") from exc
     c.status="cancelled"; db.commit(); return {"ok":True}
 
 @app.get("/api/staff/bookings")
