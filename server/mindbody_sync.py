@@ -1329,6 +1329,178 @@ def _sync_class_availability(
     return changed
 
 
+def _reconcile_class_roster(
+    client: WriteClient,
+    db: Session,
+    klass: core.ClassSession,
+    remote_id: str,
+    now: datetime,
+) -> dict[str, int]:
+    """Mirror one Mindbody class roster into Classy by stable Visit ID."""
+    counts = {"visits": 0, "created": 0, "cancelled": 0}
+    payload = client.get_class_visits(remote_id)
+    visits = [
+        x for x in _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
+        if isinstance(x, dict)
+    ]
+    active_ids: set[str] = set()
+    for visit in visits:
+        visit_id = str(_value(visit, "Id", "ID", "VisitId", default="") or "")
+        client_data = visit.get("Client") or {}
+        client_id = str(_value(
+            visit, "ClientId", "ClientID",
+            default=_value(client_data, "Id", "ID", default=""),
+        ) or "")
+        if not visit_id:
+            visit_id = f"client:{client_id}:class:{remote_id}"
+        if bool(_value(
+            visit,
+            "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled",
+            default=False,
+        )):
+            continue
+
+        active_ids.add(visit_id)
+        counts["visits"] += 1
+
+        booking = db.scalar(
+            select(core.Booking).where(core.Booking.mindbody_visit_id == visit_id)
+        )
+        if booking:
+            booking.status = "reserved"
+            booking.mindbody_sync_status = "synced"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = now
+            continue
+
+        # Link a website booking/hold before creating a separate external row.
+        booking = db.scalar(
+            select(core.Booking).where(
+                core.Booking.class_id == klass.id,
+                core.Booking.source == "website",
+                core.Booking.mindbody_client_id == client_id,
+            ).order_by(core.Booking.created_at.desc()).limit(1)
+        ) if client_id else None
+        if booking:
+            booking.status = "reserved"
+            booking.mindbody_visit_id = visit_id
+            booking.mindbody_sync_status = "synced"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = now
+            continue
+
+        name = " ".join(
+            str(client_data.get(k) or "").strip()
+            for k in ("FirstName", "LastName")
+        ).strip()
+        email = str(
+            client_data.get("Email")
+            or f"mindbody-{client_id or visit_id}@private.invalid"
+        ).lower()
+        db.add(core.Booking(
+            reference=f"MB-{visit_id}"[:40],
+            class_id=klass.id,
+            customer_name=name or "Mindbody client",
+            email=email,
+            phone=str(client_data.get("MobilePhone") or ""),
+            status="reserved",
+            payment_status="external",
+            payment_method="mindbody",
+            amount_cents=0,
+            source="mindbody",
+            mindbody_visit_id=visit_id,
+            mindbody_client_id=client_id,
+            mindbody_sync_status="synced",
+            mindbody_sync_error="",
+            mindbody_synced_at=now,
+        ))
+        counts["created"] += 1
+
+    mirrored = db.scalars(
+        select(core.Booking).where(
+            core.Booking.class_id == klass.id,
+            core.Booking.source == "mindbody",
+            core.Booking.status == "reserved",
+        )
+    ).all()
+    for booking in mirrored:
+        if booking.mindbody_visit_id not in active_ids:
+            booking.status = "cancelled"
+            booking.mindbody_synced_at = now
+            counts["cancelled"] += 1
+
+    klass.imported_bookings = 0
+    klass.source_bookings_total = len(active_ids)
+    klass.mindbody_synced_at = now
+    db.commit()
+    return counts
+
+
+def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
+    """Force identity-level roster reconciliation for a bounded future window."""
+    client = WriteClient.from_env()
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(days=max(1, min(14, int(days))))
+    classes: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        payload = client.get_classes(
+            start_date_time=now.isoformat(),
+            end_date_time=end.isoformat(),
+            limit=200,
+            offset=offset,
+        )
+        batch = [
+            x for x in _extract_list(payload, ("Classes", "classes", "Items"))
+            if isinstance(x, dict)
+        ]
+        classes.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+
+    result = {
+        "classes_checked": 0,
+        "visits": 0,
+        "created": 0,
+        "cancelled": 0,
+        "errors": 0,
+    }
+    with core.SessionLocal() as db:
+        by_remote = {
+            str(row.mindbody_class_id): row
+            for row in db.scalars(
+                select(core.ClassSession).where(
+                    core.ClassSession.mindbody_class_id.is_not(None),
+                    core.ClassSession.starts_at >= now,
+                    core.ClassSession.starts_at < end,
+                )
+            ).all()
+        }
+
+    for remote in classes:
+        remote_id = str(_value(remote, "Id", "ID", "ClassId", default="") or "")
+        if not remote_id or _remote_class_cancelled(remote):
+            continue
+        with core.SessionLocal() as db:
+            klass = db.scalar(
+                select(core.ClassSession).where(
+                    core.ClassSession.mindbody_class_id == remote_id
+                )
+            )
+            if not klass:
+                continue
+            try:
+                counts = _reconcile_class_roster(client, db, klass, remote_id, now)
+                result["classes_checked"] += 1
+                for key in ("visits", "created", "cancelled"):
+                    result[key] += counts[key]
+            except Exception:
+                db.rollback()
+                result["errors"] += 1
+    return result
+
+
 def _cancel_unlinked_local_classes(db: Session, *, start: datetime, end: datetime) -> int:
     """Hide local-only sessions inside the live Mindbody window.
 
@@ -1401,6 +1573,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
         ).all()
         local_ids = [row.id for row in local]
         reserved_counts: dict[int, int] = {}
+        individual_remote_counts: dict[int, int] = {}
         if local_ids:
             reserved_counts = dict(
                 db.execute(
@@ -1412,6 +1585,18 @@ def sync_staff_and_assignments() -> dict[str, int]:
                     .group_by(core.Booking.class_id)
                 ).all()
             )
+            individual_remote_counts = dict(
+                db.execute(
+                    select(core.Booking.class_id, func.count(core.Booking.id))
+                    .where(
+                        core.Booking.class_id.in_(local_ids),
+                        core.Booking.status == "reserved",
+                        core.Booking.mindbody_visit_id.is_not(None),
+                    )
+                    .group_by(core.Booking.class_id)
+                ).all()
+            )
+        roster_candidates: list[tuple[datetime, int, str]] = []
         for remote in classes:
             klass, created_local = _ensure_local_class(db, local, remote, staff_map, now)
             if not klass:
@@ -1434,8 +1619,44 @@ def sync_staff_and_assignments() -> dict[str, int]:
             counts["trainer_assignments_pulled"] += pulled
             counts["trainer_assignments_pushed"] += pushed
             counts["trainer_assignment_errors"] += assignment_errors
+
+            remote_total = _value(remote, "TotalBooked", "TotalClients", default=None)
+            remote_id = str(_value(remote, "Id", "ID", "ClassId", default="") or "")
+            starts = _parse_dt(_value(remote, "StartDateTime", "startDateTime"))
+            try:
+                remote_total_int = int(remote_total) if remote_total is not None else None
+            except Exception:
+                remote_total_int = None
+            if (
+                remote_id
+                and starts
+                and remote_total_int is not None
+                and int(individual_remote_counts.get(klass.id, 0)) != max(0, remote_total_int)
+            ):
+                roster_candidates.append((starts, klass.id, remote_id))
+
         counts["local_only_cancelled"] = _cancel_unlinked_local_classes(db, start=now, end=end)
         db.commit()
+
+    counts["roster_candidates"] = len(roster_candidates)
+    counts["rosters_reconciled"] = 0
+    counts["roster_rows_created"] = 0
+    counts["roster_rows_cancelled"] = 0
+    counts["roster_errors"] = 0
+    # Bound each fast cycle so a large historical drift cannot starve normal sync.
+    for _, class_id, remote_id in sorted(roster_candidates, key=lambda x: x[0])[:50]:
+        with core.SessionLocal() as db:
+            klass = db.get(core.ClassSession, class_id)
+            if not klass:
+                continue
+            try:
+                roster_counts = _reconcile_class_roster(client, db, klass, remote_id, now)
+                counts["rosters_reconciled"] += 1
+                counts["roster_rows_created"] += roster_counts["created"]
+                counts["roster_rows_cancelled"] += roster_counts["cancelled"]
+            except Exception:
+                db.rollback()
+                counts["roster_errors"] += 1
     return counts
 
 
@@ -1481,46 +1702,23 @@ def sync_from_mindbody() -> dict[str, int]:
             # can be slow and must never keep a database transaction open.
             db.commit()
             try:
-                payload = client.get_class_visits(remote_id)
+                roster_counts = _reconcile_class_roster(client, db, klass, remote_id, now)
+                counts["visits"] += roster_counts["visits"]
+                counts["created"] += roster_counts["created"]
+                counts["cancelled"] += roster_counts["cancelled"]
             except MindbodyError:
-                # Occupancy still remains safe when the account cannot expose PII.
+                # Occupancy remains safe even when the roster endpoint is temporarily
+                # unavailable because the fast summary sync maintains imported_bookings.
                 total = int(_value(remote, "TotalBooked", "TotalClients", default=0) or 0)
-                local_synced = db.scalar(select(func.count(core.Booking.id)).where(core.Booking.class_id == klass.id, core.Booking.source == "website", core.Booking.status == "reserved", core.Booking.mindbody_sync_status == "synced")) or 0
+                local_synced = db.scalar(
+                    select(func.count(core.Booking.id)).where(
+                        core.Booking.class_id == klass.id,
+                        core.Booking.status == "reserved",
+                        core.Booking.mindbody_visit_id.is_not(None),
+                    )
+                ) or 0
                 klass.imported_bookings = max(0, total - int(local_synced))
                 db.commit()
-                continue
-            visits = [x for x in _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items")) if isinstance(x, dict)]
-            active_ids: set[str] = set()
-            for visit in visits:
-                visit_id = str(_value(visit, "Id", "ID", "VisitId", default=""))
-                client_data = visit.get("Client") or {}
-                client_id = str(_value(visit, "ClientId", default=_value(client_data, "Id", "ID", default="")))
-                if not visit_id: visit_id = f"client:{client_id}:class:{remote_id}"
-                if bool(_value(visit, "Cancelled", "IsCancelled", default=False)): continue
-                active_ids.add(visit_id); counts["visits"] += 1
-                booking = db.scalar(select(core.Booking).where(core.Booking.mindbody_visit_id == visit_id))
-                if booking:
-                    booking.status = "reserved"; booking.mindbody_synced_at = now
-                    continue
-                # Link back a just-pushed website booking before creating an external row.
-                booking = db.scalar(select(core.Booking).where(core.Booking.class_id == klass.id, core.Booking.source == "website", core.Booking.mindbody_client_id == client_id)) if client_id else None
-                if booking:
-                    booking.mindbody_visit_id = visit_id; booking.mindbody_sync_status = "synced"; booking.mindbody_synced_at = now
-                    continue
-                name = " ".join(str(client_data.get(k) or "").strip() for k in ("FirstName", "LastName")).strip()
-                email = str(client_data.get("Email") or f"mindbody-{client_id or visit_id}@private.invalid").lower()
-                db.add(core.Booking(reference=f"MB-{visit_id}"[:40], class_id=klass.id, customer_name=name or "Mindbody client", email=email,
-                    phone=str(client_data.get("MobilePhone") or ""), status="reserved", payment_status="external", payment_method="mindbody",
-                    amount_cents=0, source="mindbody", mindbody_visit_id=visit_id, mindbody_client_id=client_id,
-                    mindbody_sync_status="synced", mindbody_synced_at=now))
-                counts["created"] += 1
-            mirrored = db.scalars(select(core.Booking).where(core.Booking.class_id == klass.id, core.Booking.source == "mindbody", core.Booking.status == "reserved")).all()
-            for booking in mirrored:
-                if booking.mindbody_visit_id not in active_ids:
-                    booking.status = "cancelled"; booking.mindbody_synced_at = now; counts["cancelled"] += 1
-            klass.imported_bookings = 0  # individual mirror rows are counted by the normal booking query
-            klass.source_bookings_total = len(active_ids)
-            db.commit()
         counts["local_only_cancelled"] = _cancel_unlinked_local_classes(db, start=now, end=end)
         db.commit()
     return counts
