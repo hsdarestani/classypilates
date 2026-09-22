@@ -61,5 +61,9 @@
   async function remoteCancel(reference,email){try{const response=await apiFetch('/api/bookings',{method:'DELETE',body:JSON.stringify({reference,email})});if(apiUnavailable(response)){showToast('Cancellation unavailable','Cancellation could not be confirmed with the server. Your booking remains active.');return}if(!response.ok){showToast('Cancellation failed','Please try again.');return}showToast('Booking cancelled','The spot and credit were released.');lastRange='';await refreshRemoteSchedule();closeDrawer()}catch(_){showToast('Cancellation failed','Please try again.')}}
   ['openBookings','openBookingsMobile'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();$('#mobileMenu')?.classList.remove('open');renderMyBookings()},true)});
   document.addEventListener('click',e=>{if(e.target.closest('#datePrev,#dateNext,.date-btn'))setTimeout(refreshRemoteSchedule,0)});
+  const forceRefreshSchedule=()=>{lastRange='';return refreshRemoteSchedule()};
+  window.addEventListener('focus',()=>forceRefreshSchedule());
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')forceRefreshSchedule()});
+  setInterval(()=>{if(document.visibilityState==='visible')forceRefreshSchedule()},60000);
   refreshRemoteSchedule();
 })();
