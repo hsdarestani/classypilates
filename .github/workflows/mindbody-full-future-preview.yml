@@ -17,6 +17,8 @@ jobs:
         env:
           API_KEY: ${{ secrets.MINDBODY_API_KEY }}
           SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
+          STAFF_USERNAME: ${{ secrets.MINDBODY_STAFF_USERNAME }}
+          STAFF_PASSWORD: ${{ secrets.MINDBODY_STAFF_PASSWORD }}
         run: |
           set -euo pipefail
           python3 <<'PY'
@@ -40,6 +42,51 @@ jobs:
                   v=data.get(k) if isinstance(data,dict) else None
                   if isinstance(v,list): return v
               return []
+
+          def issue_token():
+              payload=json.dumps({
+                  'Username':os.environ.get('STAFF_USERNAME',''),
+                  'Password':os.environ.get('STAFF_PASSWORD',''),
+              }).encode()
+              req=urllib.request.Request(
+                  api+'/usertoken/issue',data=payload,method='POST',
+                  headers={**headers,'Content-Type':'application/json'}
+              )
+              with urllib.request.urlopen(req,timeout=45) as r:
+                  data=json.loads(r.read().decode() or '{}')
+              return data.get('AccessToken') or data.get('Token') or ''
+
+          def staff_rows():
+              token=issue_token()
+              if not token: return []
+              out=[]; offset=0
+              while True:
+                  params={
+                      'request.limit':200,
+                      'request.offset':offset,
+                  }
+                  url=api+'/staff/staff?'+urllib.parse.urlencode(params)
+                  req=urllib.request.Request(url,headers={**headers,'Authorization':token})
+                  with urllib.request.urlopen(req,timeout=45) as r:
+                      data=json.loads(r.read().decode() or '{}')
+                  batch=[]
+                  for k in ('StaffMembers','staffMembers','Staff','staff','Items'):
+                      v=data.get(k) if isinstance(data,dict) else None
+                      if isinstance(v,list):
+                          batch=v; break
+                  out.extend(batch)
+                  if len(batch)<200: break
+                  offset+=len(batch)
+              return out
+
+          def canonical_coach(value):
+              value=' '.join(str(value or '').split()).strip()
+              if value.lower().startswith('coach '):
+                  value=value[6:].strip()
+              parts=value.split()
+              if len(parts)==2 and parts[0].lower()==parts[1].lower():
+                  value=parts[0]
+              return value.lower()
 
           today=dt.date.today()
           cursor=today
@@ -126,6 +173,22 @@ jobs:
               ids={sid for sid,_,_ in items}
               if len(labels)>1 or len(ids)>1:
                   print(' -',key,'=>',items)
+          directory=staff_rows()
+          directory_groups=collections.defaultdict(list)
+          for row in directory:
+              sid=str(row.get('Id') or row.get('ID') or row.get('StaffId') or row.get('StaffID') or '')
+              display=str(row.get('DisplayName') or row.get('displayName') or '').strip()
+              if not display:
+                  display=' '.join(str(row.get(k) or '').strip() for k in ('FirstName','LastName')).strip()
+              if sid and display:
+                  directory_groups[canonical_coach(display)].append((sid,display,bool(row.get('Active',True))))
+          print('FULL STAFF DIRECTORY ALIAS GROUPS:')
+          for key,items in sorted(directory_groups.items()):
+              ids={sid for sid,_,_ in items}
+              labels={name.lower() for _,name,_ in items}
+              if len(ids)>1 or len(labels)>1:
+                  print(' -',key,'=>',items)
+          print('FULL STAFF DIRECTORY COUNT:',len(directory))
           print('LOCATIONS:')
           for n,c in locations.most_common(): print(' -',n,':',c)
           PY
