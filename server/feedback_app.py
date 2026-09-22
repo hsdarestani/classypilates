@@ -630,6 +630,9 @@ def edit_class_v2(class_id: int, data: ClassInV2, background_tasks: BackgroundTa
     changed = [k for k in ("title", "type", "starts_at", "studio", "coach", "duration", "capacity") if before[k] != after[k]]
     queued = _queue_class_notifications(db, c, "updated", before, after, changed, background_tasks) if changed else 0
     db.commit()
+    if "coach" in changed:
+        from mindbody_sync import mark_local_change
+        mark_local_change("class", c.id)
     return {"class": core.class_dict(c, db), "notifications_queued": queued, "changed": changed}
 
 
