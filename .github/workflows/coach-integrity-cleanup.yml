@@ -21,75 +21,197 @@ jobs:
       - name: Install SSH helper
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-      - name: Merge Classy coach aliases immediately
+      - name: Merge Classy coach aliases directly in PostgreSQL
         env:
           HOST: ${{ secrets.HOST }}
           PASS: ${{ secrets.PASS }}
         run: |
           set -euo pipefail
-          test -n "$HOST" && test -n "$PASS"
           export SSHPASS="$PASS"
-          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 root@"$HOST" 'bash -s' <<'REMOTE'
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
-          docker compose exec -T api python - <<'PY'
-          import json
-          from datetime import datetime, timedelta, timezone
-          from sqlalchemy import select
-          import main as core
-          import mindbody_sync as mb
+          docker compose exec -T db sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          CREATE OR REPLACE FUNCTION coach_canon(v text) RETURNS text
+          LANGUAGE sql IMMUTABLE AS $$
+            SELECT lower(
+              CASE
+                WHEN trim(v) ~* '^coach[[:space:]]+' THEN regexp_replace(trim(v), '^coach[[:space:]]+', '', 'i')
+                WHEN array_length(regexp_split_to_array(trim(v), '[[:space:]]+'),1)=2
+                     AND lower(split_part(trim(v),' ',1))=lower(split_part(trim(v),' ',2))
+                  THEN split_part(trim(v),' ',1)
+                ELSE regexp_replace(trim(v), '[[:space:]]+', ' ', 'g')
+              END
+            )
+          $$;
 
-          client = mb.WriteClient.from_env()
-          now = datetime.now(timezone.utc)
-          end = now + timedelta(days=45)
-          classes = []
-          offset = 0
-          while True:
-              payload = client.get_classes(
-                  start_date_time=now.isoformat(),
-                  end_date_time=end.isoformat(),
-                  limit=200,
-                  offset=offset,
-              )
-              batch = [
-                  x for x in mb._extract_list(payload, ("Classes","classes","Items"))
-                  if isinstance(x, dict)
-              ]
-              classes.extend(batch)
-              if len(batch) < 200:
-                  break
-              offset += len(batch)
+          CREATE OR REPLACE FUNCTION coach_clean_name(v text) RETURNS text
+          LANGUAGE sql IMMUTABLE AS $$
+            SELECT
+              CASE
+                WHEN trim(v) ~* '^coach[[:space:]]+' THEN regexp_replace(trim(v), '^coach[[:space:]]+', '', 'i')
+                WHEN array_length(regexp_split_to_array(trim(v), '[[:space:]]+'),1)=2
+                     AND lower(split_part(trim(v),' ',1))=lower(split_part(trim(v),' ',2))
+                  THEN split_part(trim(v),' ',1)
+                ELSE regexp_replace(trim(v), '[[:space:]]+', ' ', 'g')
+              END
+          $$;
 
-          scheduled_ids = mb._scheduled_staff_ids(classes)
+          DO $$
+          DECLARE
+            g record;
+            keep_id integer;
+            primary_remote text;
+            scheduled_count integer;
+            login_count integer;
+            best_photo text;
+            best_bio text;
+            clean_name text;
+            max_local_changed timestamptz;
+            max_remote_changed timestamptz;
+            max_synced timestamptz;
+          BEGIN
+            FOR g IN
+              SELECT coach_canon(display_name) AS canon, array_agg(id) AS ids
+              FROM coaches
+              WHERE active=true AND trim(display_name)<>''
+              GROUP BY coach_canon(display_name)
+              HAVING count(*) > 1
+                 AND bool_or(
+                   trim(display_name) ~* '^coach[[:space:]]+'
+                   OR (
+                     array_length(regexp_split_to_array(trim(display_name), '[[:space:]]+'),1)=2
+                     AND lower(split_part(trim(display_name),' ',1))=lower(split_part(trim(display_name),' ',2))
+                   )
+                 )
+            LOOP
+              SELECT count(DISTINCT s.remote_id), max(s.remote_id)
+              INTO scheduled_count, primary_remote
+              FROM mindbody_sync_state s
+              WHERE s.entity_type='coach'
+                AND s.entity_id::int = ANY(g.ids)
+                AND s.remote_id IN (
+                  SELECT DISTINCT cs.remote_id
+                  FROM mindbody_sync_state cs
+                  JOIN classes c ON c.id::text=cs.entity_id
+                  WHERE cs.entity_type='class'
+                    AND c.status='active'
+                    AND c.starts_at >= now()
+                    AND cs.remote_id IS NOT NULL
+                );
 
-          with core.SessionLocal() as db:
-              before = list(db.scalars(select(core.Coach).where(core.Coach.active == True)).all())
-              merged = mb._merge_duplicate_coaches(
-                  db,
-                  scheduled_remote_ids=scheduled_ids,
-              )
-              db.commit()
-              after = list(db.scalars(select(core.Coach).where(core.Coach.active == True)).all())
+              SELECT count(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL)
+              INTO login_count
+              FROM coaches WHERE id=ANY(g.ids);
 
-              groups = {}
-              for coach in after:
-                  key = mb._coach_name_key(coach.display_name)
-                  groups.setdefault(key, []).append({
-                      "id": coach.id,
-                      "name": coach.display_name,
-                      "user_id": coach.user_id,
-                      "photo": bool(coach.photo_url),
-                  })
-              duplicates = {k:v for k,v in groups.items() if k and len(v) > 1}
+              IF scheduled_count > 1 OR login_count > 1 THEN
+                RAISE NOTICE 'Skipping ambiguous coach group % ids=%', g.canon, g.ids;
+                CONTINUE;
+              END IF;
 
-              print(json.dumps({
-                  "scheduled_staff_ids": len(scheduled_ids),
-                  "active_before": len(before),
-                  "merged": merged,
-                  "active_after": len(after),
-                  "duplicate_canonical_groups_after": duplicates,
-              }, ensure_ascii=False, sort_keys=True))
-              if duplicates:
-                  raise SystemExit("Local coach aliases remain after cleanup")
-          PY
+              IF primary_remote IS NULL THEN
+                SELECT s.remote_id
+                INTO primary_remote
+                FROM mindbody_sync_state s
+                LEFT JOIN (
+                  SELECT remote_id, count(*) AS uses
+                  FROM mindbody_sync_state cs
+                  WHERE cs.entity_type='class' AND cs.remote_id IS NOT NULL
+                  GROUP BY remote_id
+                ) u ON u.remote_id=s.remote_id
+                JOIN coaches c ON c.id::text=s.entity_id
+                WHERE s.entity_type='coach'
+                  AND c.id=ANY(g.ids)
+                  AND s.remote_id IS NOT NULL
+                ORDER BY
+                  coalesce(u.uses,0) DESC,
+                  (trim(c.display_name) ~* '^coach[[:space:]]+') DESC,
+                  c.id ASC
+                LIMIT 1;
+              END IF;
+
+              SELECT c.id, coach_clean_name(c.display_name)
+              INTO keep_id, clean_name
+              FROM coaches c
+              LEFT JOIN mindbody_sync_state s
+                ON s.entity_type='coach' AND s.entity_id=c.id::text
+              LEFT JOIN (
+                SELECT coach_id, count(*) AS uses FROM classes GROUP BY coach_id
+              ) u ON u.coach_id=c.id
+              WHERE c.id=ANY(g.ids)
+              ORDER BY
+                (primary_remote IS NOT NULL AND s.remote_id=primary_remote) DESC,
+                (c.user_id IS NOT NULL) DESC,
+                (coalesce(c.photo_url,'') LIKE '/api/media/coach-photos/%') DESC,
+                (coalesce(c.photo_url,'')<>'') DESC,
+                (coalesce(c.bio,'')<>'') DESC,
+                coalesce(u.uses,0) DESC,
+                c.id ASC
+              LIMIT 1;
+
+              SELECT photo_url INTO best_photo
+              FROM coaches
+              WHERE id=ANY(g.ids) AND coalesce(photo_url,'')<>''
+              ORDER BY
+                (photo_url LIKE '/api/media/coach-photos/%') DESC,
+                length(photo_url) DESC, id ASC
+              LIMIT 1;
+
+              SELECT bio INTO best_bio
+              FROM coaches
+              WHERE id=ANY(g.ids) AND coalesce(bio,'')<>''
+              ORDER BY length(bio) DESC, id ASC
+              LIMIT 1;
+
+              SELECT max(local_changed_at), max(remote_changed_at), max(last_synced_at)
+              INTO max_local_changed, max_remote_changed, max_synced
+              FROM mindbody_sync_state
+              WHERE entity_type='coach' AND entity_id::int=ANY(g.ids);
+
+              UPDATE coaches
+              SET display_name=clean_name,
+                  photo_url=CASE
+                    WHEN coalesce(photo_url,'') LIKE '/api/media/coach-photos/%' THEN photo_url
+                    ELSE coalesce(best_photo, photo_url)
+                  END,
+                  bio=CASE WHEN coalesce(bio,'')<>'' THEN bio ELSE coalesce(best_bio,'') END,
+                  active=true
+              WHERE id=keep_id;
+
+              UPDATE classes SET coach_id=keep_id
+              WHERE coach_id=ANY(g.ids) AND coach_id<>keep_id;
+
+              DELETE FROM mindbody_sync_state
+              WHERE entity_type='coach' AND entity_id::int=ANY(g.ids);
+
+              IF primary_remote IS NOT NULL THEN
+                INSERT INTO mindbody_sync_state
+                  (entity_type,entity_id,remote_id,local_changed_at,remote_changed_at,last_synced_at,sync_error)
+                VALUES
+                  ('coach',keep_id::text,primary_remote,max_local_changed,max_remote_changed,coalesce(max_synced,now()),'')
+                ON CONFLICT (entity_type,entity_id) DO UPDATE SET
+                  remote_id=excluded.remote_id,
+                  local_changed_at=excluded.local_changed_at,
+                  remote_changed_at=excluded.remote_changed_at,
+                  last_synced_at=excluded.last_synced_at,
+                  sync_error='';
+              END IF;
+
+              DELETE FROM coaches WHERE id=ANY(g.ids) AND id<>keep_id;
+              RAISE NOTICE 'Merged coach group % -> id %, remote %', g.canon, keep_id, primary_remote;
+            END LOOP;
+          END $$;
+
+          SELECT coach_canon(display_name) AS canon,
+                 count(*) AS n,
+                 string_agg(id::text || ':' || display_name, ', ' ORDER BY id) AS rows
+          FROM coaches
+          WHERE active=true AND trim(display_name)<>''
+          GROUP BY coach_canon(display_name)
+          HAVING count(*)>1
+          ORDER BY canon;
+
+          DROP FUNCTION coach_canon(text);
+          DROP FUNCTION coach_clean_name(text);
+          SQL
           REMOTE
