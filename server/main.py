@@ -549,6 +549,7 @@ def class_dict(c: ClassSession, db: Session):
         "coach_id": c.coach_id, "starts_at": starts_at.isoformat(), "duration": c.duration,
         "capacity": c.capacity, "reserved": reserved, "imported_reserved": imported_reserved,
         "source_bookings_total": int(c.source_bookings_total or 0),
+        "mindbody_managed": bool(c.mindbody_class_id), "mindbody_class_id": c.mindbody_class_id,
         "live_reserved": live_reserved, "spots": max(0, c.capacity - reserved), "status": c.status
     }
 
