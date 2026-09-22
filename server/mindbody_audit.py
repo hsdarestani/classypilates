@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, inspect, select, text
 
 import mindbody_sync as mb
+from mindbody_availability import compute_public_availability
 import main as core
 
 
@@ -28,16 +29,17 @@ def as_int(row, *names):
             return None
 
 
-def expected_available(remote):
-    cap = as_int(remote, "MaxCapacity", "Capacity")
-    total = as_int(remote, "TotalBooked", "TotalClients")
-    if cap is None or total is None:
-        return None
-    available = max(0, cap - max(0, total))
-    web_cap = as_int(remote, "WebCapacity")
-    web_booked = as_int(remote, "TotalWebBooked", "WebBooked", "TotalWebClients")
-    if web_cap is not None and web_booked is not None:
-        available = min(available, max(0, web_cap - max(0, web_booked)))
+def expected_available(remote, *, capacity: int, local_reserved: int, cached_imported: int):
+    _, _, _, _ = 0, 0, 0, None
+    available, _, _, _ = compute_public_availability(
+        effective_capacity=capacity,
+        local_reserved=local_reserved,
+        cached_imported=cached_imported,
+        total_booked=as_int(remote, "TotalBooked", "TotalClients"),
+        web_capacity=as_int(remote, "WebCapacity"),
+        web_booked=as_int(remote, "TotalWebBooked", "WebBooked", "TotalWebClients"),
+        is_available=val(remote, "IsAvailable", "isAvailable", default=None),
+    )
     return available
 
 
@@ -129,14 +131,28 @@ def main():
                 if len(samples) < 30:
                     samples.append({"type":"capacity_mismatch","remote_id":remote_id,"remote":cap,"local":klass.capacity})
 
-            expected = expected_available(remote)
-            if expected is not None:
-                local_reserved = int(reserved_counts.get(klass.id, 0)) + int(klass.imported_bookings or 0)
-                local_available = max(0, int(klass.capacity or 0) - local_reserved)
-                if local_available != expected:
-                    issues["availability_mismatch"] += 1
-                    if len(samples) < 30:
-                        samples.append({"type":"availability_mismatch","remote_id":remote_id,"remote_free":expected,"local_free":local_available})
+            local_active_rows = int(reserved_counts.get(klass.id, 0))
+            expected = expected_available(
+                remote,
+                capacity=int(klass.capacity or 0),
+                local_reserved=local_active_rows,
+                cached_imported=int(klass.imported_bookings or 0),
+            )
+            local_reserved = local_active_rows + int(klass.imported_bookings or 0)
+            local_available = max(0, int(klass.capacity or 0) - local_reserved)
+            if local_available != expected:
+                issues["availability_mismatch"] += 1
+                if len(samples) < 30:
+                    samples.append({
+                        "type":"availability_mismatch",
+                        "remote_id":remote_id,
+                        "remote_free":expected,
+                        "local_free":local_available,
+                        "is_available":val(remote, "IsAvailable", "isAvailable", default=None),
+                        "web_capacity":as_int(remote, "WebCapacity"),
+                        "web_booked":as_int(remote, "TotalWebBooked", "WebBooked", "TotalWebClients"),
+                        "total_booked":as_int(remote, "TotalBooked", "TotalClients"),
+                    })
 
             remote_start = mb._parse_dt(val(remote, "StartDateTime", "startDateTime"))
             if remote_start and abs((core.as_utc(klass.starts_at) - remote_start).total_seconds()) > 60:
