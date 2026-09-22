@@ -306,6 +306,53 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
             raise HTTPException(409, "reference_conflict")
         raise HTTPException(409, "checkout_already_created")
 
+    if booking_reference:
+        active_order = db.scalar(
+            select(core.PaymentOrder)
+            .where(
+                core.PaymentOrder.booking_reference == booking_reference,
+                core.PaymentOrder.status.in_(["pending", "paid"]),
+            )
+            .order_by(core.PaymentOrder.created_at.desc())
+            .limit(1)
+        )
+        if active_order:
+            if active_order.status == "paid":
+                raise HTTPException(409, "booking_already_paid")
+            if active_order.provider_payment_id:
+                try:
+                    checkout = _sumup_request(f"/v0.1/checkouts/{active_order.provider_payment_id}")
+                    status = str(checkout.get("status", "")).upper()
+                    hosted_url = str(checkout.get("hosted_checkout_url") or "")
+                    if status == "PENDING" and hosted_url:
+                        return {
+                            "ok": True,
+                            "provider": "sumup",
+                            "hosted_checkout_url": hosted_url,
+                            "url": hosted_url,
+                            "checkoutId": active_order.provider_payment_id,
+                            "reference": active_order.reference,
+                            "bookingReference": booking_reference,
+                            "reused": True,
+                        }
+                    if status == "PAID":
+                        _sync_sumup_order(checkout, db, None)
+                        raise HTTPException(409, "booking_already_paid")
+                    if status in {"FAILED", "EXPIRED", "CANCELLED", "CANCELED"}:
+                        active_order.status = "failed" if status == "FAILED" else "cancelled"
+                        db.commit()
+                    else:
+                        raise HTTPException(409, "booking_checkout_already_active")
+                except HTTPException as exc:
+                    # Only provider-state failures that explicitly closed the previous
+                    # checkout allow a new attempt. Otherwise fail closed.
+                    if exc.status_code == 409:
+                        raise
+                    raise HTTPException(503, "sumup_checkout_state_unavailable") from exc
+            else:
+                # Another request may be creating the provider checkout right now.
+                raise HTTPException(409, "booking_checkout_already_active")
+
     order = core.PaymentOrder(
         reference=reference,
         email=email,
