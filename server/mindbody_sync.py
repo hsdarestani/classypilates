@@ -419,7 +419,6 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
     with core.SessionLocal() as db:
         booking = db.scalar(
             select(core.Booking)
-            .options(joinedload(core.Booking.klass))
             .where(core.Booking.id == booking_id)
             .with_for_update()
         )
@@ -591,7 +590,6 @@ def cancel_local_booking_strict(booking_id: int) -> bool:
     with core.SessionLocal() as db:
         booking = db.scalar(
             select(core.Booking)
-            .options(joinedload(core.Booking.klass))
             .where(core.Booking.id == booking_id)
             .with_for_update()
         )
