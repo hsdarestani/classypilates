@@ -236,6 +236,14 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                 booking.payment_method = "sumup"
                 booking.status = "cancelled"
     db.commit()
+    if status in {"FAILED", "EXPIRED", "CANCELLED", "CANCELED"} and order.booking_reference:
+        booking = db.scalar(select(core.Booking).where(core.Booking.reference == order.booking_reference))
+        if booking and booking.mindbody_sync_status in {"synced", "cancel_failed"}:
+            from mindbody_sync import cancel_local_booking
+            if background_tasks is not None:
+                background_tasks.add_task(cancel_local_booking, booking.id)
+            else:
+                cancel_local_booking(booking.id)
     if email_job:
         booking_id = booking.id
         if background_tasks is not None:
@@ -340,6 +348,14 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         if booking_reference:
             booking = db.scalar(select(core.Booking).where(core.Booking.reference == booking_reference).with_for_update())
             if booking and booking.payment_status == "pending":
+                booking_id = booking.id
+                # Release the provider-side seat hold before cancelling locally.
+                from mindbody_sync import cancel_local_booking_strict, cancel_local_booking
+                try:
+                    cancel_local_booking_strict(booking_id)
+                except Exception:
+                    booking.mindbody_sync_status = "cancel_failed"
+                    booking.mindbody_sync_error = "Mindbody hold release failed after checkout creation failure"
                 booking.payment_status = "failed"
                 booking.payment_method = "sumup"
                 booking.status = "cancelled"
