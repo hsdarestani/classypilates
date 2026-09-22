@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException
+from mindbody_availability import compute_public_availability
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session, joinedload
 
@@ -1694,61 +1695,29 @@ def _sync_class_availability(
         changed = True
 
     effective_capacity = remote_capacity if remote_capacity is not None and remote_capacity >= 0 else int(klass.capacity or 0)
-    if effective_capacity < 0:
-        effective_capacity = 0
+    effective_capacity = max(0, int(effective_capacity or 0))
+    local_reserved = max(0, int(local_reserved or 0))
 
-    local_reserved = max(0, int(local_reserved))
+    available, target_reserved, imported, normalized_total = compute_public_availability(
+        effective_capacity=effective_capacity,
+        local_reserved=local_reserved,
+        cached_imported=max(0, int(klass.imported_bookings or 0)),
+        total_booked=total_booked,
+        web_capacity=web_capacity,
+        web_booked=web_booked,
+        is_available=is_available,
+    )
 
-    # Public availability is not the same thing as physical free space. Mindbody can
-    # mark a class unavailable because the online booking window is closed or because
-    # no web-bookable capacity remains even while physical roster space still exists.
-    # In those cases Classy must show zero spots instead of leaking physical capacity.
-    if is_available is False:
-        available = 0
-    else:
-        physical_available = None
-        if total_booked is not None:
-            total_booked = max(0, total_booked)
-            physical_available = max(0, effective_capacity - total_booked)
-
-        # Respect WebCapacity whenever Mindbody supplies it. WebCapacity=0 means zero
-        # public/API booking capacity even when TotalWebBooked is omitted/null.
-        web_available = None
-        if web_capacity is not None and web_capacity >= 0:
-            web_available = max(0, web_capacity - max(0, int(web_booked or 0)))
-
-        if physical_available is not None and web_available is not None:
-            available = min(physical_available, web_available)
-        elif physical_available is not None:
-            available = physical_available
-        elif web_available is not None:
-            # Capacity counters may be hidden by Mindbody settings. We can still
-            # enforce the provider's public web cap without inventing extra spots.
-            available = min(max(0, effective_capacity - local_reserved), web_available)
-        else:
-            # Mindbody did not expose enough information to replace the cached
-            # occupancy. Preserve the last provider-backed value rather than resetting
-            # it from local rows and accidentally reopening a full class.
-            available = max(
-                0,
-                effective_capacity
-                - local_reserved
-                - max(0, int(klass.imported_bookings or 0)),
-            )
-
-    target_reserved = max(0, effective_capacity - max(0, int(available)))
-    imported = max(0, target_reserved - local_reserved)
     if int(klass.imported_bookings or 0) != imported:
         klass.imported_bookings = imported
         changed = True
 
-    if total_booked is not None:
-        if int(klass.source_bookings_total or 0) != total_booked:
-            klass.source_bookings_total = total_booked
+    if normalized_total is not None:
+        if int(klass.source_bookings_total or 0) != normalized_total:
+            klass.source_bookings_total = normalized_total
             changed = True
-    elif is_available is False and int(klass.source_bookings_total or 0) < target_reserved:
-        # Keep aggregate occupancy at least consistent with a provider-closed class.
-        # This is diagnostic only; public spots come from imported_bookings above.
+    elif available == 0 and int(klass.source_bookings_total or 0) < target_reserved:
+        # Diagnostic aggregate only. Public spots are controlled by imported_bookings.
         klass.source_bookings_total = target_reserved
         changed = True
 
