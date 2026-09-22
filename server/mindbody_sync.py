@@ -766,6 +766,62 @@ def _ensure_local_class(
     return klass, True
 
 
+def _sync_class_availability(
+    db: Session,
+    klass: core.ClassSession,
+    remote: dict[str, Any],
+    local_reserved: int,
+) -> bool:
+    """Make Classy public availability match Mindbody without fetching the roster."""
+    def as_int(*names: str) -> int | None:
+        value = _value(remote, *names, default=None)
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    remote_capacity = as_int("MaxCapacity", "Capacity")
+    web_capacity = as_int("WebCapacity")
+    total_booked = as_int("TotalBooked", "TotalClients")
+    web_booked = as_int("TotalWebBooked", "WebBooked", "TotalWebClients")
+
+    changed = False
+
+    # Mindbody is authoritative for physical capacity. Do not keep an older/larger
+    # Classy capacity after the provider changed it.
+    if remote_capacity is not None and remote_capacity >= 0 and klass.capacity != remote_capacity:
+        klass.capacity = remote_capacity
+        changed = True
+
+    effective_capacity = remote_capacity if remote_capacity is not None and remote_capacity >= 0 else int(klass.capacity or 0)
+    if effective_capacity < 0:
+        effective_capacity = 0
+
+    if total_booked is not None:
+        total_booked = max(0, total_booked)
+        physical_available = max(0, effective_capacity - total_booked)
+        available = physical_available
+
+        # If Mindbody applies a separate web booking cap, website availability must
+        # respect the stricter of physical capacity and web capacity.
+        if web_capacity is not None and web_capacity >= 0 and web_booked is not None:
+            web_available = max(0, web_capacity - max(0, web_booked))
+            available = min(available, web_available)
+
+        target_reserved = max(0, effective_capacity - available)
+        imported = max(0, target_reserved - max(0, int(local_reserved)))
+        if int(klass.imported_bookings or 0) != imported:
+            klass.imported_bookings = imported
+            changed = True
+        if int(klass.source_bookings_total or 0) != total_booked:
+            klass.source_bookings_total = total_booked
+            changed = True
+
+    return changed
+
+
 def sync_staff_and_assignments() -> dict[str, int]:
     """Synchronize Mindbody staff profiles and upcoming class trainer assignments only.
 
@@ -796,6 +852,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
         "classes_matched": 0,
         "classes_created_local": 0,
         "classes_skipped_unmapped": 0,
+        "availability_updated": 0,
         "trainer_assignments_pulled": 0,
         "trainer_assignments_pushed": 0,
         "trainer_assignment_errors": 0,
@@ -810,6 +867,19 @@ def sync_staff_and_assignments() -> dict[str, int]:
                 core.ClassSession.starts_at < end,
             )
         ).all()
+        local_ids = [row.id for row in local]
+        reserved_counts: dict[int, int] = {}
+        if local_ids:
+            reserved_counts = dict(
+                db.execute(
+                    select(core.Booking.class_id, func.count(core.Booking.id))
+                    .where(
+                        core.Booking.class_id.in_(local_ids),
+                        core.Booking.status == "reserved",
+                    )
+                    .group_by(core.Booking.class_id)
+                ).all()
+            )
         for remote in classes:
             klass, created_local = _ensure_local_class(db, local, remote, staff_map, now)
             if not klass:
@@ -817,6 +887,14 @@ def sync_staff_and_assignments() -> dict[str, int]:
                 continue
             if created_local:
                 counts["classes_created_local"] += 1
+                reserved_counts.setdefault(klass.id, 0)
+            if _sync_class_availability(
+                db,
+                klass,
+                remote,
+                int(reserved_counts.get(klass.id, 0)),
+            ):
+                counts["availability_updated"] += 1
             pulled, pushed, assignment_errors = _sync_class_coach(client, db, klass, remote, staff_map, now)
             counts["classes_matched"] += 1
             counts["trainer_assignments_pulled"] += pulled
