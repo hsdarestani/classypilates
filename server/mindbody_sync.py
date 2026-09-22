@@ -1837,6 +1837,20 @@ def _reconcile_class_roster(
 ) -> dict[str, int]:
     """Mirror one Mindbody class roster into Classy by stable Visit ID."""
     counts = {"visits": 0, "created": 0, "cancelled": 0}
+
+    # Preserve the effective occupancy target produced by the summary sync. That
+    # target may intentionally be higher than the physical roster count when
+    # Mindbody applies a stricter WebCapacity.
+    local_reserved_before = db.scalar(
+        select(func.count(core.Booking.id)).where(
+            core.Booking.class_id == klass.id,
+            core.Booking.status == "reserved",
+        )
+    ) or 0
+    target_reserved = min(
+        max(0, int(klass.capacity or 0)),
+        max(0, int(local_reserved_before)) + max(0, int(klass.imported_bookings or 0)),
+    )
     payload = client.get_class_visits(remote_id)
     visits = [
         x for x in _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
@@ -1932,19 +1946,20 @@ def _reconcile_class_roster(
     for booking in mirrored:
         if booking.mindbody_visit_id not in active_ids:
             booking.status = "cancelled"
+            booking.mindbody_sync_status = "cancelled_remote"
+            booking.mindbody_sync_error = ""
             booking.mindbody_synced_at = now
             counts["cancelled"] += 1
 
-    represented_remote = db.scalar(
+    local_reserved_after = db.scalar(
         select(func.count(core.Booking.id)).where(
             core.Booking.class_id == klass.id,
             core.Booking.status == "reserved",
-            core.Booking.mindbody_visit_id.is_not(None),
         )
     ) or 0
-    # Preserve occupancy even during the short eventual-consistency window where
-    # Mindbody still returns a visit that Classy has already cancelled locally.
-    klass.imported_bookings = max(0, len(active_ids) - int(represented_remote))
+    # Keep the summary-derived target (including WebCapacity restrictions) while
+    # replacing synthetic occupancy with real mirrored rows as they become known.
+    klass.imported_bookings = max(0, target_reserved - int(local_reserved_after))
     klass.source_bookings_total = len(active_ids)
     klass.mindbody_synced_at = now
     db.commit()
