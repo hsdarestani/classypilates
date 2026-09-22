@@ -117,7 +117,13 @@ jobs:
           import json
           import runtime_app  # applies production Mindbody patches before the sync
           import mindbody_sync
-          print(json.dumps(mindbody_sync.sync_from_mindbody(), sort_keys=True))
+
+          retry_attempted = mindbody_sync.retry_pending()
+          stale_released = runtime_app._cleanup_stale_booking_holds()
+          counts = mindbody_sync.sync_from_mindbody()
+          counts["pending_retry_attempted"] = retry_attempted
+          counts["stale_booking_holds_released"] = stale_released
+          print(json.dumps(counts, sort_keys=True))
           PY
           )"
           printf 'Mindbody production sync result: %s\n' "$SYNC_RESULT"
