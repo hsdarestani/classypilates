@@ -588,6 +588,9 @@ def _queue_class_notifications(db: Session, c: core.ClassSession, event_type: st
 
 @app.post("/api/staff/classes")
 def create_class_v2(data: ClassInV2, user: core.User = Depends(core.require("classes.create")), db: Session = Depends(core.db_session)):
+    from mindbody_sync import capability_status
+    if capability_status()["configured"]:
+        raise HTTPException(409, "mindbody_managed_schedule_create_in_mindbody")
     coach_id = data.coach_id
     if user.coach and not core.can(user, "classes.edit"):
         coach_id = user.coach.id
@@ -635,6 +638,22 @@ def edit_class_v2(class_id: int, data: ClassInV2, background_tasks: BackgroundTa
         if not (core.can(user, "classes.edit_own") and user.coach and c.coach_id == user.coach.id):
             raise HTTPException(403, "permission_denied")
     before = _session_snapshot(c)
+    if c.mindbody_class_id:
+        requested_start = core.as_utc(data.starts_at)
+        current_start = core.as_utc(c.starts_at)
+        provider_field_changes = []
+        if data.studio_id != c.studio_id: provider_field_changes.append("studio")
+        if data.title.strip() != c.title: provider_field_changes.append("title")
+        if data.description.strip()[:2000] != (c.description or ""): provider_field_changes.append("description")
+        if data.class_type != c.class_type: provider_field_changes.append("type")
+        if abs((requested_start - current_start).total_seconds()) > 1: provider_field_changes.append("starts_at")
+        if min(180, max(15, data.duration)) != c.duration: provider_field_changes.append("duration")
+        if min(100, max(1, data.capacity)) != c.capacity: provider_field_changes.append("capacity")
+        if provider_field_changes:
+            raise HTTPException(409, detail={
+                "error": "mindbody_managed_schedule_fields",
+                "fields": provider_field_changes,
+            })
     studio = db.get(core.Studio, data.studio_id)
     if not studio:
         raise HTTPException(400, "invalid_studio")
@@ -669,6 +688,12 @@ def delete_class_v2(class_id: int, background_tasks: BackgroundTasks, user: core
     if not c:
         raise HTTPException(404, "not_found")
     before = _session_snapshot(c)
+    if c.mindbody_class_id:
+        from mindbody_sync import WriteClient
+        try:
+            WriteClient.from_env().cancel_single_class(str(c.mindbody_class_id))
+        except Exception as exc:
+            raise HTTPException(503, "mindbody_class_cancellation_unavailable") from exc
     c.status = "cancelled"
     refunded = set()
     bookings = db.scalars(select(core.Booking).where(core.Booking.class_id == c.id, core.Booking.status == "reserved")).all()
