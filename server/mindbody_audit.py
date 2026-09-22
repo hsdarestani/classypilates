@@ -508,6 +508,7 @@ def main():
         local_visits_missing_remote = 0
         roster_audit_errors = 0
         roster_classes_checked = 0
+        summary_roster_count_mismatch = 0
 
         near_remote = []
         for remote in remotes:
@@ -572,6 +573,24 @@ def main():
                 if isinstance(row, dict) and not visit_cancelled(row)
             ]
             remote_active_ids = {visit_identity(row, remote_id) for row in visits}
+            remote_summary_total = as_int(remote, "TotalBooked", "TotalClients")
+            if remote_summary_total is not None and max(0, remote_summary_total) != len(visits):
+                summary_roster_count_mismatch += 1
+                if len(samples) < 30:
+                    staff = remote.get("Staff") or remote.get("staff") or {}
+                    location = remote.get("Location") or remote.get("location") or {}
+                    samples.append({
+                        "type":"summary_roster_count_mismatch",
+                        "remote_id":remote_id,
+                        "start":str(val(remote, "StartDateTime", "startDateTime", default="") or ""),
+                        "staff":str(val(staff, "DisplayName", "displayName", "Name", default="") or ""),
+                        "location":str(val(location, "Name", "name", default="") or ""),
+                        "capacity":as_int(remote, "MaxCapacity", "Capacity"),
+                        "summary_total_booked":max(0, remote_summary_total),
+                        "roster_active_visits":len(visits),
+                        "local_source_total":int(klass.source_bookings_total or 0),
+                        "local_imported":int(klass.imported_bookings or 0),
+                    })
             local_active_ids = {
                 str(value) for value in db.scalars(
                     select(core.Booking.mindbody_visit_id).where(
@@ -604,6 +623,7 @@ def main():
         issues["local_visits_missing_remote"] = local_visits_missing_remote
         issues["roster_audit_errors"] = roster_audit_errors
         issues["roster_classes_checked"] = roster_classes_checked
+        issues["summary_roster_count_mismatch"] = summary_roster_count_mismatch
 
     critical_keys = [
         "duplicate_remote_ids","missing_local_class","capacity_mismatch","availability_mismatch",
@@ -628,6 +648,7 @@ def main():
         "scheduled_same_name_groups": int(issues.get("scheduled_same_name_groups", 0)),
         "roster_audit_mode": "deep" if os.getenv("MINDBODY_AUDIT_DEEP", "").strip().lower() in {"1","true","yes"} else "targeted",
         "roster_classes_checked": int(issues.get("roster_classes_checked", 0)),
+        "summary_roster_count_mismatch": int(issues.get("summary_roster_count_mismatch", 0)),
         "issues": {k:int(issues.get(k,0)) for k in critical_keys},
         "samples": samples,
     }
