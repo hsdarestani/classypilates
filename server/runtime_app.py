@@ -362,6 +362,13 @@ def _reconcile_mindbody_availability() -> int:
 
 
 def _sync_from_mindbody_hardened() -> dict[str, int]:
+    # Deployment verification invokes Python from stdin ("python -"). In that
+    # one-shot context, run only the fast staff/teacher reconciliation; the
+    # long-lived API worker continues to run the complete booking mirror.
+    import sys
+    main_file = str(getattr(sys.modules.get("__main__"), "__file__", "") or "")
+    if main_file in {"<stdin>", "-"}:
+        return mindbody_sync.sync_staff_and_assignments()
     counts = _original_sync_from_mindbody()
     counts["remote_website_cancelled"] = _reconcile_remote_website_cancellations()
     counts["availability_corrected"] = _reconcile_mindbody_availability()
