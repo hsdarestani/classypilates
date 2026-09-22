@@ -1,9 +1,9 @@
 # Classy Production Deployment Status
 
 - Workflow status: **failure**
-- Commit: `aee847202792ea202c5f000bfcc460b95ebe1227`
-- Checked at: `2026-09-22T19:43:42Z`
-- Local API health: `curl: (56) Recv failure: Connection reset by peer`
+- Commit: `62abc7b84ec8acb194597286d6ca830d8ecf9265`
+- Checked at: `2026-09-22T19:52:52Z`
+- Local API health: `{"ok":true,"service":"classy-production"}`
 
 ## Remote containers
 ```
