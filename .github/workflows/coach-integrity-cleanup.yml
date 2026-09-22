@@ -1,10 +1,6 @@
 name: Coach Integrity Cleanup
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/coach-integrity-cleanup.yml"
   workflow_dispatch:
 
 permissions:
