@@ -1,8 +1,6 @@
 name: Preview Full Future Mindbody Schedule
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
