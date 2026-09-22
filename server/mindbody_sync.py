@@ -178,9 +178,13 @@ class WriteClient(MindbodyClient):
         return self.access_token
 
     def get_class_visits(self, class_id: str) -> dict[str, Any]:
-        # Class visits contain the booking state and, when staff access permits it,
-        # the customer object needed by the private admin panel.
-        return self._authorized_get("class/classvisits", {"ClassId": class_id})
+        # V6 requires the request-scoped query key exactly as request.classID.
+        # Using ClassId is silently treated as an unfiltered/invalid request by
+        # Mindbody and can yield an empty roster instead of a clear error.
+        return self._authorized_get(
+            "class/classvisits",
+            {"request.classID": int(class_id)},
+        )
 
     def get_classes(
         self,
@@ -2631,12 +2635,18 @@ def start_worker():
         try:
             with RECONCILE_LOCK:
                 prime = sync_schedule_availability_fast()
+                # The public schedule must not start from summary-only occupancy.
+                # Reconcile the next 24h against the actual Mindbody roster before
+                # startup completes so today's classes match the staff app exactly.
+                roster_prime = sync_rosters_window(days=1)
             print(
                 "Mindbody availability prime: "
                 f"seen={prime.get('classes_seen', 0)} "
                 f"matched={prime.get('classes_matched', 0)} "
                 f"created={prime.get('classes_created_local', 0)} "
-                f"availability_updated={prime.get('availability_updated', 0)}",
+                f"availability_updated={prime.get('availability_updated', 0)} "
+                f"roster_classes={roster_prime.get('classes', 0)} "
+                f"roster_errors={roster_prime.get('errors', 0)}",
                 flush=True,
             )
         except Exception as exc:
