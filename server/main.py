@@ -1211,7 +1211,7 @@ def list_class_pass_sales(user: User = Depends(require("customers.view")), db: S
     } for row in rows]}
 
 # Legacy implementation intentionally not registered; canonical route lives in feedback_app.py.
-# @app.post("/api/staff/class-passes/sell")
+# disabled legacy decorator: app.post("/api/staff/class-passes/sell")
 def sell_class_pass(data: ClassPassSaleIn, user: User = Depends(require("customers.manage")), db: Session = Depends(db_session)):
     mode = data.mode.strip().lower()
     if mode not in {"account", "gift"}:
@@ -1416,7 +1416,7 @@ def staff_classes(user: User = Depends(require("classes.view")), db: Session = D
     return {"classes": [class_dict(c, db) for c in rows]}
 
 # Legacy implementation intentionally not registered; canonical route lives in feedback_app.py.
-# @app.post("/api/staff/classes")
+# disabled legacy decorator: app.post("/api/staff/classes")
 def create_class(data: ClassIn, user: User = Depends(require("classes.create")), db: Session = Depends(db_session)):
     from mindbody_sync import capability_status
     if capability_status()["configured"]:
@@ -1445,7 +1445,7 @@ def create_class(data: ClassIn, user: User = Depends(require("classes.create")),
     return {"class": class_dict(created[0], db), "created_count": len(created), "requested_count": repeat_weeks}
 
 # Legacy implementation intentionally not registered; canonical route lives in feedback_app.py.
-# @app.patch("/api/staff/classes/{class_id}")
+# disabled legacy decorator: app.patch("/api/staff/classes/{class_id}")
 def edit_class(class_id: int, data: ClassIn, user: User = Depends(current_user), db: Session = Depends(db_session)):
     c = db.get(ClassSession, class_id)
     if not c: raise HTTPException(404, "not_found")
@@ -1470,7 +1470,7 @@ def edit_class(class_id: int, data: ClassIn, user: User = Depends(current_user),
     db.commit(); return class_dict(c, db)
 
 # Legacy implementation intentionally not registered; canonical route lives in feedback_app.py.
-# @app.delete("/api/staff/classes/{class_id}")
+# disabled legacy decorator: app.delete("/api/staff/classes/{class_id}")
 def delete_class(class_id: int, user: User = Depends(require("classes.delete")), db: Session = Depends(db_session)):
     c=db.get(ClassSession,class_id)
     if not c: raise HTTPException(404,"not_found")
@@ -1748,7 +1748,7 @@ def resolve_public_class(data: PublicBookingIn, user: Optional[User], db: Sessio
     return klass
 
 # Legacy implementation intentionally not registered; canonical route lives in feedback_app.py.
-# @app.post("/api/bookings")
+# disabled legacy decorator: app.post("/api/bookings")
 def public_booking(data: PublicBookingIn, background_tasks: BackgroundTasks, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
     c=resolve_public_class(data,user,db)
     if not c or c.status!="active": raise HTTPException(409,"class_unavailable")
