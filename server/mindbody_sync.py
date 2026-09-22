@@ -341,6 +341,19 @@ def _remote_staff_payload(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _remote_staff_modified(row: dict[str, Any]) -> datetime | None:
+    return _parse_dt(_value(
+        row,
+        "LastModifiedDateTime", "lastModifiedDateTime",
+        "LastModifiedDate", "lastModifiedDate",
+        "ModifiedDateTime", "modifiedDateTime",
+    ))
+
+
+def _is_managed_local_photo(value: str) -> bool:
+    return str(value or "").startswith("/api/media/coach-photos/")
+
+
 def _stable_hash(payload: dict[str, Any]) -> str:
     import hashlib, json
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -420,12 +433,23 @@ def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tup
         remote_hash = _stable_hash(rp)
         local_payload = _coach_payload(coach)
         local_hash = _stable_hash(local_payload)
-        remote_changed_at = now if old_remote_hash and old_remote_hash != remote_hash else (state or {}).get("remote_changed_at")
+        explicit_remote_modified = _remote_staff_modified(remote)
+        remote_changed_at = explicit_remote_modified or (
+            now if old_remote_hash and old_remote_hash != remote_hash else (state or {}).get("remote_changed_at")
+        )
         if not remote_changed_at:
             remote_changed_at = now
         local_changed_at = (state or {}).get("local_changed_at")
 
-        # Initial linking: Mindbody is authoritative for provider-backed fields.
+        # Preserve locally uploaded coach photos that predate sync-state tracking.
+        # Treat the current local managed image as the latest version until Mindbody
+        # provides a later explicit modification timestamp.
+        if _is_managed_local_photo(coach.photo_url) and not local_changed_at:
+            local_changed_at = now
+            _state_write(db, "coach", coach.id, local_changed_at=local_changed_at)
+
+        # Initial linking: Mindbody is authoritative for provider-backed text fields,
+        # except when Classy has a tracked newer edit.
         local_is_newer = bool(local_changed_at and local_changed_at > remote_changed_at and old_remote_hash)
         try:
             if local_is_newer:
@@ -448,9 +472,18 @@ def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tup
                     coach.bio = rp["bio"]; changed = True
                 if coach.active != rp["active"]:
                     coach.active = rp["active"]; changed = True
-                # Mindbody exposes staff image URLs for reads, but its public Staff update endpoint
-                # does not support image upload. Pull remote images unless a newer local profile edit exists.
-                if rp["photo_url"] and (not local_changed_at or local_changed_at <= remote_changed_at) and coach.photo_url != rp["photo_url"]:
+                # Never replace a locally uploaded image with an older/undated Mindbody image.
+                # A remote image may replace it only when Mindbody exposes an explicit modification
+                # timestamp that is newer than the tracked local edit.
+                remote_photo_is_newer = bool(
+                    explicit_remote_modified
+                    and (not local_changed_at or explicit_remote_modified > local_changed_at)
+                )
+                may_pull_photo = (
+                    not _is_managed_local_photo(coach.photo_url)
+                    or remote_photo_is_newer
+                )
+                if rp["photo_url"] and may_pull_photo and coach.photo_url != rp["photo_url"]:
                     coach.photo_url = rp["photo_url"]; changed = True
                 if changed:
                     counts["staff_pulled"] += 1
@@ -565,6 +598,94 @@ def _sync_class_coach(
         return 0, 0, 1
 
 
+def _remote_class_studio_id(remote: dict[str, Any]) -> str | None:
+    from import_mindbody_schedule import studio_id
+    return studio_id(_studio_name(remote), _class_name(remote))
+
+
+def _remote_class_duration(remote: dict[str, Any], starts: datetime) -> int:
+    end = _parse_dt(_value(remote, "EndDateTime", "endDateTime"))
+    if end and end > starts:
+        return max(15, min(180, int(round((end - starts).total_seconds() / 60))))
+    raw = _value(remote, "Duration", "DurationMinutes", "duration", "durationMinutes", default=50)
+    try:
+        return max(15, min(180, int(raw or 50)))
+    except Exception:
+        return 50
+
+
+def _remote_class_description(remote: dict[str, Any]) -> str:
+    desc = remote.get("ClassDescription") or remote.get("classDescription") or {}
+    return str(_value(desc, "Description", "description", default="") or "").strip()[:2000]
+
+
+def _ensure_local_class(
+    db: Session,
+    local: list[core.ClassSession],
+    remote: dict[str, Any],
+    staff_map: dict[str, core.Coach],
+    now: datetime,
+) -> tuple[core.ClassSession | None, bool]:
+    remote_id = str(_value(remote, "Id", "ID", "ClassId", default="") or "")
+    starts = _parse_dt(_value(remote, "StartDateTime", "startDateTime"))
+    title = _class_name(remote)
+    if not remote_id or not starts or not title:
+        return None, False
+
+    klass = next((x for x in local if x.mindbody_class_id == remote_id), None)
+    if klass:
+        return klass, False
+
+    klass = next(
+        (
+            x for x in local
+            if abs((core.as_utc(x.starts_at) - starts).total_seconds()) < 90
+            and x.title.casefold() == title.casefold()
+            and _studio_matches(x.studio_id, _studio_name(remote))
+        ),
+        None,
+    )
+    if klass:
+        klass.mindbody_class_id = remote_id
+        klass.mindbody_synced_at = now
+        return klass, False
+
+    target_studio_id = _remote_class_studio_id(remote)
+    if not target_studio_id or not db.get(core.Studio, target_studio_id):
+        return None, False
+
+    from import_mindbody_schedule import class_type
+    remote_staff = remote.get("Staff") or remote.get("staff") or {}
+    remote_staff_id = _remote_staff_id(remote_staff)
+    coach = staff_map.get(remote_staff_id)
+    capacity_raw = _value(remote, "MaxCapacity", "Capacity", default=10)
+    try:
+        capacity = max(1, min(100, int(capacity_raw or 10)))
+    except Exception:
+        capacity = 10
+
+    klass = core.ClassSession(
+        studio_id=target_studio_id,
+        title=title[:180],
+        description=_remote_class_description(remote),
+        class_type=class_type(title),
+        coach_id=coach.id if coach else None,
+        starts_at=starts,
+        duration=_remote_class_duration(remote, starts),
+        capacity=capacity,
+        imported_bookings=0,
+        source_bookings_total=0,
+        mindbody_class_id=remote_id,
+        mindbody_synced_at=now,
+        status="active",
+        created_by=None,
+    )
+    db.add(klass)
+    db.flush()
+    local.append(klass)
+    return klass, True
+
+
 def sync_staff_and_assignments() -> dict[str, int]:
     """Synchronize Mindbody staff profiles and upcoming class trainer assignments only.
 
@@ -593,6 +714,8 @@ def sync_staff_and_assignments() -> dict[str, int]:
     counts = {
         "classes_seen": len(classes),
         "classes_matched": 0,
+        "classes_created_local": 0,
+        "classes_skipped_unmapped": 0,
         "trainer_assignments_pulled": 0,
         "trainer_assignments_pushed": 0,
         "trainer_assignment_errors": 0,
@@ -607,25 +730,12 @@ def sync_staff_and_assignments() -> dict[str, int]:
             )
         ).all()
         for remote in classes:
-            remote_id = str(_value(remote, "Id", "ID", "ClassId", default=""))
-            starts = _parse_dt(_value(remote, "StartDateTime", "startDateTime"))
-            if not remote_id or not starts:
-                continue
-            klass = next((x for x in local if x.mindbody_class_id == remote_id), None)
+            klass, created_local = _ensure_local_class(db, local, remote, staff_map, now)
             if not klass:
-                klass = next(
-                    (
-                        x for x in local
-                        if abs((core.as_utc(x.starts_at) - starts).total_seconds()) < 90
-                        and x.title.casefold() == _class_name(remote).casefold()
-                        and _studio_matches(x.studio_id, _studio_name(remote))
-                    ),
-                    None,
-                )
-            if not klass:
+                counts["classes_skipped_unmapped"] += 1
                 continue
-            klass.mindbody_class_id = remote_id
-            klass.mindbody_synced_at = now
+            if created_local:
+                counts["classes_created_local"] += 1
             pulled, pushed, assignment_errors = _sync_class_coach(client, db, klass, remote, staff_map, now)
             counts["classes_matched"] += 1
             counts["trainer_assignments_pulled"] += pulled
@@ -650,6 +760,7 @@ def sync_from_mindbody() -> dict[str, int]:
         offset += len(batch)
     counts = {
         "classes": 0, "visits": 0, "created": 0, "cancelled": 0,
+        "classes_created_local": 0, "classes_skipped_unmapped": 0,
         "trainer_assignments_pulled": 0, "trainer_assignments_pushed": 0, "trainer_assignment_errors": 0,
     }
     with core.SessionLocal() as db:
@@ -658,13 +769,12 @@ def sync_from_mindbody() -> dict[str, int]:
         local = db.scalars(select(core.ClassSession).where(core.ClassSession.starts_at >= now, core.ClassSession.starts_at < end)).all()
         for remote in classes:
             remote_id = str(_value(remote, "Id", "ID", "ClassId", default=""))
-            starts = _parse_dt(_value(remote, "StartDateTime", "startDateTime"))
-            if not remote_id or not starts: continue
-            klass = next((x for x in local if x.mindbody_class_id == remote_id), None)
+            klass, created_local = _ensure_local_class(db, local, remote, staff_map, now)
             if not klass:
-                klass = next((x for x in local if abs((core.as_utc(x.starts_at)-starts).total_seconds()) < 90 and x.title.casefold() == _class_name(remote).casefold() and _studio_matches(x.studio_id, _studio_name(remote))), None)
-            if not klass: continue
-            klass.mindbody_class_id = remote_id; klass.mindbody_synced_at = now
+                counts["classes_skipped_unmapped"] += 1
+                continue
+            if created_local:
+                counts["classes_created_local"] += 1
             pulled, pushed, assignment_errors = _sync_class_coach(client, db, klass, remote, staff_map, now)
             counts["trainer_assignments_pulled"] += pulled
             counts["trainer_assignments_pushed"] += pushed
