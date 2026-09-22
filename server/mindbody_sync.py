@@ -1946,67 +1946,14 @@ def sync_staff_and_assignments() -> dict[str, int]:
 
 
 def sync_from_mindbody() -> dict[str, int]:
-    """Pull upcoming classes/visits, reconcile occupancy, staff profiles, and trainer assignments."""
-    client = WriteClient.from_env()
-    now = datetime.now(timezone.utc)
-    end = now + timedelta(days=45)
-    classes: list[dict[str, Any]] = []
-    offset = 0
-    while True:
-        payload = client.get_classes(start_date_time=now.isoformat(), end_date_time=end.isoformat(), limit=200, offset=offset)
-        batch = [x for x in _extract_list(payload, ("Classes", "classes", "Items")) if isinstance(x, dict)]
-        classes.extend(batch)
-        if len(batch) < 200: break
-        offset += len(batch)
-    counts = {
-        "classes": 0, "visits": 0, "created": 0, "cancelled": 0,
-        "classes_created_local": 0, "classes_skipped_unmapped": 0,
-        "trainer_assignments_pulled": 0, "trainer_assignments_pushed": 0, "trainer_assignment_errors": 0,
-    }
-    with core.SessionLocal() as db:
-        counts["duplicate_classes_merged"] = _dedupe_mindbody_classes(db)
-        staff_counts, staff_map = _sync_staff_profiles(client, db, now)
-        counts.update(staff_counts)
-        local = db.scalars(select(core.ClassSession).where(core.ClassSession.starts_at >= now, core.ClassSession.starts_at < end)).all()
-        for remote in classes:
-            remote_id = str(_value(remote, "Id", "ID", "ClassId", default=""))
-            klass, created_local = _ensure_local_class(db, local, remote, staff_map, now)
-            if not klass:
-                counts["classes_skipped_unmapped"] += 1
-                continue
-            if created_local:
-                counts["classes_created_local"] += 1
-            pulled, pushed, assignment_errors = _sync_class_coach(client, db, klass, remote, staff_map, now)
-            counts["trainer_assignments_pulled"] += pulled
-            counts["trainer_assignments_pushed"] += pushed
-            counts["trainer_assignment_errors"] += assignment_errors
-            klass.capacity = max(klass.capacity, int(_value(remote, "MaxCapacity", "Capacity", default=klass.capacity) or klass.capacity))
-            counts["classes"] += 1
+    """Run the single canonical Mindbody reconciliation path.
 
-            # Release DB locks before the remote roster request. Mindbody network calls
-            # can be slow and must never keep a database transaction open.
-            db.commit()
-            try:
-                roster_counts = _reconcile_class_roster(client, db, klass, remote_id, now)
-                counts["visits"] += roster_counts["visits"]
-                counts["created"] += roster_counts["created"]
-                counts["cancelled"] += roster_counts["cancelled"]
-            except MindbodyError:
-                # Occupancy remains safe even when the roster endpoint is temporarily
-                # unavailable because the fast summary sync maintains imported_bookings.
-                total = int(_value(remote, "TotalBooked", "TotalClients", default=0) or 0)
-                local_synced = db.scalar(
-                    select(func.count(core.Booking.id)).where(
-                        core.Booking.class_id == klass.id,
-                        core.Booking.status == "reserved",
-                        core.Booking.mindbody_visit_id.is_not(None),
-                    )
-                ) or 0
-                klass.imported_bookings = max(0, total - int(local_synced))
-                db.commit()
-        counts["local_only_cancelled"] = _cancel_unlinked_local_classes(db, start=now, end=end)
-        db.commit()
-    return counts
+    Historically this function had a second, older implementation that could
+    recreate unscheduled Staff rows and refuse capacity decreases. Keeping one
+    implementation prevents manual/background sync from disagreeing with the fast
+    production mirror.
+    """
+    return sync_staff_and_assignments()
 
 
 def retry_pending() -> int:
