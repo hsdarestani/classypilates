@@ -560,6 +560,15 @@ def add_remote_waitlist(
             phone=phone,
         )
 
+    # Heal a remote-only waitlist row instead of creating a second one.
+    existing_entries = client.get_waitlist_entries(class_id=class_id, client_id=client_id)
+    existing = [
+        row for row in existing_entries
+        if _waitlist_client_id(row) == client_id and _waitlist_entry_id(row)
+    ]
+    if existing:
+        return client_id, _waitlist_entry_id(existing[-1])
+
     result = client.add_to_class(client_id, class_id, waitlist=True)
     visit = _extract_visit(result)
     entry_id = str(_value(
