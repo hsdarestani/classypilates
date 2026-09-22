@@ -850,6 +850,11 @@ def customer_cancel_booking(reference: str, background_tasks: BackgroundTasks, u
         raise HTTPException(409, "booking_not_active")
     if datetime.now(timezone.utc) >= as_utc(booking.klass.starts_at) - timedelta(hours=12):
         raise HTTPException(409, "cancellation_window_closed")
+    from mindbody_sync import cancel_local_booking_strict
+    try:
+        cancel_local_booking_strict(booking.id)
+    except Exception as exc:
+        raise HTTPException(503, "mindbody_cancellation_unavailable") from exc
     booking.status = "cancelled"
     if booking.payment_method == "class_credit":
         profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == user.id).with_for_update())
@@ -858,8 +863,6 @@ def customer_cancel_booking(reference: str, background_tasks: BackgroundTasks, u
         booking.payment_method = "class_credit_refunded"
     db.commit()
     background_tasks.add_task(send_transactional_email, *cancellation_email_data(booking))
-    from mindbody_sync import cancel_local_booking
-    background_tasks.add_task(cancel_local_booking, booking.id)
     return {"ok": True}
 
 @app.get("/api/customer/waitlist")
@@ -1329,6 +1332,12 @@ def staff_bookings(user: User = Depends(require("bookings.view")), db: Session =
 def staff_booking_update(booking_id: int, data: BookingUpdate, user: User = Depends(require("bookings.manage")), db: Session = Depends(db_session)):
     b=db.get(Booking,booking_id)
     if not b: raise HTTPException(404,"not_found")
+    if data.status is not None and data.status == "cancelled" and b.status == "reserved":
+        from mindbody_sync import cancel_local_booking_strict
+        try:
+            cancel_local_booking_strict(b.id)
+        except Exception as exc:
+            raise HTTPException(503, "mindbody_cancellation_unavailable") from exc
     if data.status is not None: b.status=data.status
     if data.payment_status is not None: b.payment_status=data.payment_status
     if data.amount_cents is not None: b.amount_cents=max(0,data.amount_cents)
@@ -1616,6 +1625,11 @@ def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session 
     b=db.scalar(select(Booking).where(Booking.reference==ref,Booking.email==email))
     if not b: raise HTTPException(404,"not_found")
     if b.status != "reserved": raise HTTPException(409,"booking_not_active")
+    from mindbody_sync import cancel_local_booking_strict
+    try:
+        cancel_local_booking_strict(b.id)
+    except Exception as exc:
+        raise HTTPException(503, "mindbody_cancellation_unavailable") from exc
     b.status="cancelled"
     if b.payment_method == "class_credit":
         link = db.get(CustomerBookingLink, b.id)
@@ -1625,8 +1639,6 @@ def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session 
         b.payment_method = "class_credit_refunded"
     db.commit()
     background_tasks.add_task(send_transactional_email, *cancellation_email_data(b))
-    from mindbody_sync import cancel_local_booking
-    background_tasks.add_task(cancel_local_booking, b.id)
     return {"ok":True}
 
 @app.post("/api/waitlist")
