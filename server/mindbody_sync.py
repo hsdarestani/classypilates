@@ -30,17 +30,18 @@ def capability_status() -> dict[str, Any]:
 
 
 def _ensure_sync_state() -> None:
+    timestamp_type = "TIMESTAMP" if core.engine.dialect.name == "sqlite" else "TIMESTAMP WITH TIME ZONE"
     with core.engine.begin() as connection:
-        connection.execute(text("""
+        connection.execute(text(f"""
             CREATE TABLE IF NOT EXISTS mindbody_sync_state (
                 entity_type VARCHAR(32) NOT NULL,
                 entity_id VARCHAR(100) NOT NULL,
                 remote_id VARCHAR(100),
-                local_changed_at TIMESTAMP,
-                remote_changed_at TIMESTAMP,
+                local_changed_at {timestamp_type},
+                remote_changed_at {timestamp_type},
                 local_hash TEXT,
                 remote_hash TEXT,
-                last_synced_at TIMESTAMP,
+                last_synced_at {timestamp_type},
                 sync_error TEXT,
                 PRIMARY KEY (entity_type, entity_id)
             )
