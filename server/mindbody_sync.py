@@ -449,8 +449,15 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
 
             cap = _value(remote, "MaxCapacity", "Capacity", default=None)
             booked = _value(remote, "TotalBooked", "TotalClients", default=None)
+            web_cap = _value(remote, "WebCapacity", default=None)
+            web_booked = _value(remote, "TotalWebBooked", "WebBooked", default=None)
+            is_available = _value(remote, "IsAvailable", "isAvailable", default=True)
+            if is_available is False:
+                raise MindbodyError("Mindbody class is not available for booking")
             if cap is not None and booked is not None and int(booked) >= int(cap):
                 raise MindbodyError("Mindbody class is full")
+            if web_cap is not None and web_booked is not None and int(web_booked) >= int(web_cap):
+                raise MindbodyError("Mindbody online booking capacity is full")
 
             candidates = client.find_clients(booking.email)
             match = next((x for x in candidates if str(x.get("Email", "")).casefold() == booking.email.casefold()), None)
@@ -466,7 +473,11 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
             if remote_after:
                 cap_after = _value(remote_after, "MaxCapacity", "Capacity", default=None)
                 booked_after = _value(remote_after, "TotalBooked", "TotalClients", default=None)
-                if cap_after is not None and booked_after is not None and int(booked_after) > int(cap_after):
+                web_cap_after = _value(remote_after, "WebCapacity", default=None)
+                web_booked_after = _value(remote_after, "TotalWebBooked", "WebBooked", default=None)
+                over_physical = cap_after is not None and booked_after is not None and int(booked_after) > int(cap_after)
+                over_web = web_cap_after is not None and web_booked_after is not None and int(web_booked_after) > int(web_cap_after)
+                if over_physical or over_web:
                     try:
                         client.remove_from_class(client_id, booking.klass.mindbody_class_id)
                     finally:
