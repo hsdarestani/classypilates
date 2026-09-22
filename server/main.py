@@ -1108,9 +1108,15 @@ def create_staff(data: StaffIn, user: User = Depends(require("users.manage")), d
     db.add(u)
     try: db.flush()
     except Exception: db.rollback(); raise HTTPException(409, "email_exists")
+    coach = None
     if data.coach_name:
-        db.add(Coach(user_id=u.id, display_name=data.coach_name, photo_url=data.coach_photo))
+        coach = Coach(user_id=u.id, display_name=data.coach_name, photo_url=data.coach_photo)
+        db.add(coach)
+        db.flush()
     db.commit(); db.refresh(u)
+    if coach:
+        from mindbody_sync import mark_local_change
+        mark_local_change("coach", coach.id)
     return user_dict(u)
 
 @app.patch("/api/staff/users/{user_id}")
