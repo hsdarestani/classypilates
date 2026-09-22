@@ -4,7 +4,7 @@ import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, inspect, select, text
 
 import mindbody_sync as mb
 import main as core
@@ -374,6 +374,35 @@ def main():
         """)).all()
         issues["duplicate_coach_remote_mapping"] = len(duplicate_coach_remote_map)
 
+        required_indexes = {
+            "classes": {"ux_classes_mindbody_class_id"},
+            "bookings": {
+                "ux_bookings_active_website_class_email",
+                "ux_bookings_active_class_spot",
+                "ux_bookings_mindbody_visit_id",
+            },
+            "waitlist": {
+                "ux_waitlist_reference",
+                "ux_waitlist_class_email",
+                "ux_waitlist_mindbody_entry",
+            },
+            "payment_orders": {"ux_payment_orders_active_booking"},
+            "mindbody_sync_state": {"ux_mindbody_sync_coach_remote_id"},
+        }
+        inspector = inspect(core.engine)
+        missing_indexes = []
+        table_names = set(inspector.get_table_names())
+        for table, expected in required_indexes.items():
+            if table not in table_names:
+                missing_indexes.extend(f"{table}:{name}" for name in sorted(expected))
+                continue
+            present = {row.get("name") for row in inspector.get_indexes(table)}
+            for name in sorted(expected - present):
+                missing_indexes.append(f"{table}:{name}")
+        issues["missing_integrity_indexes"] = len(missing_indexes)
+        if missing_indexes and len(samples) < 30:
+            samples.append({"type":"missing_integrity_indexes","indexes":missing_indexes[:20]})
+
         # Compare individual active Mindbody visits against local rows for the near-term
         # schedule. This catches both "booking missing in Classy" and "booking exists
         # locally but no longer exists in Mindbody".
@@ -455,6 +484,7 @@ def main():
         "multiple_active_orders_per_booking","paid_order_without_booking",
         "paid_sumup_booking_without_paid_order",
         "duplicate_active_coach_names","duplicate_coach_remote_mapping",
+        "missing_integrity_indexes",
         "remote_visits_missing_local","local_visits_missing_remote","roster_audit_errors",
     ]
     result = {
