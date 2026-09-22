@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, joinedload
 
 import main as core
@@ -27,6 +27,82 @@ _worker_guard = threading.Lock()
 def capability_status() -> dict[str, Any]:
     configured = bool(os.getenv("MINDBODY_API_KEY") and os.getenv("MINDBODY_STAFF_USERNAME") and os.getenv("MINDBODY_STAFF_PASSWORD"))
     return {"configured": configured, "enabled": SYNC_ENABLED, "interval_seconds": SYNC_INTERVAL}
+
+
+def _ensure_sync_state() -> None:
+    with core.engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS mindbody_sync_state (
+                entity_type VARCHAR(32) NOT NULL,
+                entity_id VARCHAR(100) NOT NULL,
+                remote_id VARCHAR(100),
+                local_changed_at TIMESTAMP,
+                remote_changed_at TIMESTAMP,
+                local_hash TEXT,
+                remote_hash TEXT,
+                last_synced_at TIMESTAMP,
+                sync_error TEXT,
+                PRIMARY KEY (entity_type, entity_id)
+            )
+        """))
+
+
+def _state_row(db: Session, entity_type: str, entity_id: int | str):
+    _ensure_sync_state()
+    return db.execute(
+        text("SELECT * FROM mindbody_sync_state WHERE entity_type=:t AND entity_id=:i"),
+        {"t": entity_type, "i": str(entity_id)},
+    ).mappings().first()
+
+
+def _state_write(
+    db: Session,
+    entity_type: str,
+    entity_id: int | str,
+    *,
+    remote_id: str | None = None,
+    local_changed_at: datetime | None = None,
+    remote_changed_at: datetime | None = None,
+    local_hash: str | None = None,
+    remote_hash: str | None = None,
+    last_synced_at: datetime | None = None,
+    sync_error: str | None = None,
+) -> None:
+    _ensure_sync_state()
+    db.execute(
+        text("""
+            INSERT INTO mindbody_sync_state
+                (entity_type, entity_id, remote_id, local_changed_at, remote_changed_at, local_hash, remote_hash, last_synced_at, sync_error)
+            VALUES
+                (:t, :i, :remote_id, :local_changed_at, :remote_changed_at, :local_hash, :remote_hash, :last_synced_at, :sync_error)
+            ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+                remote_id=COALESCE(excluded.remote_id, mindbody_sync_state.remote_id),
+                local_changed_at=COALESCE(excluded.local_changed_at, mindbody_sync_state.local_changed_at),
+                remote_changed_at=COALESCE(excluded.remote_changed_at, mindbody_sync_state.remote_changed_at),
+                local_hash=COALESCE(excluded.local_hash, mindbody_sync_state.local_hash),
+                remote_hash=COALESCE(excluded.remote_hash, mindbody_sync_state.remote_hash),
+                last_synced_at=COALESCE(excluded.last_synced_at, mindbody_sync_state.last_synced_at),
+                sync_error=COALESCE(excluded.sync_error, mindbody_sync_state.sync_error)
+        """),
+        {
+            "t": entity_type,
+            "i": str(entity_id),
+            "remote_id": remote_id,
+            "local_changed_at": local_changed_at,
+            "remote_changed_at": remote_changed_at,
+            "local_hash": local_hash,
+            "remote_hash": remote_hash,
+            "last_synced_at": last_synced_at,
+            "sync_error": sync_error,
+        },
+    )
+
+
+def mark_local_change(entity_type: str, entity_id: int | str) -> None:
+    now = datetime.now(timezone.utc)
+    with core.SessionLocal() as db:
+        _state_write(db, entity_type, entity_id, local_changed_at=now, sync_error="")
+        db.commit()
 
 
 class WriteClient(MindbodyClient):
@@ -113,6 +189,43 @@ class WriteClient(MindbodyClient):
 
     def add_to_class(self, client_id: str, class_id: str) -> dict[str, Any]:
         return self._write("class/addclienttoclass", {"ClientId": client_id, "ClassId": int(class_id), "RequirePayment": False})
+
+    def get_staff(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+        return self._authorized_get("staff/staff", {"request.limit": limit, "request.offset": offset})
+
+    def add_staff(self, *, display_name: str, bio: str = "") -> dict[str, Any]:
+        parts = display_name.strip().split(None, 1)
+        first_name = parts[0] if parts else "Classy"
+        last_name = parts[1] if len(parts) > 1 else first_name
+        return self._write("staff/addstaff", {
+            "FirstName": first_name,
+            "LastName": last_name,
+            "Bio": bio or "",
+            "ClassTeacher": True,
+        })
+
+    def update_staff(self, staff_id: str, *, display_name: str, bio: str, active: bool) -> dict[str, Any]:
+        parts = display_name.strip().split(None, 1)
+        payload: dict[str, Any] = {
+            "ID": int(staff_id),
+            "Bio": bio or "",
+            "Active": bool(active),
+            "ClassTeacher": True,
+        }
+        if parts:
+            payload["FirstName"] = parts[0]
+            payload["LastName"] = parts[1] if len(parts) > 1 else parts[0]
+        return self._write("staff/updatestaff", payload)
+
+    def substitute_class_teacher(self, class_id: str, staff_id: str) -> dict[str, Any]:
+        return self._write("class/substituteclassteacher", {
+            "ClassId": int(class_id),
+            "StaffId": int(staff_id),
+            "OverrideConflicts": False,
+            "SendClientEmail": False,
+            "SendOriginalTeacherEmail": False,
+            "SendSubstituteTeacherEmail": False,
+        })
 
     def remove_from_class(self, client_id: str, class_id: str) -> dict[str, Any]:
         return self._write("class/removeclientfromclass", {"ClientId": client_id, "ClassId": int(class_id), "LateCancel": False})
@@ -203,8 +316,250 @@ def cancel_local_booking(booking_id: int) -> None:
         db.commit()
 
 
+def _coach_payload(coach: core.Coach) -> dict[str, Any]:
+    return {
+        "display_name": (coach.display_name or "").strip(),
+        "bio": (coach.bio or "").strip(),
+        "photo_url": (coach.photo_url or "").strip(),
+        "active": bool(coach.active),
+    }
+
+
+def _remote_staff_payload(row: dict[str, Any]) -> dict[str, Any]:
+    first = str(_value(row, "FirstName", "firstName", default="") or "").strip()
+    last = str(_value(row, "LastName", "lastName", default="") or "").strip()
+    display = str(_value(row, "DisplayName", "displayName", default="") or "").strip()
+    if not display:
+        display = " ".join(x for x in (first, last) if x).strip()
+    active = _value(row, "Active", "active", default=True)
+    return {
+        "display_name": display,
+        "bio": str(_value(row, "Bio", "Biography", "bio", "biography", default="") or "").strip(),
+        "photo_url": str(_value(row, "ImageUrl", "ImageURL", "imageUrl", "imageURL", default="") or "").strip(),
+        "active": bool(active),
+    }
+
+
+def _stable_hash(payload: dict[str, Any]) -> str:
+    import hashlib, json
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _remote_staff_id(row: dict[str, Any]) -> str:
+    return str(_value(row, "Id", "ID", "StaffId", "staffId", default="") or "")
+
+
+def _staff_result_id(result: dict[str, Any]) -> str:
+    row = result.get("Staff") or result.get("staff") or {}
+    return _remote_staff_id(row) or str(result.get("StaffId") or result.get("staffId") or "")
+
+
+def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        payload = client.get_staff(limit=200, offset=offset)
+        batch = [x for x in _extract_list(payload, ("StaffMembers", "staffMembers", "Staff", "staff", "Items")) if isinstance(x, dict)]
+        rows.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+    return rows
+
+
+def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tuple[dict[str, int], dict[str, core.Coach]]:
+    counts = {
+        "staff_remote": 0,
+        "staff_created_local": 0,
+        "staff_created_remote": 0,
+        "staff_pulled": 0,
+        "staff_pushed": 0,
+        "staff_errors": 0,
+    }
+    remote_rows = _load_remote_staff(client)
+    counts["staff_remote"] = len(remote_rows)
+    locals_ = db.scalars(select(core.Coach)).all()
+    by_name = {(x.display_name or "").strip().casefold(): x for x in locals_ if (x.display_name or "").strip()}
+    state_rows = db.execute(text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")).mappings().all() if locals_ else []
+    local_by_remote: dict[str, core.Coach] = {}
+    for state in state_rows:
+        if state.get("remote_id"):
+            try:
+                coach = db.get(core.Coach, int(state["entity_id"]))
+            except Exception:
+                coach = None
+            if coach:
+                local_by_remote[str(state["remote_id"])] = coach
+
+    mapped: dict[str, core.Coach] = {}
+    seen_local_ids: set[int] = set()
+    for remote in remote_rows:
+        remote_id = _remote_staff_id(remote)
+        if not remote_id:
+            continue
+        rp = _remote_staff_payload(remote)
+        coach = local_by_remote.get(remote_id) or by_name.get(rp["display_name"].casefold())
+        if coach is None:
+            coach = core.Coach(
+                display_name=rp["display_name"] or f"Mindbody Staff {remote_id}",
+                photo_url=rp["photo_url"],
+                bio=rp["bio"],
+                active=rp["active"],
+            )
+            db.add(coach)
+            db.flush()
+            counts["staff_created_local"] += 1
+        seen_local_ids.add(coach.id)
+        mapped[remote_id] = coach
+
+        state = _state_row(db, "coach", coach.id)
+        old_remote_hash = str((state or {}).get("remote_hash") or "")
+        remote_hash = _stable_hash(rp)
+        local_payload = _coach_payload(coach)
+        local_hash = _stable_hash(local_payload)
+        remote_changed_at = now if old_remote_hash and old_remote_hash != remote_hash else (state or {}).get("remote_changed_at")
+        if not remote_changed_at:
+            remote_changed_at = now
+        local_changed_at = (state or {}).get("local_changed_at")
+
+        # Initial linking: Mindbody is authoritative for provider-backed fields.
+        local_is_newer = bool(local_changed_at and local_changed_at > remote_changed_at and old_remote_hash)
+        try:
+            if local_is_newer:
+                result = client.update_staff(
+                    remote_id,
+                    display_name=local_payload["display_name"],
+                    bio=local_payload["bio"],
+                    active=local_payload["active"],
+                )
+                returned = result.get("Staff") or result.get("staff")
+                if isinstance(returned, dict):
+                    rp = _remote_staff_payload(returned)
+                    remote_hash = _stable_hash(rp)
+                counts["staff_pushed"] += 1
+            else:
+                changed = False
+                if rp["display_name"] and coach.display_name != rp["display_name"]:
+                    coach.display_name = rp["display_name"]; changed = True
+                if coach.bio != rp["bio"]:
+                    coach.bio = rp["bio"]; changed = True
+                if coach.active != rp["active"]:
+                    coach.active = rp["active"]; changed = True
+                # Mindbody exposes staff image URLs for reads, but its public Staff update endpoint
+                # does not support image upload. Pull remote images unless a newer local profile edit exists.
+                if rp["photo_url"] and (not local_changed_at or local_changed_at <= remote_changed_at) and coach.photo_url != rp["photo_url"]:
+                    coach.photo_url = rp["photo_url"]; changed = True
+                if changed:
+                    counts["staff_pulled"] += 1
+            _state_write(
+                db, "coach", coach.id,
+                remote_id=remote_id,
+                remote_changed_at=remote_changed_at,
+                local_hash=_stable_hash(_coach_payload(coach)),
+                remote_hash=remote_hash,
+                last_synced_at=now,
+                sync_error="",
+            )
+        except Exception as exc:
+            counts["staff_errors"] += 1
+            _state_write(db, "coach", coach.id, remote_id=remote_id, last_synced_at=now, sync_error=str(exc)[:1000])
+
+    # Local-only coaches are created in Mindbody so future local changes become provider-backed.
+    for coach in locals_:
+        if coach.id in seen_local_ids or not (coach.display_name or "").strip():
+            continue
+        state = _state_row(db, "coach", coach.id)
+        if (state or {}).get("remote_id"):
+            continue
+        if coach.display_name.strip().casefold() == "classy coach":
+            continue
+        try:
+            result = client.add_staff(display_name=coach.display_name, bio=coach.bio or "")
+            remote_id = _staff_result_id(result)
+            if not remote_id:
+                raise MindbodyError("Mindbody staff creation returned no staff ID")
+            if not coach.active:
+                client.update_staff(remote_id, display_name=coach.display_name, bio=coach.bio or "", active=False)
+            mapped[remote_id] = coach
+            counts["staff_created_remote"] += 1
+            _state_write(
+                db, "coach", coach.id,
+                remote_id=remote_id,
+                local_hash=_stable_hash(_coach_payload(coach)),
+                last_synced_at=now,
+                sync_error="",
+            )
+        except Exception as exc:
+            counts["staff_errors"] += 1
+            _state_write(db, "coach", coach.id, last_synced_at=now, sync_error=str(exc)[:1000])
+
+    db.flush()
+    return counts, mapped
+
+
+def _sync_class_coach(
+    client: WriteClient,
+    db: Session,
+    klass: core.ClassSession,
+    remote: dict[str, Any],
+    staff_map: dict[str, core.Coach],
+    now: datetime,
+) -> tuple[int, int, int]:
+    remote_staff = remote.get("Staff") or remote.get("staff") or {}
+    remote_staff_id = _remote_staff_id(remote_staff)
+    if not remote_staff_id:
+        return 0, 0, 0
+    state = _state_row(db, "class", klass.id)
+    local_changed_at = (state or {}).get("local_changed_at")
+    remote_modified = _parse_dt(_value(remote, "LastModifiedDateTime", "lastModifiedDateTime"))
+    if not remote_modified:
+        remote_modified = (state or {}).get("remote_changed_at") or now
+    previous_remote_id = str((state or {}).get("remote_id") or "")
+    remote_changed = bool(previous_remote_id and previous_remote_id != remote_staff_id)
+    local_is_newer = bool(local_changed_at and local_changed_at > remote_modified and previous_remote_id)
+
+    try:
+        if local_is_newer and klass.coach_id:
+            local_coach = db.get(core.Coach, klass.coach_id)
+            coach_state = _state_row(db, "coach", local_coach.id) if local_coach else None
+            local_remote_staff_id = str((coach_state or {}).get("remote_id") or "")
+            if local_remote_staff_id and local_remote_staff_id != remote_staff_id:
+                client.substitute_class_teacher(str(klass.mindbody_class_id), local_remote_staff_id)
+                _state_write(
+                    db, "class", klass.id,
+                    remote_id=local_remote_staff_id,
+                    remote_changed_at=now,
+                    last_synced_at=now,
+                    sync_error="",
+                )
+                return 0, 1, 0
+        remote_coach = staff_map.get(remote_staff_id)
+        if remote_coach and klass.coach_id != remote_coach.id:
+            klass.coach_id = remote_coach.id
+            _state_write(
+                db, "class", klass.id,
+                remote_id=remote_staff_id,
+                remote_changed_at=remote_modified,
+                last_synced_at=now,
+                sync_error="",
+            )
+            return 1, 0, 0
+        _state_write(
+            db, "class", klass.id,
+            remote_id=remote_staff_id,
+            remote_changed_at=remote_modified if remote_changed or not previous_remote_id else None,
+            last_synced_at=now,
+            sync_error="",
+        )
+        return 0, 0, 0
+    except Exception as exc:
+        _state_write(db, "class", klass.id, last_synced_at=now, sync_error=str(exc)[:1000])
+        return 0, 0, 1
+
+
 def sync_from_mindbody() -> dict[str, int]:
-    """Pull upcoming classes/visits, reconcile occupancy, and retain admin-only customer details."""
+    """Pull upcoming classes/visits, reconcile occupancy, staff profiles, and trainer assignments."""
     client = WriteClient.from_env()
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=45)
@@ -216,8 +571,13 @@ def sync_from_mindbody() -> dict[str, int]:
         classes.extend(batch)
         if len(batch) < 200: break
         offset += len(batch)
-    counts = {"classes": 0, "visits": 0, "created": 0, "cancelled": 0}
+    counts = {
+        "classes": 0, "visits": 0, "created": 0, "cancelled": 0,
+        "trainer_assignments_pulled": 0, "trainer_assignments_pushed": 0, "trainer_assignment_errors": 0,
+    }
     with core.SessionLocal() as db:
+        staff_counts, staff_map = _sync_staff_profiles(client, db, now)
+        counts.update(staff_counts)
         local = db.scalars(select(core.ClassSession).where(core.ClassSession.starts_at >= now, core.ClassSession.starts_at < end)).all()
         for remote in classes:
             remote_id = str(_value(remote, "Id", "ID", "ClassId", default=""))
@@ -228,6 +588,10 @@ def sync_from_mindbody() -> dict[str, int]:
                 klass = next((x for x in local if abs((core.as_utc(x.starts_at)-starts).total_seconds()) < 90 and x.title.casefold() == _class_name(remote).casefold() and _studio_matches(x.studio_id, _studio_name(remote))), None)
             if not klass: continue
             klass.mindbody_class_id = remote_id; klass.mindbody_synced_at = now
+            pulled, pushed, assignment_errors = _sync_class_coach(client, db, klass, remote, staff_map, now)
+            counts["trainer_assignments_pulled"] += pulled
+            counts["trainer_assignments_pushed"] += pushed
+            counts["trainer_assignment_errors"] += assignment_errors
             klass.capacity = max(klass.capacity, int(_value(remote, "MaxCapacity", "Capacity", default=klass.capacity) or klass.capacity))
             counts["classes"] += 1
             try:
