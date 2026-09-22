@@ -503,6 +503,8 @@ async def store_coach_photo(file: UploadFile, coach: Coach, db: Session):
         path.unlink(missing_ok=True)
         db.rollback()
         raise
+    from mindbody_sync import mark_local_change
+    mark_local_change("coach", coach.id)
     remove_managed_coach_photo(old_photo)
     return coach_dict(coach)
 
@@ -1194,6 +1196,8 @@ def update_coach_profile(data: CoachProfileIn, user: User = Depends(current_user
     user.coach.display_name = display_name
     user.coach.bio = data.bio.strip()[:2000]
     db.commit()
+    from mindbody_sync import mark_local_change
+    mark_local_change("coach", user.coach.id)
     return coach_dict(user.coach)
 
 @app.post("/api/staff/profile/photo")
@@ -1209,6 +1213,8 @@ def delete_own_coach_photo(user: User = Depends(current_user), db: Session = Dep
     old_photo = user.coach.photo_url
     user.coach.photo_url = ""
     db.commit()
+    from mindbody_sync import mark_local_change
+    mark_local_change("coach", user.coach.id)
     remove_managed_coach_photo(old_photo)
     return coach_dict(user.coach)
 
@@ -1225,6 +1231,8 @@ def update_coach(coach_id: int, data: CoachProfileIn, user: User = Depends(requi
     if data.active is not None:
         coach.active = data.active
     db.commit()
+    from mindbody_sync import mark_local_change
+    mark_local_change("coach", coach.id)
     return coach_dict(coach)
 
 @app.post("/api/staff/coaches/{coach_id}/photo")
@@ -1242,6 +1250,8 @@ def delete_coach_photo(coach_id: int, user: User = Depends(require("coaches.mana
     old_photo = coach.photo_url
     coach.photo_url = ""
     db.commit()
+    from mindbody_sync import mark_local_change
+    mark_local_change("coach", coach.id)
     remove_managed_coach_photo(old_photo)
     return coach_dict(coach)
 
