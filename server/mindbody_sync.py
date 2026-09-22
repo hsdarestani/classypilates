@@ -1105,13 +1105,9 @@ def _sync_staff_profiles(
     all_remote_rows = _load_remote_staff(client)
     remote_rows = all_remote_rows
 
-    # Fix Classy first so the admin/public UI never waits for the much slower
-    # provider-directory cleanup. Persist the merge before any remote network loop.
-    counts["staff_duplicates_merged"] = _merge_duplicate_coaches(
-        db,
-        scheduled_remote_ids=allowed_remote_ids,
-    )
-    db.commit()
+    # Historical alias cleanup is maintenance, not synchronization. Routine sync
+    # uses stable Mindbody Staff IDs and never merges people by name.
+    counts["staff_duplicates_merged"] = 0
 
     # The Mindbody Staff endpoint is an employee directory, not a coach roster.
     # Only Staff IDs referenced by live/future classes are allowed to create or

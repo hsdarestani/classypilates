@@ -7,7 +7,6 @@ on:
       - "server/**"
       - "public/**"
       - "docker-compose.yml"
-      - ".github/workflows/deploy-production.yml"
   workflow_dispatch:
 
 permissions:
