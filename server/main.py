@@ -334,6 +334,54 @@ def migrate_schema():
             if name not in booking_columns:
                 connection.execute(text(f"ALTER TABLE bookings ADD COLUMN {name} {sql_type}"))
 
+        # Enforce booking identity at the database layer, but only after confirming
+        # existing production data is clean. If old drift exists, keep production
+        # online and let the integrity audit identify it for provider-safe cleanup.
+        duplicate_active_booking = connection.execute(text("""
+            SELECT 1
+            FROM bookings
+            WHERE source='website' AND status='reserved'
+            GROUP BY class_id, lower(email)
+            HAVING count(*) > 1
+            LIMIT 1
+        """)).first()
+        if not duplicate_active_booking:
+            connection.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_bookings_active_website_class_email
+                ON bookings (class_id, lower(email))
+                WHERE source='website' AND status='reserved'
+            """))
+
+        duplicate_active_spot = connection.execute(text("""
+            SELECT 1
+            FROM bookings
+            WHERE status='reserved' AND spot_number IS NOT NULL
+            GROUP BY class_id, spot_number
+            HAVING count(*) > 1
+            LIMIT 1
+        """)).first()
+        if not duplicate_active_spot:
+            connection.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_bookings_active_class_spot
+                ON bookings (class_id, spot_number)
+                WHERE status='reserved' AND spot_number IS NOT NULL
+            """))
+
+        duplicate_visit = connection.execute(text("""
+            SELECT 1
+            FROM bookings
+            WHERE mindbody_visit_id IS NOT NULL AND mindbody_visit_id <> ''
+            GROUP BY mindbody_visit_id
+            HAVING count(*) > 1
+            LIMIT 1
+        """)).first()
+        if not duplicate_visit:
+            connection.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_bookings_mindbody_visit_id
+                ON bookings (mindbody_visit_id)
+                WHERE mindbody_visit_id IS NOT NULL
+            """))
+
     inspector = inspect(engine)
     if inspector.has_table("waitlist"):
         waitlist_columns = {column["name"] for column in inspector.get_columns("waitlist")}
@@ -353,6 +401,34 @@ def migrate_schema():
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_waitlist_reference ON waitlist (reference) WHERE reference IS NOT NULL"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_waitlist_mindbody_entry ON waitlist (mindbody_waitlist_entry_id)"))
 
+            duplicate_waitlist = connection.execute(text("""
+                SELECT 1
+                FROM waitlist
+                GROUP BY class_id, lower(email)
+                HAVING count(*) > 1
+                LIMIT 1
+            """)).first()
+            if not duplicate_waitlist:
+                connection.execute(text("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_waitlist_class_email
+                    ON waitlist (class_id, lower(email))
+                """))
+
+            duplicate_waitlist_remote = connection.execute(text("""
+                SELECT 1
+                FROM waitlist
+                WHERE mindbody_waitlist_entry_id IS NOT NULL AND mindbody_waitlist_entry_id <> ''
+                GROUP BY mindbody_waitlist_entry_id
+                HAVING count(*) > 1
+                LIMIT 1
+            """)).first()
+            if not duplicate_waitlist_remote:
+                connection.execute(text("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_waitlist_mindbody_entry
+                    ON waitlist (mindbody_waitlist_entry_id)
+                    WHERE mindbody_waitlist_entry_id IS NOT NULL
+                """))
+
     inspector = inspect(engine)
     if inspector.has_table("payment_orders"):
         payment_columns = {column["name"] for column in inspector.get_columns("payment_orders")}
@@ -360,6 +436,21 @@ def migrate_schema():
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE payment_orders ADD COLUMN booking_reference VARCHAR(40)"))
                 connection.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_orders_booking_reference ON payment_orders (booking_reference)"))
+        with engine.begin() as connection:
+            duplicate_active_order = connection.execute(text("""
+                SELECT 1
+                FROM payment_orders
+                WHERE booking_reference IS NOT NULL AND status IN ('pending','paid')
+                GROUP BY booking_reference
+                HAVING count(*) > 1
+                LIMIT 1
+            """)).first()
+            if not duplicate_active_order:
+                connection.execute(text("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_payment_orders_active_booking
+                    ON payment_orders (booking_reference)
+                    WHERE booking_reference IS NOT NULL AND status IN ('pending','paid')
+                """))
 
 
 migrate_schema()
