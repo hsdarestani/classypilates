@@ -1683,6 +1683,7 @@ def _sync_class_availability(
     web_capacity = as_int("WebCapacity")
     total_booked = as_int("TotalBooked", "TotalClients")
     web_booked = as_int("TotalWebBooked", "WebBooked", "TotalWebClients")
+    is_available = _value(remote, "IsAvailable", "isAvailable", default=None)
 
     changed = False
 
@@ -1696,25 +1697,60 @@ def _sync_class_availability(
     if effective_capacity < 0:
         effective_capacity = 0
 
+    local_reserved = max(0, int(local_reserved))
+
+    # Public availability is not the same thing as physical free space. Mindbody can
+    # mark a class unavailable because the online booking window is closed or because
+    # no web-bookable capacity remains even while physical roster space still exists.
+    # In those cases Classy must show zero spots instead of leaking physical capacity.
+    if is_available is False:
+        available = 0
+    else:
+        physical_available = None
+        if total_booked is not None:
+            total_booked = max(0, total_booked)
+            physical_available = max(0, effective_capacity - total_booked)
+
+        # Respect WebCapacity whenever Mindbody supplies it. WebCapacity=0 means zero
+        # public/API booking capacity even when TotalWebBooked is omitted/null.
+        web_available = None
+        if web_capacity is not None and web_capacity >= 0:
+            web_available = max(0, web_capacity - max(0, int(web_booked or 0)))
+
+        if physical_available is not None and web_available is not None:
+            available = min(physical_available, web_available)
+        elif physical_available is not None:
+            available = physical_available
+        elif web_available is not None:
+            # Capacity counters may be hidden by Mindbody settings. We can still
+            # enforce the provider's public web cap without inventing extra spots.
+            available = min(max(0, effective_capacity - local_reserved), web_available)
+        else:
+            # Mindbody did not expose enough information to replace the cached
+            # occupancy. Preserve the last provider-backed value rather than resetting
+            # it from local rows and accidentally reopening a full class.
+            available = max(
+                0,
+                effective_capacity
+                - local_reserved
+                - max(0, int(klass.imported_bookings or 0)),
+            )
+
+    target_reserved = max(0, effective_capacity - max(0, int(available)))
+    imported = max(0, target_reserved - local_reserved)
+    if int(klass.imported_bookings or 0) != imported:
+        klass.imported_bookings = imported
+        changed = True
+
     if total_booked is not None:
-        total_booked = max(0, total_booked)
-        physical_available = max(0, effective_capacity - total_booked)
-        available = physical_available
-
-        # If Mindbody applies a separate web booking cap, website availability must
-        # respect the stricter of physical capacity and web capacity.
-        if web_capacity is not None and web_capacity >= 0 and web_booked is not None:
-            web_available = max(0, web_capacity - max(0, web_booked))
-            available = min(available, web_available)
-
-        target_reserved = max(0, effective_capacity - available)
-        imported = max(0, target_reserved - max(0, int(local_reserved)))
-        if int(klass.imported_bookings or 0) != imported:
-            klass.imported_bookings = imported
-            changed = True
         if int(klass.source_bookings_total or 0) != total_booked:
             klass.source_bookings_total = total_booked
             changed = True
+    elif is_available is False and int(klass.source_bookings_total or 0) < target_reserved:
+        # Keep aggregate occupancy at least consistent with a provider-closed class.
+        # This is diagnostic only; public spots come from imported_bookings above.
+        klass.source_bookings_total = target_reserved
+        changed = True
 
     return changed
 
