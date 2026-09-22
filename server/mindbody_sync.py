@@ -52,6 +52,20 @@ def _ensure_sync_state() -> None:
                 PRIMARY KEY (entity_type, entity_id)
             )
         """))
+        duplicate_coach_remote = connection.execute(text("""
+            SELECT 1
+            FROM mindbody_sync_state
+            WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
+            GROUP BY remote_id
+            HAVING count(*) > 1
+            LIMIT 1
+        """)).first()
+        if not duplicate_coach_remote:
+            connection.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_mindbody_sync_coach_remote_id
+                ON mindbody_sync_state (remote_id)
+                WHERE entity_type='coach' AND remote_id IS NOT NULL
+            """))
 
 
 def _state_row(db: Session, entity_type: str, entity_id: int | str):
