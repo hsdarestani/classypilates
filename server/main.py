@@ -237,6 +237,13 @@ class Waitlist(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
+    first_name: Mapped[str] = mapped_column(String(120), default="")
+    last_name: Mapped[str] = mapped_column(String(120), default="")
+    reference: Mapped[Optional[str]] = mapped_column(String(50), unique=True, index=True, nullable=True)
+    mindbody_client_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mindbody_waitlist_entry_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    mindbody_sync_status: Mapped[str] = mapped_column(String(30), default="local")
+    mindbody_sync_error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     klass: Mapped[ClassSession] = relationship()
 
@@ -326,6 +333,25 @@ def migrate_schema():
         for name, sql_type in booking_additions.items():
             if name not in booking_columns:
                 connection.execute(text(f"ALTER TABLE bookings ADD COLUMN {name} {sql_type}"))
+
+    inspector = inspect(engine)
+    if inspector.has_table("waitlist"):
+        waitlist_columns = {column["name"] for column in inspector.get_columns("waitlist")}
+        waitlist_additions = {
+            "first_name": "VARCHAR(120) NOT NULL DEFAULT ''",
+            "last_name": "VARCHAR(120) NOT NULL DEFAULT ''",
+            "reference": "VARCHAR(50)",
+            "mindbody_client_id": "VARCHAR(100)",
+            "mindbody_waitlist_entry_id": "VARCHAR(100)",
+            "mindbody_sync_status": "VARCHAR(30) NOT NULL DEFAULT 'local'",
+            "mindbody_sync_error": "TEXT NOT NULL DEFAULT ''",
+        }
+        with engine.begin() as connection:
+            for name, sql_type in waitlist_additions.items():
+                if name not in waitlist_columns:
+                    connection.execute(text(f"ALTER TABLE waitlist ADD COLUMN {name} {sql_type}"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_waitlist_reference ON waitlist (reference) WHERE reference IS NOT NULL"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_waitlist_mindbody_entry ON waitlist (mindbody_waitlist_entry_id)"))
 
     inspector = inspect(engine)
     if inspector.has_table("payment_orders"):
@@ -651,6 +677,13 @@ class PublicBookingIn(BaseModel):
 
 class WaitlistIn(BaseModel):
     classId: int
+    email: EmailStr
+    firstName: str = ""
+    lastName: str = ""
+    phone: str = ""
+
+class WaitlistCancelIn(BaseModel):
+    reference: str
     email: EmailStr
 
 class BookingClaimIn(BaseModel):
