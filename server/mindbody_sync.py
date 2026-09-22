@@ -2090,6 +2090,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
         local_ids = [row.id for row in local]
         reserved_counts: dict[int, int] = {}
         individual_remote_counts: dict[int, int] = {}
+        waitlist_counts: dict[int, int] = {}
         if local_ids:
             reserved_counts = dict(
                 db.execute(
@@ -2112,7 +2113,15 @@ def sync_staff_and_assignments() -> dict[str, int]:
                     .group_by(core.Booking.class_id)
                 ).all()
             )
+            waitlist_counts = dict(
+                db.execute(
+                    select(core.Waitlist.class_id, func.count(core.Waitlist.id))
+                    .where(core.Waitlist.class_id.in_(local_ids))
+                    .group_by(core.Waitlist.class_id)
+                ).all()
+            )
         roster_candidates: list[tuple[datetime, int, str]] = []
+        waitlist_candidates: list[tuple[datetime, int, str]] = []
         for remote in classes:
             klass, created_local = _ensure_local_class(db, local, remote, staff_map, now)
             if not klass:
@@ -2155,6 +2164,19 @@ def sync_staff_and_assignments() -> dict[str, int]:
             ):
                 roster_candidates.append((starts, klass.id, remote_id))
 
+            remote_waitlisted = _value(remote, "TotalWaitlisted", "TotalWaitList", default=None)
+            try:
+                remote_waitlisted_int = int(remote_waitlisted) if remote_waitlisted is not None else None
+            except Exception:
+                remote_waitlisted_int = None
+            if (
+                remote_id
+                and starts
+                and remote_waitlisted_int is not None
+                and int(waitlist_counts.get(klass.id, 0)) != max(0, remote_waitlisted_int)
+            ):
+                waitlist_candidates.append((starts, klass.id, remote_id))
+
         counts["local_only_cancelled"] = _cancel_unlinked_local_classes(db, start=now, end=end)
         db.commit()
 
@@ -2163,6 +2185,12 @@ def sync_staff_and_assignments() -> dict[str, int]:
     counts["roster_rows_created"] = 0
     counts["roster_rows_cancelled"] = 0
     counts["roster_errors"] = 0
+    counts["waitlist_candidates"] = len(waitlist_candidates)
+    counts["waitlists_reconciled"] = 0
+    counts["waitlist_rows_created"] = 0
+    counts["waitlist_rows_removed"] = 0
+    counts["waitlist_unresolved"] = 0
+    counts["waitlist_errors"] = 0
     # Bound each fast cycle so a large historical drift cannot starve normal sync.
     for _, class_id, remote_id in sorted(roster_candidates, key=lambda x: x[0])[:50]:
         with core.SessionLocal() as db:
@@ -2177,6 +2205,21 @@ def sync_staff_and_assignments() -> dict[str, int]:
             except Exception:
                 db.rollback()
                 counts["roster_errors"] += 1
+
+    for _, class_id, remote_id in sorted(waitlist_candidates, key=lambda x: x[0])[:20]:
+        with core.SessionLocal() as db:
+            klass = db.get(core.ClassSession, class_id)
+            if not klass:
+                continue
+            try:
+                wait_counts = _reconcile_class_waitlist(client, db, klass, remote_id, now)
+                counts["waitlists_reconciled"] += 1
+                counts["waitlist_rows_created"] += wait_counts["created"]
+                counts["waitlist_rows_removed"] += wait_counts["removed"]
+                counts["waitlist_unresolved"] += wait_counts["unresolved"]
+            except Exception:
+                db.rollback()
+                counts["waitlist_errors"] += 1
 
     for email_job in cancellation_email_jobs:
         try:
