@@ -976,7 +976,25 @@ def _deactivate_remote_staff_aliases(
             payload = _remote_staff_payload(row)
             if not payload["active"]:
                 continue
+
+            # Only clean aliases with the exact fingerprint produced by the old
+            # Classy Staff creator: a one-word coach name was sent as both
+            # FirstName and LastName, yielding "Andrea Andrea". Do not deactivate
+            # arbitrary same-name people; they may be legitimate distinct staff.
+            first = str(_value(row, "FirstName", "firstName", default="") or "").strip()
+            last = str(_value(row, "LastName", "lastName", default="") or "").strip()
             raw_display = str(_value(row, "DisplayName", "displayName", default="") or "").strip()
+            raw_parts = raw_display.split()
+            repeated_name = bool(
+                (first and last and first.casefold() == last.casefold())
+                or (
+                    len(raw_parts) == 2
+                    and raw_parts[0].casefold() == raw_parts[1].casefold()
+                )
+            )
+            if not repeated_name:
+                continue
+
             if not raw_display:
                 raw_display = _mindbody_staff_write_name(payload["display_name"], row)
             client.update_staff(
