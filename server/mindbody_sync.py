@@ -20,13 +20,19 @@ from mindbody_api import MindbodyClient, MindbodyConfig, MindbodyError, _extract
 
 SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
+INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
 _worker_started = False
 _worker_guard = threading.Lock()
 
 
 def capability_status() -> dict[str, Any]:
     configured = bool(os.getenv("MINDBODY_API_KEY") and os.getenv("MINDBODY_STAFF_USERNAME") and os.getenv("MINDBODY_STAFF_PASSWORD"))
-    return {"configured": configured, "enabled": SYNC_ENABLED, "interval_seconds": SYNC_INTERVAL}
+    return {
+        "configured": configured,
+        "enabled": SYNC_ENABLED,
+        "interval_seconds": SYNC_INTERVAL,
+        "initial_delay_seconds": INITIAL_SYNC_DELAY,
+    }
 
 
 def _ensure_sync_state() -> None:
@@ -780,6 +786,10 @@ def sync_from_mindbody() -> dict[str, int]:
             counts["trainer_assignment_errors"] += assignment_errors
             klass.capacity = max(klass.capacity, int(_value(remote, "MaxCapacity", "Capacity", default=klass.capacity) or klass.capacity))
             counts["classes"] += 1
+
+            # Release DB locks before the remote roster request. Mindbody network calls
+            # can be slow and must never keep a database transaction open.
+            db.commit()
             try:
                 payload = client.get_class_visits(remote_id)
             except MindbodyError:
@@ -787,6 +797,7 @@ def sync_from_mindbody() -> dict[str, int]:
                 total = int(_value(remote, "TotalBooked", "TotalClients", default=0) or 0)
                 local_synced = db.scalar(select(func.count(core.Booking.id)).where(core.Booking.class_id == klass.id, core.Booking.source == "website", core.Booking.status == "reserved", core.Booking.mindbody_sync_status == "synced")) or 0
                 klass.imported_bookings = max(0, total - int(local_synced))
+                db.commit()
                 continue
             visits = [x for x in _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items")) if isinstance(x, dict)]
             active_ids: set[str] = set()
@@ -819,6 +830,7 @@ def sync_from_mindbody() -> dict[str, int]:
                     booking.status = "cancelled"; booking.mindbody_synced_at = now; counts["cancelled"] += 1
             klass.imported_bookings = 0  # individual mirror rows are counted by the normal booking query
             klass.source_bookings_total = len(active_ids)
+            db.commit()
         db.commit()
     return counts
 
@@ -831,6 +843,8 @@ def retry_pending() -> int:
 
 
 def _loop():
+    if INITIAL_SYNC_DELAY:
+        time.sleep(INITIAL_SYNC_DELAY)
     while True:
         try:
             if capability_status()["configured"]:
