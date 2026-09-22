@@ -560,6 +560,76 @@ def _sync_class_coach(
         return 0, 0, 1
 
 
+def sync_staff_and_assignments() -> dict[str, int]:
+    """Synchronize Mindbody staff profiles and upcoming class trainer assignments only.
+
+    This intentionally skips class rosters/bookings so it is safe for deployment-time
+    verification and completes quickly. The normal background mirror continues to own
+    booking, cancellation, and occupancy reconciliation.
+    """
+    client = WriteClient.from_env()
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(days=45)
+    classes: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        payload = client.get_classes(
+            start_date_time=now.isoformat(),
+            end_date_time=end.isoformat(),
+            limit=200,
+            offset=offset,
+        )
+        batch = [x for x in _extract_list(payload, ("Classes", "classes", "Items")) if isinstance(x, dict)]
+        classes.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+
+    counts = {
+        "classes_seen": len(classes),
+        "classes_matched": 0,
+        "trainer_assignments_pulled": 0,
+        "trainer_assignments_pushed": 0,
+        "trainer_assignment_errors": 0,
+    }
+    with core.SessionLocal() as db:
+        staff_counts, staff_map = _sync_staff_profiles(client, db, now)
+        counts.update(staff_counts)
+        local = db.scalars(
+            select(core.ClassSession).where(
+                core.ClassSession.starts_at >= now,
+                core.ClassSession.starts_at < end,
+            )
+        ).all()
+        for remote in classes:
+            remote_id = str(_value(remote, "Id", "ID", "ClassId", default=""))
+            starts = _parse_dt(_value(remote, "StartDateTime", "startDateTime"))
+            if not remote_id or not starts:
+                continue
+            klass = next((x for x in local if x.mindbody_class_id == remote_id), None)
+            if not klass:
+                klass = next(
+                    (
+                        x for x in local
+                        if abs((core.as_utc(x.starts_at) - starts).total_seconds()) < 90
+                        and x.title.casefold() == _class_name(remote).casefold()
+                        and _studio_matches(x.studio_id, _studio_name(remote))
+                    ),
+                    None,
+                )
+            if not klass:
+                continue
+            klass.mindbody_class_id = remote_id
+            klass.mindbody_synced_at = now
+            pulled, pushed, assignment_errors = _sync_class_coach(client, db, klass, remote, staff_map, now)
+            counts["classes_matched"] += 1
+            counts["trainer_assignments_pulled"] += pulled
+            counts["trainer_assignments_pushed"] += pushed
+            counts["trainer_assignment_errors"] += assignment_errors
+        db.commit()
+    return counts
+
+
 def sync_from_mindbody() -> dict[str, int]:
     """Pull upcoming classes/visits, reconcile occupancy, staff profiles, and trainer assignments."""
     client = WriteClient.from_env()
