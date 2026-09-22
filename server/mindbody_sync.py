@@ -180,12 +180,12 @@ class WriteClient(MindbodyClient):
             detail = exc.read().decode(errors="replace")
             raise MindbodyError(detail[:1000], status=exc.code) from exc
 
-    def add_client(self, booking: core.Booking) -> str:
-        parts = (booking.customer_name or "").strip().split(None, 1)
+    def add_client_details(self, *, email: str, first_name: str, last_name: str, phone: str = "") -> str:
         result = self._write("client/addclient", {"Client": {
-            "FirstName": parts[0] if parts else "Classy",
-            "LastName": parts[1] if len(parts) > 1 else "Client",
-            "Email": booking.email, "MobilePhone": booking.phone or "",
+            "FirstName": first_name.strip(),
+            "LastName": last_name.strip(),
+            "Email": email.strip().lower(),
+            "MobilePhone": phone.strip(),
         }})
         client = result.get("Client") or result.get("client") or {}
         client_id = client.get("Id") or client.get("ID") or result.get("ClientId")
@@ -193,8 +193,79 @@ class WriteClient(MindbodyClient):
             raise MindbodyError("Mindbody client creation returned no client ID")
         return str(client_id)
 
-    def add_to_class(self, client_id: str, class_id: str) -> dict[str, Any]:
-        return self._write("class/addclienttoclass", {"ClientId": client_id, "ClassId": int(class_id), "RequirePayment": False})
+    def add_client(self, booking: core.Booking) -> str:
+        parts = (booking.customer_name or "").strip().split(None, 1)
+        return self.add_client_details(
+            email=booking.email,
+            first_name=parts[0] if parts else "Classy",
+            last_name=parts[1] if len(parts) > 1 else "Client",
+            phone=booking.phone or "",
+        )
+
+    def add_to_class(self, client_id: str, class_id: str, *, waitlist: bool = False) -> dict[str, Any]:
+        return self._write("class/addclienttoclass", {
+            "ClientId": client_id,
+            "ClassId": int(class_id),
+            "RequirePayment": False,
+            "Waitlist": bool(waitlist),
+            "SendEmail": False,
+        })
+
+    def get_waitlist_entries(
+        self,
+        *,
+        class_id: str | None = None,
+        client_id: str | None = None,
+        waitlist_entry_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"request.hidePastEntries": True, "request.limit": 100}
+        if class_id:
+            params["request.classIds"] = [int(class_id)]
+        if client_id:
+            params["request.clientIds"] = [client_id]
+        if waitlist_entry_id:
+            params["request.waitlistEntryIds"] = [int(waitlist_entry_id)]
+        payload = self._authorized_get("class/waitlistentries", params)
+        return [
+            x for x in _extract_list(payload, ("WaitlistEntries", "waitlistEntries", "Items"))
+            if isinstance(x, dict)
+        ]
+
+    def remove_from_waitlist(self, waitlist_entry_id: str) -> None:
+        import urllib.error, urllib.parse, urllib.request
+        if not self.access_token:
+            self.issue_token()
+        query = urllib.parse.urlencode(
+            [("request.waitlistEntryIds", int(waitlist_entry_id))],
+            doseq=True,
+        )
+        request = urllib.request.Request(
+            f"{self.config.api_url}/class/removefromwaitlist?{query}",
+            data=b"",
+            method="POST",
+            headers={
+                "API-Key": self.config.api_key,
+                "SiteId": self.config.site_id,
+                "Authorization": self.access_token,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "ClassyPilates/2.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout):
+                return
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")
+            raise MindbodyError(detail[:1000], status=exc.code) from exc
+
+    def cancel_single_class(self, class_id: str) -> dict[str, Any]:
+        return self._write("class/cancelsingleclass", {
+            "ClassID": int(class_id),
+            "HideCancel": True,
+            "SendClientEmail": False,
+            "SendStaffEmail": False,
+        })
 
     def get_staff(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
         return self._authorized_get("staff/staff", {"request.limit": limit, "request.offset": offset})
@@ -398,6 +469,61 @@ def hold_local_booking(booking_id: int) -> None:
 
 def sync_local_booking(booking_id: int) -> None:
     _sync_or_hold_local_booking(booking_id, allow_pending=False)
+
+
+def _waitlist_entry_id(row: dict[str, Any]) -> str:
+    return str(_value(row, "Id", "ID", "WaitlistEntryId", "WaitlistEntryID", default="") or "")
+
+
+def _waitlist_client_id(row: dict[str, Any]) -> str:
+    client = row.get("Client") or row.get("client") or {}
+    return str(_value(row, "ClientId", "ClientID", default=_value(client, "Id", "ID", default="")) or "")
+
+
+def add_remote_waitlist(
+    *,
+    class_id: str,
+    email: str,
+    first_name: str,
+    last_name: str,
+    phone: str = "",
+) -> tuple[str, str]:
+    client = WriteClient.from_env()
+    candidates = client.find_clients(email)
+    match = next((x for x in candidates if str(x.get("Email", "")).casefold() == email.casefold()), None)
+    client_id = str(_value(match or {}, "Id", "ID", default="") or "")
+    if not client_id:
+        if len(first_name.strip()) < 2 or len(last_name.strip()) < 2:
+            raise MindbodyError("waitlist_name_required")
+        client_id = client.add_client_details(
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            phone=phone,
+        )
+
+    client.add_to_class(client_id, class_id, waitlist=True)
+    entries = client.get_waitlist_entries(class_id=class_id, client_id=client_id)
+    matches = [x for x in entries if _waitlist_client_id(x) == client_id]
+    if not matches:
+        raise MindbodyError("Mindbody waitlist entry could not be verified")
+    entry_id = _waitlist_entry_id(matches[-1])
+    if not entry_id:
+        raise MindbodyError("Mindbody waitlist entry has no ID")
+    return client_id, entry_id
+
+
+def remove_remote_waitlist(waitlist_entry_id: str) -> None:
+    if not waitlist_entry_id:
+        return
+    client = WriteClient.from_env()
+    try:
+        client.remove_from_waitlist(waitlist_entry_id)
+    except Exception:
+        # Mindbody may treat repeated removals as errors. Verify absence before failing.
+        entries = client.get_waitlist_entries(waitlist_entry_id=waitlist_entry_id)
+        if any(_waitlist_entry_id(x) == str(waitlist_entry_id) for x in entries):
+            raise
 
 
 def _remote_booking_is_active(client: WriteClient, booking: core.Booking) -> bool:
