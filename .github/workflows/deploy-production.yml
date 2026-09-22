@@ -3,8 +3,11 @@ name: Deploy Classy Production
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - DEPLOYMENT_STATUS.md
+    paths:
+      - "server/**"
+      - "public/**"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy-production.yml"
   workflow_dispatch:
 
 permissions:
