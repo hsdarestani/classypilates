@@ -824,13 +824,16 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     if c.mindbody_class_id:
         from mindbody_sync import refresh_class_availability_strict
         try:
-            refresh_class_availability_strict(c.id)
+            refreshed = refresh_class_availability_strict(c.id)
         except Exception as exc:
             raise HTTPException(503, "mindbody_availability_unavailable") from exc
+        if int(refreshed.get("spots", 0) or 0) <= 0:
+            raise HTTPException(409, "class_full")
     c = db.scalar(
         select(core.ClassSession)
         .where(core.ClassSession.id == c.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if not c or c.status != "active":
         raise HTTPException(409, "class_unavailable")
