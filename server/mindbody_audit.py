@@ -136,6 +136,19 @@ def main():
                 if len(samples) < 30:
                     samples.append({"type":"title_mismatch","remote_id":remote_id,"remote":remote_title,"local":klass.title})
 
+            if remote_start:
+                remote_duration = mb._remote_class_duration(remote, remote_start)
+                if int(klass.duration or 0) != int(remote_duration):
+                    issues["duration_mismatch"] += 1
+                    if len(samples) < 30:
+                        samples.append({"type":"duration_mismatch","remote_id":remote_id,"remote":remote_duration,"local":klass.duration})
+
+            remote_description = mb._remote_class_description(remote)
+            if (klass.description or "").strip() != remote_description.strip():
+                issues["description_mismatch"] += 1
+                if len(samples) < 30:
+                    samples.append({"type":"description_mismatch","remote_id":remote_id})
+
             should_cancel = remote_cancelled(remote)
             if should_cancel != (klass.status == "cancelled"):
                 issues["cancel_status_mismatch"] += 1
@@ -154,6 +167,40 @@ def main():
                     if len(samples) < 30:
                         samples.append({"type":"trainer_mismatch","remote_id":remote_id,"remote_staff":remote_staff_id,"local_staff":local_remote_staff_id})
 
+        unlinked_future_classes = db.scalar(select(func.count(core.ClassSession.id)).where(
+            core.ClassSession.starts_at >= now,
+            core.ClassSession.status == "active",
+            core.ClassSession.mindbody_class_id.is_(None),
+        )) or 0
+        issues["unlinked_future_classes"] = int(unlinked_future_classes)
+
+        waitlist_unsynced = db.scalar(
+            select(func.count(core.Waitlist.id))
+            .join(core.ClassSession, core.Waitlist.class_id == core.ClassSession.id)
+            .where(
+                core.ClassSession.mindbody_class_id.is_not(None),
+                (
+                    core.Waitlist.mindbody_waitlist_entry_id.is_(None)
+                    | (core.Waitlist.mindbody_sync_status != "synced")
+                ),
+            )
+        ) or 0
+        issues["waitlist_unsynced"] = int(waitlist_unsynced)
+
+        hold_cutoff = now - timedelta(minutes=35)
+        stale_pending_holds = db.scalar(
+            select(func.count(core.Booking.id))
+            .join(core.ClassSession, core.Booking.class_id == core.ClassSession.id)
+            .where(
+                core.Booking.source == "website",
+                core.Booking.status == "reserved",
+                core.Booking.payment_status == "pending",
+                core.ClassSession.mindbody_class_id.is_not(None),
+                core.Booking.created_at < hold_cutoff,
+            )
+        ) or 0
+        issues["stale_pending_holds"] = int(stale_pending_holds)
+
         paid_unsynced = db.scalar(select(func.count(core.Booking.id)).where(
             core.Booking.source == "website",
             core.Booking.status == "reserved",
@@ -168,8 +215,10 @@ def main():
 
     critical_keys = [
         "duplicate_remote_ids","missing_local_class","capacity_mismatch","availability_mismatch",
-        "start_time_mismatch","studio_mismatch","title_mismatch","cancel_status_mismatch",
-        "trainer_mismatch","paid_booking_unsynced","cancel_failed",
+        "start_time_mismatch","studio_mismatch","title_mismatch","duration_mismatch",
+        "description_mismatch","cancel_status_mismatch","trainer_mismatch",
+        "unlinked_future_classes","waitlist_unsynced","stale_pending_holds",
+        "paid_booking_unsynced","cancel_failed",
     ]
     result = {
         "ok": all(int(issues.get(k, 0)) == 0 for k in critical_keys),
