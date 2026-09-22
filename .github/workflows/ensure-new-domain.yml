@@ -1,9 +1,6 @@
 name: Ensure Classy New Domain
 
 on:
-  workflow_run:
-    workflows: ["Deploy Classy Production"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
