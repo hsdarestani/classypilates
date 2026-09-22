@@ -1713,7 +1713,21 @@ def resolve_public_class(data: PublicBookingIn, user: Optional[User], db: Sessio
     external_id = str(data.classId).strip()
     mapped = db.get(PublicClassMap, external_id)
     if mapped:
-        return db.get(ClassSession, mapped.class_id)
+        mapped_class = db.get(ClassSession, mapped.class_id)
+        if mapped_class and mapped_class.mindbody_class_id:
+            return mapped_class
+
+    # Production schedule is Mindbody-authoritative. Never create a bookable class
+    # from browser-supplied title/time/capacity metadata when the provider is
+    # configured; that could create a phantom local-only session.
+    try:
+        from mindbody_sync import capability_status
+        mindbody_managed = bool(capability_status().get("configured"))
+    except Exception:
+        mindbody_managed = bool(os.getenv("MINDBODY_API_KEY") and os.getenv("MINDBODY_SITE_ID"))
+    if mindbody_managed:
+        raise HTTPException(409, "mindbody_managed_schedule")
+
     if not user or portal_for(user) != "/account":
         raise HTTPException(401, "customer_login_required")
     match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})-(bhf1|ladies|sachsen|bornheim|mid|oval)-(\d{4})", external_id)
