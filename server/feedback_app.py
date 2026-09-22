@@ -747,6 +747,10 @@ def delete_class_v2(class_id: int, background_tasks: BackgroundTasks, user: core
     bookings = db.scalars(select(core.Booking).where(core.Booking.class_id == c.id, core.Booking.status == "reserved")).all()
     for booking in bookings:
         booking.status = "cancelled"
+        if c.mindbody_class_id:
+            booking.mindbody_sync_status = "cancelled"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = datetime.now(timezone.utc)
         if booking.payment_method == "class_credit":
             link = db.scalar(select(core.CustomerBookingLink).where(core.CustomerBookingLink.booking_id == booking.id))
             if link:
@@ -754,6 +758,7 @@ def delete_class_v2(class_id: int, background_tasks: BackgroundTasks, user: core
                 if profile:
                     profile.credits += 1
                     refunded.add(booking.id)
+            booking.payment_method = "class_credit_refunded"
     db.flush()
     after = _session_snapshot(c)
     queued = _queue_class_notifications(db, c, "cancelled", before, after, [], background_tasks, refunded)
