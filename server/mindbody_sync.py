@@ -1227,6 +1227,10 @@ def _sync_staff_profiles(
                 if isinstance(returned, dict):
                     rp = _remote_staff_payload(returned)
                     remote_hash = _stable_hash(rp)
+                # The successful provider write is now at least as new as the local
+                # edit. Advancing remote_changed_at prevents the same Classy edit
+                # from being pushed again every 3-minute cycle.
+                remote_changed_at = datetime.now(timezone.utc)
                 counts["staff_pushed"] += 1
             else:
                 changed = False
