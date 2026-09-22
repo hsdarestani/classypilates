@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 import feedback_app as feedback
 import class_language  # registers DE/EN class-language routes and payloads
 import mindbody_sync  # registers the production two-way booking mirror
+import mindbody_webhooks
 
 app = feedback.app
 core = mindbody_sync.core
@@ -596,6 +597,7 @@ def _assert_production_booking_route() -> None:
 
 _prefer_latest_routes()
 _assert_production_booking_route()
+mindbody_webhooks.install(app)
 
 
 @app.get('/api/capabilities')
@@ -611,4 +613,5 @@ def capabilities():
         'class_recurrence': 'monthly',
         'monthly_memberships': True,
         'mindbody_mirror': mindbody_sync.capability_status(),
+        'mindbody_webhook': mindbody_webhooks.webhook_status(),
     }
