@@ -345,21 +345,32 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         }
     except HTTPException:
         order.status = "failed"
+        booking_id = None
         if booking_reference:
-            booking = db.scalar(select(core.Booking).where(core.Booking.reference == booking_reference).with_for_update())
+            booking = db.scalar(select(core.Booking).where(core.Booking.reference == booking_reference))
             if booking and booking.payment_status == "pending":
                 booking_id = booking.id
-                # Release the provider-side seat hold before cancelling locally.
-                from mindbody_sync import cancel_local_booking_strict, cancel_local_booking
-                try:
-                    cancel_local_booking_strict(booking_id)
-                except Exception:
-                    booking.mindbody_sync_status = "cancel_failed"
-                    booking.mindbody_sync_error = "Mindbody hold release failed after checkout creation failure"
+        db.commit()
+
+        release_error = None
+        if booking_id is not None:
+            from mindbody_sync import cancel_local_booking_strict
+            try:
+                cancel_local_booking_strict(booking_id)
+            except Exception as exc:
+                release_error = str(exc)[:1500]
+
+            booking = db.scalar(
+                select(core.Booking).where(core.Booking.id == booking_id).with_for_update()
+            )
+            if booking and booking.payment_status == "pending":
                 booking.payment_status = "failed"
                 booking.payment_method = "sumup"
                 booking.status = "cancelled"
-        db.commit()
+                if release_error:
+                    booking.mindbody_sync_status = "cancel_failed"
+                    booking.mindbody_sync_error = release_error
+                db.commit()
         raise
 
 
