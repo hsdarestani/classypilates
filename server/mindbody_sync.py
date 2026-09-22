@@ -1129,15 +1129,11 @@ def _sync_staff_profiles(
 
     counts["staff_remote"] = len(remote_rows)
 
-    # Provider cleanup is intentionally bounded. Remaining historical aliases are
-    # handled by later sync cycles without delaying the Classy-side merge.
-    if allowed_remote_ids is not None:
-        counts["staff_remote_aliases_deactivated"] = _deactivate_remote_staff_aliases(
-            client,
-            all_remote_rows,
-            allowed_remote_ids,
-            max_changes=50,
-        )
+    # Historical remote alias cleanup is intentionally NOT part of the recurring
+    # mirror. The duplicate-creation bug is fixed, and automatic deactivation of
+    # unscheduled Staff could touch a legitimate same-name employee. Cleanup remains
+    # an explicit maintenance operation only.
+    counts["staff_remote_aliases_deactivated"] = 0
 
     locals_ = db.scalars(select(core.Coach)).all()
     state_rows = db.execute(
