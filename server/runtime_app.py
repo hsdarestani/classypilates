@@ -83,7 +83,6 @@ def _cancel_local_booking_hardened(booking_id: int) -> None:
     with core.SessionLocal() as db:
         booking = db.scalar(
             select(core.Booking)
-            .options(joinedload(core.Booking.klass))
             .where(core.Booking.id == booking_id)
             .with_for_update()
         )
