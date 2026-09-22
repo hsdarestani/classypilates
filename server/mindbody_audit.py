@@ -4,7 +4,7 @@ import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 import mindbody_sync as mb
 import main as core
