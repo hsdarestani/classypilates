@@ -474,6 +474,11 @@ def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tup
         state = _state_row(db, "coach", coach.id)
         if (state or {}).get("remote_id"):
             continue
+        # Historical coaches imported from old Mindbody exports are not evidence
+        # of a newer local change. Only create a new remote Staff record when the
+        # coach has actually been created/edited in Classy after sync tracking began.
+        if not state or not state.get("local_changed_at"):
+            continue
         if coach.display_name.strip().casefold() == "classy coach":
             continue
         try:
