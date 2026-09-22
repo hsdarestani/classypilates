@@ -86,12 +86,13 @@ def _cancel_local_booking_hardened(booking_id: int) -> None:
             .where(core.Booking.id == booking_id)
             .with_for_update()
         )
-        if (
-            not booking
-            or booking.source != "website"
-            or not booking.mindbody_client_id
-            or not booking.klass.mindbody_class_id
-        ):
+        if not booking or booking.source != "website":
+            return
+        if not booking.mindbody_client_id or not booking.klass.mindbody_class_id:
+            booking.mindbody_sync_status = "cancelled"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = datetime.now(timezone.utc)
+            db.commit()
             return
         try:
             payload = {
