@@ -328,6 +328,7 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
             "description": ("Classy Pilates · " + ", ".join(names))[:255],
             "return_url": f"{origin}/api/checkout/sumup-return",
             "redirect_url": f"{origin}/api/checkout/sumup-return?reference={reference}",
+            "valid_until": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
             "hosted_checkout": {"enabled": True},
         })
         if not checkout.get("id") or not checkout.get("hosted_checkout_url"):
