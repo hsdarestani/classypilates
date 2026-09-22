@@ -204,7 +204,7 @@ def _reconcile_remote_website_cancellations() -> int:
             .where(
                 core.Booking.source == "website",
                 core.Booking.status == "reserved",
-                core.Booking.payment_status == "paid",
+                core.Booking.payment_status.in_(["paid", "pending"]),
                 core.Booking.mindbody_sync_status == "synced",
                 core.Booking.mindbody_visit_id.is_not(None),
                 core.ClassSession.starts_at >= now - timedelta(hours=2),
@@ -251,11 +251,16 @@ def _reconcile_remote_website_cancellations() -> int:
                     active_client_ids.add(client_id)
 
             for booking in bookings:
-                visit_still_active = str(booking.mindbody_visit_id or "") in active_visit_ids
-                client_still_active = bool(booking.mindbody_client_id) and str(booking.mindbody_client_id) in active_client_ids
-                if visit_still_active or client_still_active:
+                booking_visit_id = str(booking.mindbody_visit_id or "").strip()
+                booking_client_id = str(booking.mindbody_client_id or "").strip()
+                if booking_visit_id:
+                    still_active = booking_visit_id in active_visit_ids
+                else:
+                    still_active = bool(booking_client_id) and booking_client_id in active_client_ids
+                if still_active:
                     continue
 
+                was_paid = booking.payment_status == "paid"
                 booking.status = "cancelled"
                 booking.mindbody_sync_status = "cancelled_remote"
                 booking.mindbody_sync_error = ""
@@ -266,7 +271,32 @@ def _reconcile_remote_website_cancellations() -> int:
                     if profile:
                         profile.credits += 1
                     booking.payment_method = "class_credit_refunded"
-                email_jobs.append(core.cancellation_email_data(booking))
+
+                # A pending SumUp checkout must not remain payable after Mindbody
+                # removed its seat. Deactivate it immediately when possible. If
+                # provider state is temporarily unavailable, keep payment_status
+                # pending; the payment synchronizer is hardened not to revive this
+                # cancelled booking if a late payment arrives.
+                if booking.payment_status == "pending" and booking.payment_method == "sumup":
+                    order = db.scalar(
+                        select(core.PaymentOrder)
+                        .where(core.PaymentOrder.booking_reference == booking.reference)
+                        .order_by(core.PaymentOrder.created_at.desc())
+                        .limit(1)
+                    )
+                    if order and order.status == "pending" and order.provider_payment_id:
+                        try:
+                            feedback._sumup_request(
+                                f"/v0.1/checkouts/{order.provider_payment_id}",
+                                method="DELETE",
+                            )
+                            order.status = "cancelled"
+                            booking.payment_status = "cancelled"
+                        except Exception:
+                            pass
+
+                if was_paid:
+                    email_jobs.append(core.cancellation_email_data(booking))
                 cancelled += 1
         db.commit()
 
