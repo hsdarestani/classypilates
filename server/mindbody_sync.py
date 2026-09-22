@@ -369,6 +369,7 @@ def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
 
 
 def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tuple[dict[str, int], dict[str, core.Coach]]:
+    _ensure_sync_state()
     counts = {
         "staff_remote": 0,
         "staff_created_local": 0,
