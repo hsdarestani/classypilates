@@ -309,17 +309,68 @@ def sync_local_booking(booking_id: int) -> None:
         db.commit()
 
 
-def cancel_local_booking(booking_id: int) -> None:
+def _remote_booking_is_active(client: WriteClient, booking: core.Booking) -> bool:
+    if not booking.klass.mindbody_class_id:
+        return False
+    payload = client.get_class_visits(str(booking.klass.mindbody_class_id))
+    visits = [x for x in _extract_list(payload, ("Visits", "visits", "ClassVisits", "Items")) if isinstance(x, dict)]
+    for visit in visits:
+        if bool(_value(visit, "Cancelled", "IsCancelled", default=False)):
+            continue
+        client_data = visit.get("Client") or {}
+        visit_id = str(_value(visit, "Id", "ID", "VisitId", default="") or "")
+        client_id = str(_value(visit, "ClientId", "ClientID", default=_value(client_data, "Id", "ID", default="")) or "")
+        if booking.mindbody_visit_id and visit_id and visit_id == str(booking.mindbody_visit_id):
+            return True
+        if booking.mindbody_client_id and client_id and client_id == str(booking.mindbody_client_id):
+            return True
+    return False
+
+
+def cancel_local_booking_strict(booking_id: int) -> bool:
+    """Remove a website booking from Mindbody before Classy confirms cancellation."""
     with core.SessionLocal() as db:
-        booking = db.scalar(select(core.Booking).options(joinedload(core.Booking.klass)).where(core.Booking.id == booking_id).with_for_update())
-        if not booking or booking.source != "website" or not booking.mindbody_client_id or not booking.klass.mindbody_class_id:
-            return
+        booking = db.scalar(
+            select(core.Booking)
+            .options(joinedload(core.Booking.klass))
+            .where(core.Booking.id == booking_id)
+            .with_for_update()
+        )
+        if not booking or booking.source != "website":
+            return True
+        if not booking.mindbody_client_id or not booking.klass.mindbody_class_id:
+            # No provider-side reservation exists yet.
+            return True
+
+        client = WriteClient.from_env()
         try:
-            WriteClient.from_env().remove_from_class(booking.mindbody_client_id, booking.klass.mindbody_class_id)
-            booking.mindbody_sync_status = "cancelled"; booking.mindbody_sync_error = ""; booking.mindbody_synced_at = datetime.now(timezone.utc)
-        except Exception as exc:
-            booking.mindbody_sync_status = "cancel_failed"; booking.mindbody_sync_error = str(exc)[:1500]
+            client.remove_from_class(str(booking.mindbody_client_id), str(booking.klass.mindbody_class_id))
+        except Exception:
+            # A repeated cancellation may be reported as an error by Mindbody.
+            # Treat it as success only after verifying that the visit is no longer active.
+            try:
+                if _remote_booking_is_active(client, booking):
+                    raise
+            except MindbodyError:
+                raise
+        booking.mindbody_sync_status = "cancelled"
+        booking.mindbody_sync_error = ""
+        booking.mindbody_synced_at = datetime.now(timezone.utc)
         db.commit()
+        return True
+
+
+def cancel_local_booking(booking_id: int) -> None:
+    try:
+        cancel_local_booking_strict(booking_id)
+    except Exception as exc:
+        with core.SessionLocal() as db:
+            booking = db.get(core.Booking, booking_id)
+            if booking:
+                booking.mindbody_sync_status = "cancel_failed"
+                booking.mindbody_sync_error = str(exc)[:1500]
+                booking.mindbody_synced_at = datetime.now(timezone.utc)
+                db.commit()
 
 
 def _coach_payload(coach: core.Coach) -> dict[str, Any]:
@@ -992,9 +1043,26 @@ def sync_from_mindbody() -> dict[str, int]:
 
 def retry_pending() -> int:
     with core.SessionLocal() as db:
-        ids = list(db.scalars(select(core.Booking.id).where(core.Booking.source == "website", core.Booking.status == "reserved", core.Booking.payment_status == "paid", core.Booking.mindbody_sync_status.in_(["pending", "failed"])).limit(100)))
-    for booking_id in ids: sync_local_booking(booking_id)
-    return len(ids)
+        ids = list(db.scalars(
+            select(core.Booking.id).where(
+                core.Booking.source == "website",
+                core.Booking.status == "reserved",
+                core.Booking.payment_status == "paid",
+                core.Booking.mindbody_sync_status.in_(["pending", "failed"]),
+            ).limit(100)
+        ))
+        cancel_ids = list(db.scalars(
+            select(core.Booking.id).where(
+                core.Booking.source == "website",
+                core.Booking.status == "cancelled",
+                core.Booking.mindbody_sync_status == "cancel_failed",
+            ).limit(100)
+        ))
+    for booking_id in ids:
+        sync_local_booking(booking_id)
+    for booking_id in cancel_ids:
+        cancel_local_booking(booking_id)
+    return len(ids) + len(cancel_ids)
 
 
 def _loop():
