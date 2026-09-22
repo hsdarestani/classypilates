@@ -383,3 +383,116 @@ jobs:
           curl -fsSIL --max-time 20 https://classy.smarbiz.sbs/ >/dev/null
           curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/health | grep -q '"ok":true'
           curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/checkout/create | grep -q '"provider":"sumup"'
+
+      - name: Verify production sync integrity
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T db sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          DO $
+          DECLARE n bigint;
+          BEGIN
+            SELECT count(*) INTO n FROM (
+              SELECT class_id, lower(email)
+              FROM bookings
+              WHERE source='website' AND status='reserved'
+              GROUP BY class_id, lower(email)
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'duplicate active website bookings: %', n; END IF;
+
+            SELECT count(*) INTO n FROM (
+              SELECT class_id, spot_number
+              FROM bookings
+              WHERE status='reserved' AND spot_number IS NOT NULL
+              GROUP BY class_id, spot_number
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'duplicate active spots: %', n; END IF;
+
+            SELECT count(*) INTO n FROM (
+              SELECT mindbody_visit_id
+              FROM bookings
+              WHERE mindbody_visit_id IS NOT NULL AND mindbody_visit_id <> ''
+              GROUP BY mindbody_visit_id
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'duplicate Mindbody visit IDs: %', n; END IF;
+
+            SELECT count(*) INTO n FROM (
+              SELECT class_id, lower(email)
+              FROM waitlist
+              GROUP BY class_id, lower(email)
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'duplicate waitlist entries: %', n; END IF;
+
+            SELECT count(*) INTO n FROM (
+              SELECT mindbody_waitlist_entry_id
+              FROM waitlist
+              WHERE mindbody_waitlist_entry_id IS NOT NULL AND mindbody_waitlist_entry_id <> ''
+              GROUP BY mindbody_waitlist_entry_id
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'duplicate Mindbody waitlist IDs: %', n; END IF;
+
+            SELECT count(*) INTO n FROM (
+              SELECT booking_reference
+              FROM payment_orders
+              WHERE booking_reference IS NOT NULL AND status IN ('pending','paid')
+              GROUP BY booking_reference
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'multiple active payment attempts: %', n; END IF;
+
+            SELECT count(*) INTO n
+            FROM bookings b
+            JOIN classes c ON c.id=b.class_id
+            WHERE b.source='website'
+              AND b.status='reserved'
+              AND b.payment_status IN ('paid','pending')
+              AND c.mindbody_class_id IS NOT NULL
+              AND b.mindbody_sync_status <> 'synced'
+              AND b.created_at < now() - interval '5 minutes';
+            IF n > 0 THEN RAISE EXCEPTION 'stale unsynced website bookings: %', n; END IF;
+
+            SELECT count(*) INTO n
+            FROM bookings
+            WHERE mindbody_sync_status='cancel_failed'
+              AND created_at < now() - interval '5 minutes';
+            IF n > 0 THEN RAISE EXCEPTION 'stale failed Mindbody cancellations: %', n; END IF;
+
+            SELECT count(*) INTO n
+            FROM waitlist w
+            JOIN classes c ON c.id=w.class_id
+            WHERE c.mindbody_class_id IS NOT NULL
+              AND (w.mindbody_waitlist_entry_id IS NULL OR w.mindbody_sync_status <> 'synced');
+            IF n > 0 THEN RAISE EXCEPTION 'unsynced Mindbody waitlist rows: %', n; END IF;
+
+            SELECT count(*) INTO n
+            FROM classes
+            WHERE status='active'
+              AND starts_at >= now()
+              AND starts_at < now() + interval '45 days'
+              AND mindbody_class_id IS NULL;
+            IF n > 0 THEN RAISE EXCEPTION 'active future local-only classes: %', n; END IF;
+
+            SELECT count(*) INTO n FROM (
+              SELECT remote_id
+              FROM mindbody_sync_state
+              WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
+              GROUP BY remote_id
+              HAVING count(*) > 1
+            ) x;
+            IF n > 0 THEN RAISE EXCEPTION 'duplicate Mindbody coach mappings: %', n; END IF;
+          END $;
+
+          SELECT 'production sync integrity: OK';
+          SQL
+          REMOTE
