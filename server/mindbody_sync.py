@@ -49,7 +49,6 @@ def _ensure_sync_state() -> None:
 
 
 def _state_row(db: Session, entity_type: str, entity_id: int | str):
-    _ensure_sync_state()
     return db.execute(
         text("SELECT * FROM mindbody_sync_state WHERE entity_type=:t AND entity_id=:i"),
         {"t": entity_type, "i": str(entity_id)},
@@ -69,7 +68,6 @@ def _state_write(
     last_synced_at: datetime | None = None,
     sync_error: str | None = None,
 ) -> None:
-    _ensure_sync_state()
     db.execute(
         text("""
             INSERT INTO mindbody_sync_state
@@ -100,6 +98,7 @@ def _state_write(
 
 
 def mark_local_change(entity_type: str, entity_id: int | str) -> None:
+    _ensure_sync_state()
     now = datetime.now(timezone.utc)
     with core.SessionLocal() as db:
         _state_write(db, entity_type, entity_id, local_changed_at=now, sync_error="")
