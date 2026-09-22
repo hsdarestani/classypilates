@@ -33,13 +33,20 @@ mindbody_sync.WriteClient.issue_token = _issue_bearer_token
 
 # We own customer-facing transactional mail, so prevent Mindbody from emitting a
 # second generic class confirmation for website-origin bookings.
-def _add_to_class_without_provider_email(self, client_id: str, class_id: str):
+def _add_to_class_without_provider_email(
+    self,
+    client_id: str,
+    class_id: str,
+    *,
+    waitlist: bool = False,
+):
     return self._write(
         "class/addclienttoclass",
         {
             "ClientId": client_id,
             "ClassId": int(class_id),
             "RequirePayment": False,
+            "Waitlist": bool(waitlist),
             "SendEmail": False,
         },
     )
