@@ -625,35 +625,54 @@ def _remote_booking_is_active(client: WriteClient, booking: core.Booking) -> boo
 
 
 def cancel_local_booking_strict(booking_id: int) -> bool:
-    """Remove a website booking from Mindbody before Classy confirms cancellation."""
+    """Remove any provider-backed booking from Mindbody before confirming cancellation."""
     with core.SessionLocal() as db:
         booking = db.scalar(
             select(core.Booking)
             .where(core.Booking.id == booking_id)
             .with_for_update()
         )
-        if not booking or booking.source != "website":
+        if not booking:
             return True
-        if not booking.mindbody_client_id or not booking.klass.mindbody_class_id:
-            # No provider-side reservation exists, so there is nothing left to
-            # cancel remotely. Clear any stale cancel_failed marker.
+        if not booking.klass.mindbody_class_id:
             booking.mindbody_sync_status = "cancelled"
             booking.mindbody_sync_error = ""
             booking.mindbody_synced_at = datetime.now(timezone.utc)
             db.commit()
             return True
 
+        visit_id = str(booking.mindbody_visit_id or "").strip()
+        client_id = str(booking.mindbody_client_id or "").strip()
+
+        # A website booking that never reached Mindbody has nothing remote to
+        # cancel. A Mindbody-origin booking without either identity is not safe to
+        # cancel locally because we cannot identify the upstream reservation.
+        if not client_id and not visit_id:
+            if booking.source == "website" and booking.mindbody_sync_status in {"pending", "failed", "local"}:
+                booking.mindbody_sync_status = "cancelled"
+                booking.mindbody_sync_error = ""
+                booking.mindbody_synced_at = datetime.now(timezone.utc)
+                db.commit()
+                return True
+            raise MindbodyError("Cannot identify the Mindbody reservation to cancel")
+
         client = WriteClient.from_env()
         try:
-            client.remove_from_class(str(booking.mindbody_client_id), str(booking.klass.mindbody_class_id))
+            payload: dict[str, Any] = {
+                "ClassId": int(booking.klass.mindbody_class_id),
+                "LateCancel": False,
+            }
+            if client_id:
+                payload["ClientId"] = client_id
+            if visit_id.isdigit():
+                payload["VisitId"] = int(visit_id)
+            client._write("class/removeclientfromclass", payload)
         except Exception:
-            # A repeated cancellation may be reported as an error by Mindbody.
-            # Treat it as success only after verifying that the visit is no longer active.
-            try:
-                if _remote_booking_is_active(client, booking):
-                    raise
-            except MindbodyError:
+            # Repeated cancellation can return an error. Treat it as success only
+            # after a roster read proves the reservation is no longer active.
+            if _remote_booking_is_active(client, booking):
                 raise
+
         booking.mindbody_sync_status = "cancelled"
         booking.mindbody_sync_error = ""
         booking.mindbody_synced_at = datetime.now(timezone.utc)
@@ -1696,6 +1715,13 @@ def _reconcile_class_roster(
             select(core.Booking).where(core.Booking.mindbody_visit_id == visit_id)
         )
         if booking:
+            # Do not resurrect a cancellation that Classy already confirmed. An
+            # upstream roster can briefly remain stale after remove-from-class.
+            if booking.status == "cancelled" and booking.mindbody_sync_status in {
+                "cancelled", "cancelled_remote"
+            }:
+                booking.mindbody_synced_at = now
+                continue
             booking.status = "reserved"
             booking.mindbody_sync_status = "synced"
             booking.mindbody_sync_error = ""
@@ -1707,11 +1733,11 @@ def _reconcile_class_roster(
             select(core.Booking).where(
                 core.Booking.class_id == klass.id,
                 core.Booking.source == "website",
+                core.Booking.status == "reserved",
                 core.Booking.mindbody_client_id == client_id,
             ).order_by(core.Booking.created_at.desc()).limit(1)
         ) if client_id else None
         if booking:
-            booking.status = "reserved"
             booking.mindbody_visit_id = visit_id
             booking.mindbody_sync_status = "synced"
             booking.mindbody_sync_error = ""
@@ -1758,7 +1784,16 @@ def _reconcile_class_roster(
             booking.mindbody_synced_at = now
             counts["cancelled"] += 1
 
-    klass.imported_bookings = 0
+    represented_remote = db.scalar(
+        select(func.count(core.Booking.id)).where(
+            core.Booking.class_id == klass.id,
+            core.Booking.status == "reserved",
+            core.Booking.mindbody_visit_id.is_not(None),
+        )
+    ) or 0
+    # Preserve occupancy even during the short eventual-consistency window where
+    # Mindbody still returns a visit that Classy has already cancelled locally.
+    klass.imported_bookings = max(0, len(active_ids) - int(represented_remote))
     klass.source_bookings_total = len(active_ids)
     klass.mindbody_synced_at = now
     db.commit()
