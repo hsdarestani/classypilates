@@ -1836,7 +1836,7 @@ def _reconcile_class_roster(
     now: datetime,
 ) -> dict[str, int]:
     """Mirror one Mindbody class roster into Classy by stable Visit ID."""
-    counts = {"visits": 0, "created": 0, "cancelled": 0}
+    counts = {"visits": 0, "created": 0, "cancelled": 0, "unresolved": 0}
 
     # Preserve the effective occupancy target produced by the summary sync. That
     # target may intentionally be higher than the physical roster count when
@@ -1864,8 +1864,6 @@ def _reconcile_class_roster(
             visit, "ClientId", "ClientID",
             default=_value(client_data, "Id", "ID", default=""),
         ) or "")
-        if not visit_id:
-            visit_id = f"client:{client_id}:class:{remote_id}"
         if bool(_value(
             visit,
             "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled",
@@ -1873,8 +1871,17 @@ def _reconcile_class_roster(
         )):
             continue
 
-        active_ids.add(visit_id)
         counts["visits"] += 1
+        if not visit_id and not client_id:
+            # Keep anonymous visits as aggregate occupancy only. A fabricated
+            # client::class identity would collide when more than one anonymous
+            # visit exists in the same class.
+            counts["unresolved"] += 1
+            continue
+        if not visit_id:
+            visit_id = f"client:{client_id}:class:{remote_id}"
+
+        active_ids.add(visit_id)
 
         booking = db.scalar(
             select(core.Booking).where(core.Booking.mindbody_visit_id == visit_id)
@@ -1960,7 +1967,7 @@ def _reconcile_class_roster(
     # Keep the summary-derived target (including WebCapacity restrictions) while
     # replacing synthetic occupancy with real mirrored rows as they become known.
     klass.imported_bookings = max(0, target_reserved - int(local_reserved_after))
-    klass.source_bookings_total = len(active_ids)
+    klass.source_bookings_total = len(active_ids) + int(counts["unresolved"])
     klass.mindbody_synced_at = now
     db.commit()
     return counts
@@ -1994,6 +2001,7 @@ def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
         "visits": 0,
         "created": 0,
         "cancelled": 0,
+        "unresolved": 0,
         "errors": 0,
         "waitlists_checked": 0,
         "waitlist_created": 0,
@@ -2028,7 +2036,7 @@ def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
             try:
                 counts = _reconcile_class_roster(client, db, klass, remote_id, now)
                 result["classes_checked"] += 1
-                for key in ("visits", "created", "cancelled"):
+                for key in ("visits", "created", "cancelled", "unresolved"):
                     result[key] += counts[key]
             except Exception:
                 db.rollback()
@@ -2131,6 +2139,9 @@ def sync_staff_and_assignments() -> dict[str, int]:
         reserved_counts: dict[int, int] = {}
         individual_remote_counts: dict[int, int] = {}
         waitlist_counts: dict[int, int] = {}
+        prior_source_totals: dict[int, int] = {
+            row.id: int(row.source_bookings_total or 0) for row in local
+        }
         if local_ids:
             reserved_counts = dict(
                 db.execute(
@@ -2200,7 +2211,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
                 remote_id
                 and starts
                 and remote_total_int is not None
-                and int(individual_remote_counts.get(klass.id, 0)) != max(0, remote_total_int)
+                and int(prior_source_totals.get(klass.id, 0)) != max(0, remote_total_int)
             ):
                 roster_candidates.append((starts, klass.id, remote_id))
 
@@ -2224,6 +2235,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
     counts["rosters_reconciled"] = 0
     counts["roster_rows_created"] = 0
     counts["roster_rows_cancelled"] = 0
+    counts["roster_unresolved"] = 0
     counts["roster_errors"] = 0
     counts["waitlist_candidates"] = len(waitlist_candidates)
     counts["waitlists_reconciled"] = 0
@@ -2242,6 +2254,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
                 counts["rosters_reconciled"] += 1
                 counts["roster_rows_created"] += roster_counts["created"]
                 counts["roster_rows_cancelled"] += roster_counts["cancelled"]
+                counts["roster_unresolved"] += roster_counts["unresolved"]
             except Exception:
                 db.rollback()
                 counts["roster_errors"] += 1
