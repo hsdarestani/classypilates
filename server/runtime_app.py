@@ -540,7 +540,8 @@ def _roster_loop() -> None:
     time.sleep(ROSTER_INITIAL_DELAY)
     while True:
         try:
-            result = mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
+            with mindbody_sync.RECONCILE_LOCK:
+                result = mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
             if result.get("errors"):
                 print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
         except Exception as exc:
