@@ -338,6 +338,12 @@ def install(app) -> None:
         # activated. No signature is expected for this URL validation request.
         return Response(status_code=204)
 
+    @app.get(WEBHOOK_PATH)
+    def mindbody_webhook_probe():
+        # A harmless public probe makes reverse-proxy/domain diagnostics explicit.
+        # Event delivery still happens only through signed POST requests below.
+        return Response(status_code=204)
+
     @app.post(WEBHOOK_PATH)
     async def mindbody_webhook_post(request: Request):
         raw_body = await request.body()
