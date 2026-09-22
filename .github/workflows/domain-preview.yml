@@ -2,9 +2,6 @@ name: Enable Classy Preview Domain
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - .github/workflows/domain-preview.yml
 
 permissions:
   contents: read
