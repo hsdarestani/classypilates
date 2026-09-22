@@ -596,7 +596,12 @@ def cancel_local_booking_strict(booking_id: int) -> bool:
         if not booking or booking.source != "website":
             return True
         if not booking.mindbody_client_id or not booking.klass.mindbody_class_id:
-            # No provider-side reservation exists yet.
+            # No provider-side reservation exists, so there is nothing left to
+            # cancel remotely. Clear any stale cancel_failed marker.
+            booking.mindbody_sync_status = "cancelled"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = datetime.now(timezone.utc)
+            db.commit()
             return True
 
         client = WriteClient.from_env()
