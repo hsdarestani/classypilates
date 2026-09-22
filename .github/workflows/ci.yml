@@ -43,6 +43,30 @@ jobs:
           ElementTree.parse(public / "sitemap.xml")
           PY
 
+      - name: Reject duplicate FastAPI routes
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          files = [Path("server/main.py"), Path("server/feedback_app.py"), Path("server/runtime_app.py")]
+          seen = {}
+          duplicates = []
+          pattern = re.compile(r'@(?:app|core\.app)\.(get|post|put|patch|delete)\("([^"]+)"')
+          for path in files:
+              text = path.read_text(encoding="utf-8")
+              for method, route in pattern.findall(text):
+                  key = (method.upper(), route)
+                  if key in seen:
+                      duplicates.append((key, seen[key], str(path)))
+                  else:
+                      seen[key] = str(path)
+          if duplicates:
+              for (method, route), first, second in duplicates:
+                  print(f"Duplicate route: {method} {route} in {first} and {second}")
+              raise SystemExit(1)
+          print(f"FastAPI route uniqueness OK: {len(seen)} routes")
+          PY
+
       - name: Diff check
         env:
           BASE_REF: ${{ github.base_ref }}
