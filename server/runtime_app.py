@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -362,13 +364,19 @@ def _reconcile_mindbody_availability() -> int:
 
 
 def _sync_from_mindbody_hardened() -> dict[str, int]:
-    # One-shot verification calls run on the process MainThread. Keep those fast:
-    # sync Staff + trainer assignments only. The long-lived mirror worker runs in
-    # the dedicated "mindbody-mirror" thread and continues to own the full roster,
-    # booking, cancellation, and occupancy reconciliation.
-    import threading
-    if threading.current_thread().name == "MainThread":
-        return mindbody_sync.sync_staff_and_assignments()
+    thread_name = threading.current_thread().name
+
+    # Deployment checks and the frequent mirror worker must stay fast. The fast
+    # reconciliation now includes class capacity + booked-space availability,
+    # staff profiles and trainer assignments.
+    if thread_name in {"MainThread", "mindbody-mirror"}:
+        counts = mindbody_sync.sync_staff_and_assignments()
+        if thread_name == "mindbody-mirror":
+            counts["remote_website_cancelled"] = _reconcile_remote_website_cancellations()
+        return counts
+
+    # Explicit/full roster jobs still mirror individual Mindbody visits and then
+    # reconcile availability/cancellations as a safety net.
     counts = _original_sync_from_mindbody()
     counts["remote_website_cancelled"] = _reconcile_remote_website_cancellations()
     counts["availability_corrected"] = _reconcile_mindbody_availability()
@@ -376,6 +384,36 @@ def _sync_from_mindbody_hardened() -> dict[str, int]:
 
 
 mindbody_sync.sync_from_mindbody = _sync_from_mindbody_hardened
+
+
+_roster_worker_started = False
+_roster_worker_guard = threading.Lock()
+ROSTER_SYNC_INTERVAL = max(3600, int(os.getenv("MINDBODY_ROSTER_SYNC_INTERVAL_SECONDS", "43200")))
+ROSTER_INITIAL_DELAY = max(600, int(os.getenv("MINDBODY_ROSTER_INITIAL_DELAY_SECONDS", "900")))
+
+
+def _roster_loop() -> None:
+    # Availability does not depend on this worker. This slower pass exists only to
+    # refresh individual Mindbody-origin roster/customer rows.
+    time.sleep(ROSTER_INITIAL_DELAY)
+    while True:
+        try:
+            _original_sync_from_mindbody()
+        except Exception as exc:
+            print(f"Mindbody roster cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
+        time.sleep(ROSTER_SYNC_INTERVAL)
+
+
+@core.app.on_event("startup")
+def _start_roster_worker() -> None:
+    global _roster_worker_started
+    if not mindbody_sync.SYNC_ENABLED or not mindbody_sync.capability_status()["configured"]:
+        return
+    with _roster_worker_guard:
+        if _roster_worker_started:
+            return
+        _roster_worker_started = True
+        threading.Thread(target=_roster_loop, name="mindbody-roster", daemon=True).start()
 
 
 def _prefer_latest_routes() -> None:
