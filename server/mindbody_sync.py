@@ -700,7 +700,118 @@ def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
     return rows
 
 
-def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tuple[dict[str, int], dict[str, core.Coach]]:
+def _coach_name_key(value: str) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _scheduled_staff_ids(classes: list[dict[str, Any]]) -> set[str]:
+    ids: set[str] = set()
+    for remote in classes:
+        staff = remote.get("Staff") or remote.get("staff") or {}
+        remote_id = _remote_staff_id(staff)
+        if remote_id:
+            ids.add(remote_id)
+    return ids
+
+
+def _merge_duplicate_coaches(db: Session) -> int:
+    """Merge accidental duplicate Coach rows by exact normalized display name.
+
+    Preserve rows with a login, a Classy-managed photo, profile text, and existing
+    class assignments. Historical sessions are reassigned to the survivor.
+    """
+    coaches = list(db.scalars(select(core.Coach).order_by(core.Coach.id)).all())
+    if not coaches:
+        return 0
+    class_counts = dict(db.execute(
+        select(core.ClassSession.coach_id, func.count(core.ClassSession.id))
+        .where(core.ClassSession.coach_id.is_not(None))
+        .group_by(core.ClassSession.coach_id)
+    ).all())
+    groups: dict[str, list[core.Coach]] = {}
+    for coach in coaches:
+        key = _coach_name_key(coach.display_name)
+        if key:
+            groups.setdefault(key, []).append(coach)
+
+    merged = 0
+    for rows in groups.values():
+        if len(rows) < 2:
+            continue
+
+        def score(row: core.Coach) -> tuple[int, int]:
+            value = 0
+            if row.user_id:
+                value += 100000
+            if _is_managed_local_photo(row.photo_url):
+                value += 10000
+            if (row.bio or "").strip():
+                value += 1000
+            value += int(class_counts.get(row.id, 0)) * 10
+            if row.active:
+                value += 1
+            return value, -row.id
+
+        survivor = max(rows, key=score)
+        for duplicate in rows:
+            if duplicate.id == survivor.id:
+                continue
+            # Never merge two separately connected login accounts automatically.
+            if duplicate.user_id and survivor.user_id and duplicate.user_id != survivor.user_id:
+                continue
+            if not survivor.photo_url and duplicate.photo_url:
+                survivor.photo_url = duplicate.photo_url
+            if not survivor.bio and duplicate.bio:
+                survivor.bio = duplicate.bio
+            survivor.active = survivor.active or duplicate.active
+            db.execute(
+                text("UPDATE classes SET coach_id=:keep WHERE coach_id=:drop"),
+                {"keep": survivor.id, "drop": duplicate.id},
+            )
+            db.execute(
+                text("DELETE FROM mindbody_sync_state WHERE entity_type='coach' AND entity_id=:drop"),
+                {"drop": str(duplicate.id)},
+            )
+            db.delete(duplicate)
+            merged += 1
+        db.flush()
+    return merged
+
+
+def _deactivate_unscheduled_remote_coaches(db: Session, allowed_remote_ids: set[str]) -> int:
+    """Hide remote Staff records that are not actual scheduled coaches.
+
+    Keep locally managed profiles/login accounts untouched. A hidden coach is
+    reactivated automatically when its Staff ID appears on a live/future class.
+    """
+    _ensure_sync_state()
+    rows = db.execute(
+        text("SELECT entity_id, remote_id, local_changed_at FROM mindbody_sync_state WHERE entity_type='coach'")
+    ).mappings().all()
+    changed = 0
+    for state in rows:
+        remote_id = str(state.get("remote_id") or "")
+        if not remote_id or remote_id in allowed_remote_ids:
+            continue
+        try:
+            coach = db.get(core.Coach, int(state["entity_id"]))
+        except Exception:
+            coach = None
+        if not coach or coach.user_id or state.get("local_changed_at") or _is_managed_local_photo(coach.photo_url):
+            continue
+        if coach.active:
+            coach.active = False
+            changed += 1
+    return changed
+
+
+def _sync_staff_profiles(
+    client: WriteClient,
+    db: Session,
+    now: datetime,
+    *,
+    allowed_remote_ids: set[str] | None = None,
+) -> tuple[dict[str, int], dict[str, core.Coach]]:
     _ensure_sync_state()
     counts = {
         "staff_remote": 0,
@@ -709,9 +820,27 @@ def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tup
         "staff_pulled": 0,
         "staff_pushed": 0,
         "staff_errors": 0,
+        "staff_duplicates_merged": 0,
+        "staff_unscheduled_hidden": 0,
     }
     remote_rows = _load_remote_staff(client)
+
+    # The Mindbody Staff endpoint is an employee directory, not a coach roster.
+    # Only Staff IDs referenced by live/future classes are allowed to create or
+    # update Coach rows in Classy.
+    if allowed_remote_ids is not None:
+        remote_rows = [row for row in remote_rows if _remote_staff_id(row) in allowed_remote_ids]
+
+    # Defensive dedupe by provider ID in case the API returns overlapping pages.
+    unique_remote: dict[str, dict[str, Any]] = {}
+    for row in remote_rows:
+        remote_id = _remote_staff_id(row)
+        if remote_id:
+            unique_remote[remote_id] = row
+    remote_rows = list(unique_remote.values())
+
     counts["staff_remote"] = len(remote_rows)
+    counts["staff_duplicates_merged"] = _merge_duplicate_coaches(db)
     locals_ = db.scalars(select(core.Coach)).all()
     by_name = {(x.display_name or "").strip().casefold(): x for x in locals_ if (x.display_name or "").strip()}
     state_rows = db.execute(text("SELECT * FROM mindbody_sync_state WHERE entity_type='coach'")).mappings().all() if locals_ else []
@@ -743,6 +872,7 @@ def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tup
             db.add(coach)
             db.flush()
             counts["staff_created_local"] += 1
+            by_name[_coach_name_key(coach.display_name)] = coach
         seen_local_ids.add(coach.id)
         mapped[remote_id] = coach
 
@@ -852,6 +982,8 @@ def _sync_staff_profiles(client: WriteClient, db: Session, now: datetime) -> tup
             counts["staff_errors"] += 1
             _state_write(db, "coach", coach.id, last_synced_at=now, sync_error=str(exc)[:1000])
 
+    if allowed_remote_ids is not None:
+        counts["staff_unscheduled_hidden"] = _deactivate_unscheduled_remote_coaches(db, allowed_remote_ids)
     db.flush()
     return counts, mapped
 
@@ -1248,7 +1380,10 @@ def sync_staff_and_assignments() -> dict[str, int]:
     }
     with core.SessionLocal() as db:
         counts["duplicate_classes_merged"] = _dedupe_mindbody_classes(db)
-        staff_counts, staff_map = _sync_staff_profiles(client, db, now)
+        scheduled_staff_ids = _scheduled_staff_ids(classes)
+        staff_counts, staff_map = _sync_staff_profiles(
+            client, db, now, allowed_remote_ids=scheduled_staff_ids
+        )
         counts.update(staff_counts)
         local = db.scalars(
             select(core.ClassSession).where(
