@@ -30,7 +30,7 @@ jobs:
         run: |
           test -n "$HOST" && test -n "$PASS"
           export SSHPASS="$PASS"
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" 'mkdir -p /opt/classypilates'
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=20 root@"$HOST" 'mkdir -p /opt/classypilates'
           sshpass -e rsync -az --delete \
             --exclude='.git' --exclude='.env' --exclude='__pycache__' \
             -e 'ssh -o StrictHostKeyChecking=no' ./ root@"$HOST":/opt/classypilates/
@@ -61,7 +61,7 @@ jobs:
           SUMUPMERCHANT_B64="$(printf '%s' "$SUMUPMERCHANT" | base64 -w0)"
           echo "::add-mask::$SUMUPAPIKEY_B64"
           echo "::add-mask::$SUMUPMERCHANT_B64"
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "SMTP_PASS_B64='$SMTP_PASS_B64' MINDBODY_API_KEY_B64='$MINDBODY_API_KEY_B64' MINDBODY_SITE_ID_B64='$MINDBODY_SITE_ID_B64' MINDBODY_STAFF_USERNAME_B64='$MINDBODY_STAFF_USERNAME_B64' MINDBODY_STAFF_PASSWORD_B64='$MINDBODY_STAFF_PASSWORD_B64' SUMUPAPIKEY_B64='$SUMUPAPIKEY_B64' SUMUPMERCHANT_B64='$SUMUPMERCHANT_B64' bash -s" <<'REMOTE'
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=20 root@"$HOST" "SMTP_PASS_B64='$SMTP_PASS_B64' MINDBODY_API_KEY_B64='$MINDBODY_API_KEY_B64' MINDBODY_SITE_ID_B64='$MINDBODY_SITE_ID_B64' MINDBODY_STAFF_USERNAME_B64='$MINDBODY_STAFF_USERNAME_B64' MINDBODY_STAFF_PASSWORD_B64='$MINDBODY_STAFF_PASSWORD_B64' SUMUPAPIKEY_B64='$SUMUPAPIKEY_B64' SUMUPMERCHANT_B64='$SUMUPMERCHANT_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
 
