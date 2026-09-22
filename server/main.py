@@ -1498,6 +1498,8 @@ def staff_bookings(user: User = Depends(require("bookings.view")), db: Session =
 def staff_booking_update(booking_id: int, data: BookingUpdate, user: User = Depends(require("bookings.manage")), db: Session = Depends(db_session)):
     b=db.get(Booking,booking_id)
     if not b: raise HTTPException(404,"not_found")
+    if data.status is not None and data.status == "reserved" and b.status != "reserved" and b.klass.mindbody_class_id:
+        raise HTTPException(409, "mindbody_booking_reactivation_requires_new_booking")
     if data.status is not None and data.status == "cancelled" and b.status == "reserved":
         from mindbody_sync import cancel_local_booking_strict
         try:
