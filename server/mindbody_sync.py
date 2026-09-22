@@ -991,29 +991,51 @@ def _deactivate_remote_staff_aliases(
     return changed
 
 
-def _deactivate_unscheduled_remote_coaches(db: Session, allowed_remote_ids: set[str]) -> int:
-    """Hide remote Staff records that are not actual scheduled coaches.
+def _refresh_existing_unscheduled_staff_status(
+    db: Session,
+    all_remote_rows: list[dict[str, Any]],
+    scheduled_remote_ids: set[str],
+) -> int:
+    """Keep existing mapped coaches aligned with Mindbody Active status.
 
-    Keep locally managed profiles/login accounts untouched. A hidden coach is
-    reactivated automatically when its Staff ID appears on a live/future class.
+    A coach is not inactive merely because they have no class in the next 45 days.
+    We update only already-linked local profiles and never create new unscheduled
+    Staff rows here. Explicit Classy edits remain authoritative until synced.
     """
     _ensure_sync_state()
+    remote_by_id = {
+        _remote_staff_id(row): row
+        for row in all_remote_rows
+        if _remote_staff_id(row)
+    }
     rows = db.execute(
         text("SELECT entity_id, remote_id, local_changed_at FROM mindbody_sync_state WHERE entity_type='coach'")
     ).mappings().all()
     changed = 0
     for state in rows:
         remote_id = str(state.get("remote_id") or "")
-        if not remote_id or remote_id in allowed_remote_ids:
+        if not remote_id or remote_id in scheduled_remote_ids:
+            continue
+        remote = remote_by_id.get(remote_id)
+        if not remote:
             continue
         try:
             coach = db.get(core.Coach, int(state["entity_id"]))
         except Exception:
             coach = None
-        if not coach or coach.user_id or state.get("local_changed_at") or _is_managed_local_photo(coach.photo_url):
+        if not coach:
             continue
-        if coach.active:
-            coach.active = False
+
+        # A tracked local edit must not be overwritten by an undated/older remote
+        # status. Otherwise mirror Mindbody's actual Active flag.
+        remote_modified = _remote_staff_modified(remote)
+        local_changed = state.get("local_changed_at")
+        if local_changed and (not remote_modified or local_changed > remote_modified):
+            continue
+
+        target_active = bool(_remote_staff_payload(remote)["active"])
+        if coach.active != target_active:
+            coach.active = target_active
             changed += 1
     return changed
 
@@ -1034,7 +1056,7 @@ def _sync_staff_profiles(
         "staff_pushed": 0,
         "staff_errors": 0,
         "staff_duplicates_merged": 0,
-        "staff_unscheduled_hidden": 0,
+        "staff_unscheduled_status_updated": 0,
         "staff_remote_aliases_deactivated": 0,
     }
     all_remote_rows = _load_remote_staff(client)
@@ -1276,7 +1298,11 @@ def _sync_staff_profiles(
             _state_write(db, "coach", coach.id, last_synced_at=now, sync_error=str(exc)[:1000])
 
     if allowed_remote_ids is not None:
-        counts["staff_unscheduled_hidden"] = _deactivate_unscheduled_remote_coaches(db, allowed_remote_ids)
+        counts["staff_unscheduled_status_updated"] = _refresh_existing_unscheduled_staff_status(
+            db,
+            all_remote_rows,
+            allowed_remote_ids,
+        )
     db.flush()
     return counts, mapped
 
