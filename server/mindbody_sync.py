@@ -650,6 +650,7 @@ def _remote_staff_payload(row: dict[str, Any]) -> dict[str, Any]:
     display = str(_value(row, "DisplayName", "displayName", default="") or "").strip()
     if not display:
         display = " ".join(x for x in (first, last) if x).strip()
+    display = _canonical_coach_name(display)
     active = _value(row, "Active", "active", default=True)
     return {
         "display_name": display,
@@ -700,8 +701,15 @@ def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
     return rows
 
 
+def _canonical_coach_name(value: str) -> str:
+    parts = [part for part in str(value or "").split() if part]
+    if len(parts) == 2 and parts[0].casefold() == parts[1].casefold():
+        parts = [parts[0]]
+    return " ".join(parts)
+
+
 def _coach_name_key(value: str) -> str:
-    return " ".join(str(value or "").split()).casefold()
+    return _canonical_coach_name(value).casefold()
 
 
 def _scheduled_staff_ids(classes: list[dict[str, Any]]) -> set[str]:
