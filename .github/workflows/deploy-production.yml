@@ -158,10 +158,9 @@ jobs:
             echo "::warning::SMTP authentication smoke test failed after retries; API deployment remains healthy."
           fi
 
-          # The importer uses SQLAlchemy Core only, so it can safely run beside
-          # the API without loading the full application a second time.
-          docker compose exec -T api python import_mindbody_schedule.py \
-            --source /app/data/mindbody_schedule_2026-04-01_to_2027-08-24.json.gz </dev/null
+          # Production schedule is now sourced from live Mindbody. Do not import the
+          # historical bundled snapshot here; it can recreate classes that were later
+          # changed or removed in Mindbody.
           curl -fsS http://127.0.0.1:8787/api/health
           curl -fsS --max-time 5 -o /tmp/classy-schedule-smoke.json 'http://127.0.0.1:8787/api/schedule'
           grep -q '"classes":\[' /tmp/classy-schedule-smoke.json
