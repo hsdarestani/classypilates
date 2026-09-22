@@ -1980,6 +1980,11 @@ def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
         "created": 0,
         "cancelled": 0,
         "errors": 0,
+        "waitlists_checked": 0,
+        "waitlist_created": 0,
+        "waitlist_removed": 0,
+        "waitlist_unresolved": 0,
+        "waitlist_errors": 0,
     }
     with core.SessionLocal() as db:
         by_remote = {
@@ -2013,6 +2018,26 @@ def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
             except Exception:
                 db.rollback()
                 result["errors"] += 1
+                continue
+
+            remote_waitlisted = _value(remote, "TotalWaitlisted", "TotalWaitList", default=0)
+            try:
+                remote_waitlisted_count = max(0, int(remote_waitlisted or 0))
+            except Exception:
+                remote_waitlisted_count = 0
+            local_waitlisted_count = db.scalar(
+                select(func.count(core.Waitlist.id)).where(core.Waitlist.class_id == klass.id)
+            ) or 0
+            if remote_waitlisted_count or local_waitlisted_count:
+                try:
+                    wait_counts = _reconcile_class_waitlist(client, db, klass, remote_id, now)
+                    result["waitlists_checked"] += 1
+                    result["waitlist_created"] += wait_counts["created"]
+                    result["waitlist_removed"] += wait_counts["removed"]
+                    result["waitlist_unresolved"] += wait_counts["unresolved"]
+                except Exception:
+                    db.rollback()
+                    result["waitlist_errors"] += 1
     return result
 
 
