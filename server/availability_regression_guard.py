@@ -1,87 +1,69 @@
-from types import SimpleNamespace
-
-from mindbody_sync import _sync_class_availability
+from mindbody_availability import compute_public_availability
 
 
-def make_class(capacity=10, imported=0, source=0):
-    return SimpleNamespace(
-        capacity=capacity,
-        imported_bookings=imported,
-        source_bookings_total=source,
-    )
-
-
-def spots(klass, local_reserved):
-    return max(
-        0,
-        int(klass.capacity or 0)
-        - int(klass.imported_bookings or 0)
-        - int(local_reserved),
-    )
+def run_case(**kwargs):
+    available, target_reserved, imported, total = compute_public_availability(**kwargs)
+    return available, target_reserved, imported, total
 
 
 # Mindbody explicitly says the class is not available for public booking.
-klass = make_class(capacity=10, imported=2, source=2)
-_sync_class_availability(
-    None,
-    klass,
-    {
-        "MaxCapacity": 10,
-        "TotalBooked": 2,
-        "WebCapacity": 10,
-        "TotalWebBooked": 2,
-        "IsAvailable": False,
-    },
-    0,
+available, _, imported, _ = run_case(
+    effective_capacity=10,
+    local_reserved=0,
+    cached_imported=2,
+    total_booked=2,
+    web_capacity=10,
+    web_booked=2,
+    is_available=False,
 )
-assert spots(klass, 0) == 0, (klass.capacity, klass.imported_bookings)
+assert available == 0 and imported == 10, (available, imported)
 
 # A zero web capacity means zero public spots even if WebBooked is omitted.
-klass = make_class(capacity=10, imported=2, source=2)
-_sync_class_availability(
-    None,
-    klass,
-    {
-        "MaxCapacity": 10,
-        "TotalBooked": 2,
-        "WebCapacity": 0,
-        "TotalWebBooked": None,
-        "IsAvailable": True,
-    },
-    0,
+available, _, imported, _ = run_case(
+    effective_capacity=10,
+    local_reserved=0,
+    cached_imported=2,
+    total_booked=2,
+    web_capacity=0,
+    web_booked=None,
+    is_available=True,
 )
-assert spots(klass, 0) == 0, (klass.capacity, klass.imported_bookings)
+assert available == 0 and imported == 10, (available, imported)
 
 # Normal public capacity remains accurate.
-klass = make_class(capacity=10, imported=0, source=0)
-_sync_class_availability(
-    None,
-    klass,
-    {
-        "MaxCapacity": 10,
-        "TotalBooked": 4,
-        "WebCapacity": 10,
-        "TotalWebBooked": 4,
-        "IsAvailable": True,
-    },
-    0,
+available, _, imported, total = run_case(
+    effective_capacity=10,
+    local_reserved=0,
+    cached_imported=0,
+    total_booked=4,
+    web_capacity=10,
+    web_booked=4,
+    is_available=True,
 )
-assert spots(klass, 0) == 6, (klass.capacity, klass.imported_bookings)
+assert available == 6 and imported == 4 and total == 4, (available, imported, total)
 
-# Local Classy holds are subtracted without double-counting provider occupancy.
-klass = make_class(capacity=10, imported=0, source=0)
-_sync_class_availability(
-    None,
-    klass,
-    {
-        "MaxCapacity": 10,
-        "TotalBooked": 4,
-        "WebCapacity": 10,
-        "TotalWebBooked": 4,
-        "IsAvailable": True,
-    },
-    1,
+# A local Classy hold is not double-counted against provider occupancy.
+available, _, imported, _ = run_case(
+    effective_capacity=10,
+    local_reserved=1,
+    cached_imported=0,
+    total_booked=4,
+    web_capacity=10,
+    web_booked=4,
+    is_available=True,
 )
-assert spots(klass, 1) == 6, (klass.capacity, klass.imported_bookings)
+assert available == 6 and imported == 3, (available, imported)
+
+# If Mindbody hides all counters, preserve the previous provider-backed occupancy.
+available, _, imported, _ = run_case(
+    effective_capacity=10,
+    local_reserved=1,
+    cached_imported=5,
+    total_booked=None,
+    web_capacity=None,
+    web_booked=None,
+    is_available=True,
+)
+assert available == 4 and imported == 5, (available, imported)
 
 print("Mindbody availability regression guard: OK")
