@@ -45,6 +45,25 @@ def remote_cancelled(remote):
     return bool(value)
 
 
+def visit_cancelled(visit):
+    flags = [
+        val(visit, "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled", default=False),
+    ]
+    if any(bool(x) for x in flags):
+        return True
+    return str(val(visit, "Status", "status", default="") or "").strip().casefold() == "cancelled"
+
+
+def visit_identity(visit, remote_class_id):
+    client_data = visit.get("Client") or visit.get("client") or {}
+    visit_id = str(val(visit, "Id", "ID", "VisitId", "VisitID", default="") or "")
+    client_id = str(val(
+        visit, "ClientId", "ClientID",
+        default=val(client_data, "Id", "ID", default=""),
+    ) or "")
+    return visit_id or f"client:{client_id}:class:{remote_class_id}"
+
+
 def main():
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=45)
@@ -254,16 +273,184 @@ def main():
                 })
         issues["cancel_failed"] = int(cancel_failed)
 
+        # Database-level duplicate / omission audit.
+        duplicate_active_website = db.execute(text("""
+            SELECT class_id, lower(email) AS email_key, count(*) AS n
+            FROM bookings
+            WHERE source='website' AND status='reserved'
+            GROUP BY class_id, lower(email)
+            HAVING count(*) > 1
+        """)).all()
+        issues["duplicate_active_website_bookings"] = len(duplicate_active_website)
+
+        duplicate_active_spots = db.execute(text("""
+            SELECT class_id, spot_number, count(*) AS n
+            FROM bookings
+            WHERE status='reserved' AND spot_number IS NOT NULL
+            GROUP BY class_id, spot_number
+            HAVING count(*) > 1
+        """)).all()
+        issues["duplicate_active_spots"] = len(duplicate_active_spots)
+
+        duplicate_visit_ids = db.execute(text("""
+            SELECT mindbody_visit_id, count(*) AS n
+            FROM bookings
+            WHERE mindbody_visit_id IS NOT NULL AND mindbody_visit_id <> ''
+            GROUP BY mindbody_visit_id
+            HAVING count(*) > 1
+        """)).all()
+        issues["duplicate_mindbody_visit_ids"] = len(duplicate_visit_ids)
+
+        duplicate_waitlist = db.execute(text("""
+            SELECT class_id, lower(email) AS email_key, count(*) AS n
+            FROM waitlist
+            GROUP BY class_id, lower(email)
+            HAVING count(*) > 1
+        """)).all()
+        issues["duplicate_waitlist_entries"] = len(duplicate_waitlist)
+
+        duplicate_waitlist_remote = db.execute(text("""
+            SELECT mindbody_waitlist_entry_id, count(*) AS n
+            FROM waitlist
+            WHERE mindbody_waitlist_entry_id IS NOT NULL AND mindbody_waitlist_entry_id <> ''
+            GROUP BY mindbody_waitlist_entry_id
+            HAVING count(*) > 1
+        """)).all()
+        issues["duplicate_waitlist_remote_ids"] = len(duplicate_waitlist_remote)
+
+        duplicate_paid_orders = db.execute(text("""
+            SELECT booking_reference, count(*) AS n
+            FROM payment_orders
+            WHERE booking_reference IS NOT NULL AND status='paid'
+            GROUP BY booking_reference
+            HAVING count(*) > 1
+        """)).all()
+        issues["multiple_paid_orders_per_booking"] = len(duplicate_paid_orders)
+
+        paid_order_without_booking = db.execute(text("""
+            SELECT po.reference
+            FROM payment_orders po
+            LEFT JOIN bookings b ON b.reference = po.booking_reference
+            WHERE po.status='paid' AND po.booking_reference IS NOT NULL AND b.id IS NULL
+            LIMIT 50
+        """)).all()
+        issues["paid_order_without_booking"] = len(paid_order_without_booking)
+
+        paid_sumup_without_order = db.execute(text("""
+            SELECT b.reference
+            FROM bookings b
+            LEFT JOIN payment_orders po
+              ON po.booking_reference=b.reference AND po.status='paid'
+            WHERE b.payment_status='paid' AND b.payment_method='sumup'
+            GROUP BY b.reference
+            HAVING count(po.id)=0
+        """)).all()
+        issues["paid_sumup_booking_without_paid_order"] = len(paid_sumup_without_order)
+
+        duplicate_active_coach_names = db.execute(text("""
+            SELECT lower(regexp_replace(trim(display_name), '\\s+', ' ', 'g')) AS name_key, count(*) AS n
+            FROM coaches
+            WHERE active=true
+            GROUP BY lower(regexp_replace(trim(display_name), '\\s+', ' ', 'g'))
+            HAVING count(*) > 1
+        """)).all() if core.engine.dialect.name != "sqlite" else []
+        issues["duplicate_active_coach_names"] = len(duplicate_active_coach_names)
+
+        duplicate_coach_remote_map = db.execute(text("""
+            SELECT remote_id, count(*) AS n
+            FROM mindbody_sync_state
+            WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
+            GROUP BY remote_id
+            HAVING count(*) > 1
+        """)).all()
+        issues["duplicate_coach_remote_mapping"] = len(duplicate_coach_remote_map)
+
+        # Compare individual active Mindbody visits against local rows for the near-term
+        # schedule. This catches both "booking missing in Classy" and "booking exists
+        # locally but no longer exists in Mindbody".
+        roster_until = now + timedelta(days=7)
+        remote_visits_missing_local = 0
+        local_visits_missing_remote = 0
+        roster_audit_errors = 0
+        roster_classes_checked = 0
+
+        near_remote = []
+        for remote in remotes:
+            starts = mb._parse_dt(val(remote, "StartDateTime", "startDateTime"))
+            if starts and now <= starts < roster_until and not remote_cancelled(remote):
+                near_remote.append(remote)
+
+        for remote in near_remote:
+            remote_id = str(val(remote, "Id", "ID", "ClassId", default="") or "")
+            if not remote_id:
+                continue
+            klass = by_remote.get(remote_id)
+            if not klass:
+                continue
+            try:
+                payload = client.get_class_visits(remote_id)
+            except Exception as exc:
+                roster_audit_errors += 1
+                if len(samples) < 30:
+                    samples.append({"type":"roster_audit_error","remote_id":remote_id,"error":str(exc)[:200]})
+                continue
+
+            roster_classes_checked += 1
+            visits = [
+                row for row in mb._extract_list(payload, ("Visits", "visits", "ClassVisits", "Items"))
+                if isinstance(row, dict) and not visit_cancelled(row)
+            ]
+            remote_active_ids = {visit_identity(row, remote_id) for row in visits}
+            local_active_ids = {
+                str(value) for value in db.scalars(
+                    select(core.Booking.mindbody_visit_id).where(
+                        core.Booking.class_id == klass.id,
+                        core.Booking.status == "reserved",
+                        core.Booking.mindbody_visit_id.is_not(None),
+                    )
+                ).all() if value
+            }
+            missing_local = remote_active_ids - local_active_ids
+            missing_remote = local_active_ids - remote_active_ids
+            remote_visits_missing_local += len(missing_local)
+            local_visits_missing_remote += len(missing_remote)
+            if missing_local and len(samples) < 30:
+                samples.append({
+                    "type":"remote_visits_missing_local",
+                    "remote_id":remote_id,
+                    "count":len(missing_local),
+                    "visit_ids":sorted(missing_local)[:5],
+                })
+            if missing_remote and len(samples) < 30:
+                samples.append({
+                    "type":"local_visits_missing_remote",
+                    "remote_id":remote_id,
+                    "count":len(missing_remote),
+                    "visit_ids":sorted(missing_remote)[:5],
+                })
+
+        issues["remote_visits_missing_local"] = remote_visits_missing_local
+        issues["local_visits_missing_remote"] = local_visits_missing_remote
+        issues["roster_audit_errors"] = roster_audit_errors
+        issues["roster_classes_checked"] = roster_classes_checked
+
     critical_keys = [
         "duplicate_remote_ids","missing_local_class","capacity_mismatch","availability_mismatch",
         "start_time_mismatch","studio_mismatch","title_mismatch","duration_mismatch",
         "description_mismatch","cancel_status_mismatch","trainer_mismatch",
         "unlinked_future_classes","waitlist_unsynced","stale_pending_holds",
         "paid_booking_unsynced","cancel_failed",
+        "duplicate_active_website_bookings","duplicate_active_spots",
+        "duplicate_mindbody_visit_ids","duplicate_waitlist_entries",
+        "duplicate_waitlist_remote_ids","multiple_paid_orders_per_booking",
+        "paid_order_without_booking","paid_sumup_booking_without_paid_order",
+        "duplicate_active_coach_names","duplicate_coach_remote_mapping",
+        "remote_visits_missing_local","local_visits_missing_remote","roster_audit_errors",
     ]
     result = {
         "ok": all(int(issues.get(k, 0)) == 0 for k in critical_keys),
         "remote_classes": len(remotes),
+        "roster_classes_checked": int(issues.get("roster_classes_checked", 0)),
         "issues": {k:int(issues.get(k,0)) for k in critical_keys},
         "samples": samples,
     }
