@@ -2249,6 +2249,117 @@ def _cancel_unlinked_local_classes(db: Session, *, start: datetime, end: datetim
     return len(rows)
 
 
+def sync_schedule_availability_fast() -> dict[str, int]:
+    """Prime the public schedule from Mindbody before the API starts serving.
+
+    This deliberately skips staff-directory writes and roster identity reconciliation.
+    It updates/creates class instances, cancellation state, and public bookability for
+    the full 45-day window so the website never boots with stale spot counts after a
+    deployment or process restart.
+    """
+    client = WriteClient.from_env()
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(days=45)
+    classes: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        payload = client.get_classes(
+            start_date_time=now.isoformat(),
+            end_date_time=end.isoformat(),
+            limit=200,
+            offset=offset,
+        )
+        batch = [
+            row for row in _extract_list(payload, ("Classes", "classes", "Items"))
+            if isinstance(row, dict)
+        ]
+        classes.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+
+    counts = {
+        "classes_seen": len(classes),
+        "classes_matched": 0,
+        "classes_created_local": 0,
+        "classes_skipped_unmapped": 0,
+        "metadata_updated": 0,
+        "availability_updated": 0,
+        "local_only_cancelled": 0,
+    }
+    cancellation_email_jobs: list[tuple] = []
+
+    with core.SessionLocal() as db:
+        counts["duplicate_classes_merged"] = _dedupe_mindbody_classes(db)
+        local = db.scalars(
+            select(core.ClassSession).where(
+                core.ClassSession.starts_at >= now,
+                core.ClassSession.starts_at < end,
+            )
+        ).all()
+        local_ids = [row.id for row in local]
+        reserved_counts: dict[int, int] = {}
+        if local_ids:
+            reserved_counts = dict(
+                db.execute(
+                    select(core.Booking.class_id, func.count(core.Booking.id))
+                    .where(
+                        core.Booking.class_id.in_(local_ids),
+                        core.Booking.status == "reserved",
+                    )
+                    .group_by(core.Booking.class_id)
+                ).all()
+            )
+
+        # Staff assignment is intentionally deferred to the normal full mirror.
+        # New classes can still be created safely with coach_id=None and are filled
+        # in on the next staff reconciliation.
+        empty_staff_map: dict[str, core.Coach] = {}
+        for remote in classes:
+            klass, created_local = _ensure_local_class(
+                db, local, remote, empty_staff_map, now
+            )
+            if not klass:
+                counts["classes_skipped_unmapped"] += 1
+                continue
+            if created_local:
+                counts["classes_created_local"] += 1
+                reserved_counts.setdefault(klass.id, 0)
+
+            if _sync_remote_class_metadata(klass, remote, now):
+                counts["metadata_updated"] += 1
+
+            if _remote_class_cancelled(remote):
+                cancellation_email_jobs.extend(
+                    _apply_remote_class_cancellation(db, klass, now)
+                )
+
+            if _sync_class_availability(
+                db,
+                klass,
+                remote,
+                int(reserved_counts.get(klass.id, 0)),
+            ):
+                counts["availability_updated"] += 1
+            counts["classes_matched"] += 1
+
+        counts["local_only_cancelled"] = _cancel_unlinked_local_classes(
+            db, start=now, end=end
+        )
+        db.commit()
+
+    for email_job in cancellation_email_jobs:
+        try:
+            core.send_transactional_email(*email_job)
+        except Exception:
+            pass
+
+    counts["remote_class_cancellation_notifications"] = len(
+        cancellation_email_jobs
+    )
+    return counts
+
+
 def sync_staff_and_assignments() -> dict[str, int]:
     """Synchronize Mindbody staff profiles and upcoming class trainer assignments only.
 
@@ -2499,9 +2610,35 @@ def _loop():
 @core.app.on_event("startup")
 def start_worker():
     global _worker_started
-    if not SYNC_ENABLED or not capability_status()["configured"]: return
+    if not SYNC_ENABLED or not capability_status()["configured"]:
+        return
     with _worker_guard:
-        if _worker_started: return
+        if _worker_started:
+            return
+
+        # Prime class metadata and public availability synchronously before FastAPI
+        # announces startup complete. This removes the historical 180-second stale
+        # capacity window after every deploy/restart.
+        try:
+            with RECONCILE_LOCK:
+                prime = sync_schedule_availability_fast()
+            print(
+                "Mindbody availability prime: "
+                f"seen={prime.get('classes_seen', 0)} "
+                f"matched={prime.get('classes_matched', 0)} "
+                f"created={prime.get('classes_created_local', 0)} "
+                f"availability_updated={prime.get('availability_updated', 0)}",
+                flush=True,
+            )
+        except Exception as exc:
+            # Keep the cached site online if Mindbody itself is temporarily
+            # unreachable. Checkout still performs a strict provider read.
+            print(
+                f"Mindbody availability prime failed: "
+                f"{type(exc).__name__}: {str(exc)[:300]}",
+                flush=True,
+            )
+
         _worker_started = True
         threading.Thread(target=_loop, name="mindbody-mirror", daemon=True).start()
 
