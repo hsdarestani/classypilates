@@ -1818,6 +1818,18 @@ def join_waitlist(data: WaitlistIn, background_tasks: BackgroundTasks, user: Opt
         if int(refreshed.get("spots", 0) or 0) > 0:
             raise HTTPException(409, "spots_available")
 
+    # Serialize waitlist joins for this class. This prevents two simultaneous
+    # requests from both creating a provider waitlist entry before either local
+    # insert becomes visible.
+    c = db.scalar(
+        select(ClassSession)
+        .where(ClassSession.id == c.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if not c:
+        raise HTTPException(404, "not_found")
+
     live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
     reserved = int(c.imported_bookings or 0) + int(live_reserved)
     if reserved < c.capacity:
