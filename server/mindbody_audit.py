@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -363,15 +364,38 @@ def main():
         for coach in active_coaches:
             key = mb._coach_name_key(coach.display_name)
             if key:
-                canonical_local_groups.setdefault(key, []).append(coach.id)
-        duplicate_active_coach_names = {
-            key: ids for key, ids in canonical_local_groups.items() if len(ids) > 1
-        }
-        issues["duplicate_active_coach_names"] = len(duplicate_active_coach_names)
-        if duplicate_active_coach_names and len(samples) < 30:
+                canonical_local_groups.setdefault(key, []).append(coach)
+
+        # Same display name is not itself an error: two real people can share a
+        # name. Only obvious legacy aliases ("Coach X" / "X X") without distinct
+        # provider identities are treated as a merge problem.
+        local_alias_conflicts = {}
+        for key, coaches in canonical_local_groups.items():
+            if len(coaches) < 2:
+                continue
+            remote_ids = set()
+            raw_names = []
+            for coach in coaches:
+                state = mb._state_row(db, "coach", coach.id) or {}
+                if state.get("remote_id"):
+                    remote_ids.add(str(state["remote_id"]))
+                raw_names.append(" ".join(str(coach.display_name or "").split()))
+            obvious_alias = any(
+                name.casefold().startswith("coach ")
+                or (
+                    len(name.split()) == 2
+                    and name.split()[0].casefold() == name.split()[1].casefold()
+                )
+                for name in raw_names
+            )
+            if obvious_alias and len(remote_ids) <= 1:
+                local_alias_conflicts[key] = [coach.id for coach in coaches]
+
+        issues["local_coach_alias_conflicts"] = len(local_alias_conflicts)
+        if local_alias_conflicts and len(samples) < 30:
             samples.append({
-                "type":"duplicate_active_coach_names",
-                "groups":dict(list(duplicate_active_coach_names.items())[:10]),
+                "type":"local_coach_alias_conflicts",
+                "groups":dict(list(local_alias_conflicts.items())[:10]),
             })
 
         duplicate_coach_remote_map = db.execute(text("""
@@ -399,21 +423,36 @@ def main():
             if remote_id and key:
                 remote_alias_groups.setdefault(key, []).append((remote_id, payload["active"]))
 
-        active_unscheduled_aliases = 0
-        scheduled_alias_collisions = 0
+        active_generated_staff_aliases = 0
+        scheduled_same_name_groups = 0
+        raw_by_id = {mb._remote_staff_id(row): row for row in full_staff if mb._remote_staff_id(row)}
         for key, rows in remote_alias_groups.items():
             scheduled = [remote_id for remote_id, _ in rows if remote_id in scheduled_staff_ids]
             if len(scheduled) > 1:
-                scheduled_alias_collisions += 1
-            if len(scheduled) == 1:
-                primary = scheduled[0]
-                active_unscheduled_aliases += sum(
-                    1 for remote_id, active in rows
-                    if remote_id != primary and active
+                scheduled_same_name_groups += 1
+            if len(scheduled) != 1:
+                continue
+            primary = scheduled[0]
+            for remote_id, active in rows:
+                if remote_id == primary or not active:
+                    continue
+                raw = raw_by_id.get(remote_id) or {}
+                first = str(val(raw, "FirstName", "firstName", default="") or "").strip()
+                last = str(val(raw, "LastName", "lastName", default="") or "").strip()
+                display = str(val(raw, "DisplayName", "displayName", default="") or "").strip()
+                parts = display.split()
+                generated = bool(
+                    (first and last and first.casefold() == last.casefold())
+                    or (
+                        len(parts) == 2
+                        and parts[0].casefold() == parts[1].casefold()
+                    )
                 )
+                if generated:
+                    active_generated_staff_aliases += 1
 
-        issues["active_unscheduled_staff_aliases"] = active_unscheduled_aliases
-        issues["scheduled_staff_alias_collisions"] = scheduled_alias_collisions
+        issues["active_generated_staff_aliases"] = active_generated_staff_aliases
+        issues["scheduled_same_name_groups"] = scheduled_same_name_groups
         issues["remote_staff_directory_count"] = len(full_staff)
 
         required_indexes = {
@@ -459,6 +498,42 @@ def main():
             starts = mb._parse_dt(val(remote, "StartDateTime", "startDateTime"))
             if starts and now <= starts < roster_until and not remote_cancelled(remote):
                 near_remote.append(remote)
+
+        deep_roster_audit = os.getenv("MINDBODY_AUDIT_DEEP", "").strip().lower() in {"1", "true", "yes"}
+        if not deep_roster_audit:
+            local_visit_counts = {}
+            if local_ids:
+                local_visit_counts = dict(db.execute(
+                    select(core.Booking.class_id, func.count(core.Booking.id))
+                    .where(
+                        core.Booking.class_id.in_(local_ids),
+                        core.Booking.status == "reserved",
+                        core.Booking.mindbody_visit_id.is_not(None),
+                    )
+                    .group_by(core.Booking.class_id)
+                ).all())
+
+            mismatch_ids = set()
+            for remote in near_remote:
+                remote_id = str(val(remote, "Id", "ID", "ClassId", default="") or "")
+                klass = by_remote.get(remote_id)
+                remote_total = as_int(remote, "TotalBooked", "TotalClients")
+                if klass and remote_total is not None and int(local_visit_counts.get(klass.id, 0)) != max(0, remote_total):
+                    mismatch_ids.add(remote_id)
+
+            sample_limit = max(5, min(50, int(os.getenv("MINDBODY_AUDIT_ROSTER_SAMPLE", "20"))))
+            sampled = sorted(
+                near_remote,
+                key=lambda row: mb._parse_dt(val(row, "StartDateTime", "startDateTime")) or roster_until,
+            )[:sample_limit]
+            selected_ids = {
+                str(val(row, "Id", "ID", "ClassId", default="") or "")
+                for row in sampled
+            } | mismatch_ids
+            near_remote = [
+                row for row in near_remote
+                if str(val(row, "Id", "ID", "ClassId", default="") or "") in selected_ids
+            ]
 
         for remote in near_remote:
             remote_id = str(val(remote, "Id", "ID", "ClassId", default="") or "")
@@ -525,8 +600,8 @@ def main():
         "duplicate_waitlist_remote_ids","multiple_paid_orders_per_booking",
         "multiple_active_orders_per_booking","paid_order_without_booking",
         "paid_sumup_booking_without_paid_order",
-        "duplicate_active_coach_names","duplicate_coach_remote_mapping",
-        "active_unscheduled_staff_aliases","scheduled_staff_alias_collisions",
+        "local_coach_alias_conflicts","duplicate_coach_remote_mapping",
+        "active_generated_staff_aliases",
         "missing_integrity_indexes",
         "remote_visits_missing_local","local_visits_missing_remote","roster_audit_errors",
     ]
@@ -534,6 +609,8 @@ def main():
         "ok": all(int(issues.get(k, 0)) == 0 for k in critical_keys),
         "remote_classes": len(remotes),
         "remote_staff_directory_count": int(issues.get("remote_staff_directory_count", 0)),
+        "scheduled_same_name_groups": int(issues.get("scheduled_same_name_groups", 0)),
+        "roster_audit_mode": "deep" if os.getenv("MINDBODY_AUDIT_DEEP", "").strip().lower() in {"1","true","yes"} else "targeted",
         "roster_classes_checked": int(issues.get("roster_classes_checked", 0)),
         "issues": {k:int(issues.get(k,0)) for k in critical_keys},
         "samples": samples,
