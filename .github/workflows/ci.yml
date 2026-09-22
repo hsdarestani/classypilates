@@ -43,6 +43,12 @@ jobs:
           ElementTree.parse(public / "sitemap.xml")
           PY
 
+      - name: Mindbody availability regression guard
+        env:
+          DATABASE_URL: sqlite:////tmp/classy-availability-guard.db
+          UPLOAD_DIR: /tmp/classy-availability-uploads
+        run: python server/availability_regression_guard.py
+
       - name: Reject duplicate FastAPI routes
         run: |
           python - <<'PY'
