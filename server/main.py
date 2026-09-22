@@ -1189,8 +1189,15 @@ def staff_change_password(data: PasswordChangeIn, user: User = Depends(current_u
     return {"ok": True}
 
 @app.get("/api/staff/coaches")
-def list_coaches(user: User = Depends(require("coaches.view")), db: Session = Depends(db_session)):
-    coaches = db.scalars(select(Coach).order_by(Coach.display_name)).all()
+def list_coaches(
+    include_inactive: bool = False,
+    user: User = Depends(require("coaches.view")),
+    db: Session = Depends(db_session),
+):
+    query = select(Coach)
+    if not include_inactive:
+        query = query.where(Coach.active == True)
+    coaches = db.scalars(query.order_by(Coach.display_name)).all()
     return {"coaches": [coach_dict(c) for c in coaches]}
 
 @app.post("/api/staff/coaches/{coach_id}/account")
