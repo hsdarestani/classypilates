@@ -630,7 +630,11 @@ def class_dict(c: ClassSession, db: Session):
     if live_reserved is None:
         live_reserved = db.scalar(select(func.count(Booking.id)).where(Booking.class_id == c.id, Booking.status == "reserved")) or 0
     imported_reserved = max(0, int(c.imported_bookings or 0))
-    reserved = min(c.capacity, imported_reserved + live_reserved)
+    provider_reserved_floor = max(0, int(c.source_bookings_total or 0))
+    reserved = min(
+        c.capacity,
+        max(imported_reserved + live_reserved, provider_reserved_floor, live_reserved),
+    )
     starts_at = c.starts_at
     if starts_at.tzinfo is None:
         starts_at = starts_at.replace(tzinfo=ZoneInfo("Europe/Berlin"))
@@ -1659,10 +1663,14 @@ def berlin_day(value: str, *, end: bool = False) -> datetime:
 
 @app.get("/api/schedule")
 def public_schedule(
+    response: Response,
     from_: Optional[str] = Query(default=None, alias="from"),
     to: Optional[str] = Query(default=None),
     db: Session = Depends(db_session),
 ):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     try:
         start = berlin_day(from_) if from_ else datetime.now(ZoneInfo("Europe/Berlin")).replace(hour=0, minute=0, second=0, microsecond=0)
         end = berlin_day(to, end=True) if to else start + timedelta(days=14)
