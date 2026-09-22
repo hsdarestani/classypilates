@@ -531,15 +531,28 @@ def add_remote_waitlist(
             phone=phone,
         )
 
-    client.add_to_class(client_id, class_id, waitlist=True)
-    entries = client.get_waitlist_entries(class_id=class_id, client_id=client_id)
-    matches = [x for x in entries if _waitlist_client_id(x) == client_id]
-    if not matches:
-        raise MindbodyError("Mindbody waitlist entry could not be verified")
-    entry_id = _waitlist_entry_id(matches[-1])
-    if not entry_id:
-        raise MindbodyError("Mindbody waitlist entry has no ID")
-    return client_id, entry_id
+    result = client.add_to_class(client_id, class_id, waitlist=True)
+    visit = _extract_visit(result)
+    entry_id = str(_value(
+        result,
+        "WaitlistEntryId", "WaitlistEntryID",
+        default=_value(visit, "WaitlistEntryId", "WaitlistEntryID", default=""),
+    ) or "")
+    if entry_id:
+        return client_id, entry_id
+
+    # Waitlist reads can lag the write very briefly. Poll a few times before treating
+    # the operation as unverifiable.
+    for attempt in range(4):
+        entries = client.get_waitlist_entries(class_id=class_id, client_id=client_id)
+        matches = [x for x in entries if _waitlist_client_id(x) == client_id]
+        if matches:
+            entry_id = _waitlist_entry_id(matches[-1])
+            if entry_id:
+                return client_id, entry_id
+        if attempt < 3:
+            time.sleep(0.5 * (attempt + 1))
+    raise MindbodyError("Mindbody waitlist entry could not be verified")
 
 
 def remove_remote_waitlist(waitlist_entry_id: str) -> None:
