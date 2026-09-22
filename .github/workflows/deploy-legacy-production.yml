@@ -1,10 +1,6 @@
 name: Deploy Classy Legacy Production
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - DEPLOYMENT_STATUS.md
   workflow_dispatch:
 
 permissions:
