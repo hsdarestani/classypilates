@@ -14,6 +14,7 @@ from fastapi import BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 import main as core
@@ -363,7 +364,41 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         booking_reference=booking_reference,
     )
     db.add(order)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        # The database uniqueness constraint serializes two checkout requests that
+        # raced after the pre-check. Return/reuse the already-created provider
+        # checkout instead of leaking a 500 or creating a second payment attempt.
+        if booking_reference:
+            active_order = db.scalar(
+                select(core.PaymentOrder)
+                .where(
+                    core.PaymentOrder.booking_reference == booking_reference,
+                    core.PaymentOrder.status.in_(["pending", "paid"]),
+                )
+                .order_by(core.PaymentOrder.created_at.desc())
+                .limit(1)
+            )
+            if active_order:
+                if active_order.status == "paid":
+                    raise HTTPException(409, "booking_already_paid") from exc
+                if active_order.provider_payment_id:
+                    checkout = _sumup_request(f"/v0.1/checkouts/{active_order.provider_payment_id}")
+                    if str(checkout.get("status", "")).upper() == "PENDING" and checkout.get("hosted_checkout_url"):
+                        return {
+                            "ok": True,
+                            "provider": "sumup",
+                            "hosted_checkout_url": checkout["hosted_checkout_url"],
+                            "url": checkout["hosted_checkout_url"],
+                            "checkoutId": active_order.provider_payment_id,
+                            "reference": active_order.reference,
+                            "bookingReference": booking_reference,
+                            "reused": True,
+                        }
+                raise HTTPException(409, "booking_checkout_already_active") from exc
+        raise HTTPException(409, "checkout_already_created") from exc
 
     origin = _checkout_origin(request)
     try:
