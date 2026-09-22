@@ -161,6 +161,24 @@ class WriteClient(MindbodyClient):
         # the customer object needed by the private admin panel.
         return self._authorized_get("class/classvisits", {"ClassId": class_id})
 
+    def get_classes(
+        self,
+        *,
+        start_date_time: str | None = None,
+        end_date_time: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
+        # Use staff authorization so hidden/cancelled classes and capacity fields are
+        # visible consistently, even when consumer-mode settings mask them publicly.
+        return self._authorized_get("class/classes", {
+            "request.startDateTime": start_date_time,
+            "request.endDateTime": end_date_time,
+            "request.hideCanceledClasses": False,
+            "request.limit": limit,
+            "request.offset": offset,
+        })
+
     def find_clients(self, email: str) -> list[dict[str, Any]]:
         payload = self._authorized_get("client/clients", {"SearchText": email, "Limit": 50})
         return [x for x in _extract_list(payload, ("Clients", "clients", "Items")) if isinstance(x, dict)]
@@ -1034,6 +1052,59 @@ def _ensure_local_class(
     return klass, True
 
 
+def _remote_class_cancelled(remote: dict[str, Any]) -> bool:
+    return bool(_value(
+        remote,
+        "IsCanceled", "IsCancelled", "Cancelled", "isCanceled", "isCancelled",
+        default=False,
+    ))
+
+
+def _sync_remote_class_metadata(
+    klass: core.ClassSession,
+    remote: dict[str, Any],
+    now: datetime,
+) -> bool:
+    """Pull provider-owned schedule metadata for a Mindbody-backed class instance."""
+    starts = _parse_dt(_value(remote, "StartDateTime", "startDateTime"))
+    title = _class_name(remote)
+    studio_id = _remote_class_studio_id(remote)
+    changed = False
+
+    if title and klass.title != title[:180]:
+        klass.title = title[:180]
+        changed = True
+    description = _remote_class_description(remote)
+    if klass.description != description:
+        klass.description = description
+        changed = True
+    if title:
+        from import_mindbody_schedule import class_type
+        remote_type = class_type(title)
+        if klass.class_type != remote_type:
+            klass.class_type = remote_type
+            changed = True
+    if studio_id and klass.studio_id != studio_id:
+        klass.studio_id = studio_id
+        changed = True
+    if starts and abs((core.as_utc(klass.starts_at) - starts).total_seconds()) > 1:
+        klass.starts_at = starts
+        changed = True
+    if starts:
+        duration = _remote_class_duration(remote, starts)
+        if klass.duration != duration:
+            klass.duration = duration
+            changed = True
+
+    target_status = "cancelled" if _remote_class_cancelled(remote) else "active"
+    if klass.status != target_status:
+        klass.status = target_status
+        changed = True
+
+    klass.mindbody_synced_at = now
+    return changed
+
+
 def _sync_class_availability(
     db: Session,
     klass: core.ClassSession,
@@ -1120,6 +1191,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
         "classes_matched": 0,
         "classes_created_local": 0,
         "classes_skipped_unmapped": 0,
+        "metadata_updated": 0,
         "availability_updated": 0,
         "trainer_assignments_pulled": 0,
         "trainer_assignments_pushed": 0,
@@ -1156,6 +1228,8 @@ def sync_staff_and_assignments() -> dict[str, int]:
             if created_local:
                 counts["classes_created_local"] += 1
                 reserved_counts.setdefault(klass.id, 0)
+            if _sync_remote_class_metadata(klass, remote, now):
+                counts["metadata_updated"] += 1
             if _sync_class_availability(
                 db,
                 klass,
