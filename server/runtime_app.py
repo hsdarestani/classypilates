@@ -525,23 +525,32 @@ mindbody_sync.sync_from_mindbody = _sync_from_mindbody_hardened
 _roster_worker_started = False
 _roster_worker_guard = threading.Lock()
 ROSTER_SYNC_INTERVAL = max(900, int(os.getenv("MINDBODY_ROSTER_SYNC_INTERVAL_SECONDS", "3600")))
-ROSTER_INITIAL_DELAY = max(300, int(os.getenv("MINDBODY_ROSTER_INITIAL_DELAY_SECONDS", "600")))
+ROSTER_INITIAL_DELAY = max(0, int(os.getenv("MINDBODY_ROSTER_INITIAL_DELAY_SECONDS", "0")))
 ROSTER_WINDOW_DAYS = max(1, min(14, int(os.getenv("MINDBODY_ROSTER_WINDOW_DAYS", "7"))))
 
 
 def _roster_loop() -> None:
-    # Fast sync reconciles any class whose booked count changed every few minutes.
-    # This hourly identity sweep catches the rare same-count swap (one cancellation
-    # plus one new booking) even when TotalBooked itself did not change.
-    time.sleep(ROSTER_INITIAL_DELAY)
+    # Reconcile today's/next-24h rosters immediately after startup without blocking
+    # API readiness. This is the high-value window for campaign traffic and exact
+    # spot counts. Later sweeps cover the wider configured horizon hourly.
+    if ROSTER_INITIAL_DELAY:
+        time.sleep(ROSTER_INITIAL_DELAY)
+    first_pass = True
     while True:
         try:
+            days = 1 if first_pass else ROSTER_WINDOW_DAYS
             with mindbody_sync.RECONCILE_LOCK:
-                result = mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
+                result = mindbody_sync.sync_rosters_window(days=days)
+            print(
+                f"Mindbody roster sweep: days={days} classes={result.get('classes_checked', 0)} "
+                f"visits={result.get('visits', 0)} errors={result.get('errors', 0)}",
+                flush=True,
+            )
             if result.get("errors"):
                 print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
         except Exception as exc:
             print(f"Mindbody roster cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
+        first_pass = False
         time.sleep(ROSTER_SYNC_INTERVAL)
 
 
