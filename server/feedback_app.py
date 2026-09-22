@@ -211,10 +211,25 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                 raise HTTPException(409, "booking_not_found")
             if booking.email.lower() != order.email.lower() or booking.amount_cents != order.amount_cents:
                 raise HTTPException(409, "booking_payment_mismatch")
+
+            # A late SumUp payment must never resurrect a reservation that was
+            # already cancelled locally or in Mindbody. Preserve the cancellation
+            # and surface the payment as a refund-required exception.
+            booking_cancelled = (
+                booking.status != "reserved"
+                or booking.mindbody_sync_status in {"cancelled", "cancelled_remote", "cancel_failed"}
+            )
+            if booking_cancelled:
+                order.status = "paid_cancelled"
+                booking.payment_status = "paid_cancelled"
+                booking.payment_method = "sumup_refund_required"
+                order.credited = False
+                db.commit()
+                return order
+
             first_paid_transition = booking.payment_status != "paid"
             booking.payment_status = "paid"
             booking.payment_method = "sumup"
-            booking.status = "reserved"
             order.credited = True
             if first_paid_transition:
                 email_job = core.booking_email_data(booking)
@@ -482,7 +497,7 @@ def sumup_return(reference: str, request: Request, background_tasks: BackgroundT
         checkout = _sumup_request(f"/v0.1/checkouts/{order.provider_payment_id}")
         synced = _sync_sumup_order(checkout, db, background_tasks)
         state = synced.status if synced else "failed"
-        payment = "success" if state == "paid" else ("failed" if state in {"failed", "cancelled"} else "pending")
+        payment = "success" if state == "paid" else ("failed" if state in {"failed", "cancelled", "paid_cancelled"} else "pending")
     except HTTPException as exc:
         payment = "pending" if exc.status_code in {502, 503} else "failed"
 
