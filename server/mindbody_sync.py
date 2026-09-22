@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException
+from mindbody_availability import compute_public_availability
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session, joinedload
 
@@ -1683,6 +1684,7 @@ def _sync_class_availability(
     web_capacity = as_int("WebCapacity")
     total_booked = as_int("TotalBooked", "TotalClients")
     web_booked = as_int("TotalWebBooked", "WebBooked", "TotalWebClients")
+    is_available = _value(remote, "IsAvailable", "isAvailable", default=None)
 
     changed = False
 
@@ -1693,28 +1695,31 @@ def _sync_class_availability(
         changed = True
 
     effective_capacity = remote_capacity if remote_capacity is not None and remote_capacity >= 0 else int(klass.capacity or 0)
-    if effective_capacity < 0:
-        effective_capacity = 0
+    effective_capacity = max(0, int(effective_capacity or 0))
+    local_reserved = max(0, int(local_reserved or 0))
 
-    if total_booked is not None:
-        total_booked = max(0, total_booked)
-        physical_available = max(0, effective_capacity - total_booked)
-        available = physical_available
+    available, target_reserved, imported, normalized_total = compute_public_availability(
+        effective_capacity=effective_capacity,
+        local_reserved=local_reserved,
+        cached_imported=max(0, int(klass.imported_bookings or 0)),
+        total_booked=total_booked,
+        web_capacity=web_capacity,
+        web_booked=web_booked,
+        is_available=is_available,
+    )
 
-        # If Mindbody applies a separate web booking cap, website availability must
-        # respect the stricter of physical capacity and web capacity.
-        if web_capacity is not None and web_capacity >= 0 and web_booked is not None:
-            web_available = max(0, web_capacity - max(0, web_booked))
-            available = min(available, web_available)
+    if int(klass.imported_bookings or 0) != imported:
+        klass.imported_bookings = imported
+        changed = True
 
-        target_reserved = max(0, effective_capacity - available)
-        imported = max(0, target_reserved - max(0, int(local_reserved)))
-        if int(klass.imported_bookings or 0) != imported:
-            klass.imported_bookings = imported
+    if normalized_total is not None:
+        if int(klass.source_bookings_total or 0) != normalized_total:
+            klass.source_bookings_total = normalized_total
             changed = True
-        if int(klass.source_bookings_total or 0) != total_booked:
-            klass.source_bookings_total = total_booked
-            changed = True
+    elif available == 0 and int(klass.source_bookings_total or 0) < target_reserved:
+        # Diagnostic aggregate only. Public spots are controlled by imported_bookings.
+        klass.source_bookings_total = target_reserved
+        changed = True
 
     return changed
 
