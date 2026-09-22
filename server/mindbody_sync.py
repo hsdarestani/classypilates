@@ -472,9 +472,25 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
             if web_cap is not None and web_booked is not None and int(web_booked) >= int(web_cap):
                 raise MindbodyError("Mindbody online booking capacity is full")
 
-            candidates = client.find_clients(booking.email)
-            match = next((x for x in candidates if str(x.get("Email", "")).casefold() == booking.email.casefold()), None)
-            client_id = str(_value(match or {}, "Id", "ID", default="")) or client.add_client(booking)
+            client_id = str(booking.mindbody_client_id or "")
+            if not client_id:
+                candidates = client.find_clients(booking.email)
+                match = next(
+                    (
+                        x for x in candidates
+                        if str(x.get("Email", "")).casefold() == booking.email.casefold()
+                    ),
+                    None,
+                )
+                client_id = str(_value(match or {}, "Id", "ID", default="")) or client.add_client(booking)
+
+                # Persist the provider client identity before creating the class visit.
+                # If the roster worker observes the new visit immediately, it can now
+                # link it back to this website booking instead of creating a second row.
+                booking.mindbody_client_id = client_id
+                booking.mindbody_sync_status = "syncing"
+                db.commit()
+
             result = client.add_to_class(client_id, booking.klass.mindbody_class_id)
             visit = _extract_visit(result)
             booking.mindbody_client_id = client_id
