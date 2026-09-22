@@ -138,29 +138,6 @@ jobs:
           curl -fsS http://127.0.0.1:8787/api/health
           curl -fsS http://127.0.0.1:8787/api/checkout/create | grep -q '"provider":"sumup"'
 
-          # SMTP is an external dependency. Retry authentication after the API is
-          # healthy, but do not mark a healthy production deployment as failed when
-          # the mail host is temporarily refusing connections.
-          SMTP_OK=0
-          for attempt in 1 2 3 4; do
-            if docker compose exec -T api python - <<'PY'
-          import os, smtplib, ssl
-          host = os.environ["SMTP_HOST"]
-          port = int(os.environ["SMTP_PORT"])
-          with smtplib.SMTP_SSL(host, port, timeout=15, context=ssl.create_default_context()) as client:
-              client.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
-          print("SMTP authentication OK")
-          PY
-            then
-              SMTP_OK=1
-              break
-            fi
-            sleep $((attempt * 3))
-          done
-          if [ "$SMTP_OK" != "1" ]; then
-            echo "::warning::SMTP authentication smoke test failed after retries; API deployment remains healthy."
-          fi
-
           # Production schedule is now sourced from live Mindbody. Do not import the
           # historical bundled snapshot here; it can recreate classes that were later
           # changed or removed in Mindbody.
@@ -357,7 +334,10 @@ jobs:
           fi
 
           if command -v certbot >/dev/null 2>&1 && command -v nginx >/dev/null 2>&1; then
-            certbot --nginx -d classy.smarbiz.sbs --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+            if [ ! -f /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem ] || [ ! -f /etc/letsencrypt/live/classy.smarbiz.sbs/privkey.pem ]; then
+              certbot --nginx -d classy.smarbiz.sbs --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+              configure_nginx
+            fi
           fi
 
           if command -v nginx >/dev/null 2>&1; then
@@ -397,105 +377,123 @@ jobs:
           sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           cd /opt/classypilates
-          docker compose exec -T db sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-          DO $
-          DECLARE n bigint;
-          BEGIN
-            SELECT count(*) INTO n FROM (
-              SELECT class_id, lower(email)
-              FROM bookings
-              WHERE source='website' AND status='reserved'
-              GROUP BY class_id, lower(email)
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'duplicate active website bookings: %', n; END IF;
 
-            SELECT count(*) INTO n FROM (
-              SELECT class_id, spot_number
-              FROM bookings
-              WHERE status='reserved' AND spot_number IS NOT NULL
-              GROUP BY class_id, spot_number
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'duplicate active spots: %', n; END IF;
-
-            SELECT count(*) INTO n FROM (
-              SELECT mindbody_visit_id
-              FROM bookings
-              WHERE mindbody_visit_id IS NOT NULL AND mindbody_visit_id <> ''
-              GROUP BY mindbody_visit_id
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'duplicate Mindbody visit IDs: %', n; END IF;
-
-            SELECT count(*) INTO n FROM (
-              SELECT class_id, lower(email)
-              FROM waitlist
-              GROUP BY class_id, lower(email)
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'duplicate waitlist entries: %', n; END IF;
-
-            SELECT count(*) INTO n FROM (
-              SELECT mindbody_waitlist_entry_id
-              FROM waitlist
-              WHERE mindbody_waitlist_entry_id IS NOT NULL AND mindbody_waitlist_entry_id <> ''
-              GROUP BY mindbody_waitlist_entry_id
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'duplicate Mindbody waitlist IDs: %', n; END IF;
-
-            SELECT count(*) INTO n FROM (
-              SELECT booking_reference
-              FROM payment_orders
-              WHERE booking_reference IS NOT NULL AND status IN ('pending','paid')
-              GROUP BY booking_reference
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'multiple active payment attempts: %', n; END IF;
-
-            SELECT count(*) INTO n
-            FROM bookings b
-            JOIN classes c ON c.id=b.class_id
-            WHERE b.source='website'
-              AND b.status='reserved'
-              AND b.payment_status IN ('paid','pending')
-              AND c.mindbody_class_id IS NOT NULL
-              AND b.mindbody_sync_status <> 'synced'
-              AND b.created_at < now() - interval '5 minutes';
-            IF n > 0 THEN RAISE EXCEPTION 'stale unsynced website bookings: %', n; END IF;
-
-            SELECT count(*) INTO n
+          INTEGRITY="$(docker compose exec -T db sh -lc 'psql -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT 'duplicate_active_website_bookings|' || count(*) FROM (
+            SELECT class_id, lower(email)
             FROM bookings
-            WHERE mindbody_sync_status='cancel_failed'
-              AND created_at < now() - interval '5 minutes';
-            IF n > 0 THEN RAISE EXCEPTION 'stale failed Mindbody cancellations: %', n; END IF;
+            WHERE source='website' AND status='reserved'
+            GROUP BY class_id, lower(email)
+            HAVING count(*) > 1
+          ) x;
 
-            SELECT count(*) INTO n
-            FROM waitlist w
-            JOIN classes c ON c.id=w.class_id
-            WHERE c.mindbody_class_id IS NOT NULL
-              AND (w.mindbody_waitlist_entry_id IS NULL OR w.mindbody_sync_status <> 'synced');
-            IF n > 0 THEN RAISE EXCEPTION 'unsynced Mindbody waitlist rows: %', n; END IF;
+          SELECT 'duplicate_active_spots|' || count(*) FROM (
+            SELECT class_id, spot_number
+            FROM bookings
+            WHERE status='reserved' AND spot_number IS NOT NULL
+            GROUP BY class_id, spot_number
+            HAVING count(*) > 1
+          ) x;
 
-            SELECT count(*) INTO n
-            FROM classes
-            WHERE status='active'
-              AND starts_at >= now()
-              AND starts_at < now() + interval '45 days'
-              AND mindbody_class_id IS NULL;
-            IF n > 0 THEN RAISE EXCEPTION 'active future local-only classes: %', n; END IF;
+          SELECT 'duplicate_mindbody_visit_ids|' || count(*) FROM (
+            SELECT mindbody_visit_id
+            FROM bookings
+            WHERE mindbody_visit_id IS NOT NULL AND mindbody_visit_id <> ''
+            GROUP BY mindbody_visit_id
+            HAVING count(*) > 1
+          ) x;
 
-            SELECT count(*) INTO n FROM (
-              SELECT remote_id
-              FROM mindbody_sync_state
-              WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
-              GROUP BY remote_id
-              HAVING count(*) > 1
-            ) x;
-            IF n > 0 THEN RAISE EXCEPTION 'duplicate Mindbody coach mappings: %', n; END IF;
-          END $;
+          SELECT 'duplicate_waitlist_entries|' || count(*) FROM (
+            SELECT class_id, lower(email)
+            FROM waitlist
+            GROUP BY class_id, lower(email)
+            HAVING count(*) > 1
+          ) x;
 
-          SELECT 'production sync integrity: OK';
+          SELECT 'duplicate_mindbody_waitlist_ids|' || count(*) FROM (
+            SELECT mindbody_waitlist_entry_id
+            FROM waitlist
+            WHERE mindbody_waitlist_entry_id IS NOT NULL AND mindbody_waitlist_entry_id <> ''
+            GROUP BY mindbody_waitlist_entry_id
+            HAVING count(*) > 1
+          ) x;
+
+          SELECT 'multiple_active_payment_attempts|' || count(*) FROM (
+            SELECT booking_reference
+            FROM payment_orders
+            WHERE booking_reference IS NOT NULL AND status IN ('pending','paid')
+            GROUP BY booking_reference
+            HAVING count(*) > 1
+          ) x;
+
+          SELECT 'stale_unsynced_website_bookings|' || count(*)
+          FROM bookings b
+          JOIN classes c ON c.id=b.class_id
+          WHERE b.source='website'
+            AND b.status='reserved'
+            AND b.payment_status IN ('paid','pending')
+            AND c.mindbody_class_id IS NOT NULL
+            AND b.mindbody_sync_status <> 'synced'
+            AND b.created_at < now() - interval '5 minutes';
+
+          SELECT 'stale_failed_mindbody_cancellations|' || count(*)
+          FROM bookings
+          WHERE mindbody_sync_status='cancel_failed'
+            AND created_at < now() - interval '5 minutes';
+
+          SELECT 'unsynced_mindbody_waitlist_rows|' || count(*)
+          FROM waitlist w
+          JOIN classes c ON c.id=w.class_id
+          WHERE c.mindbody_class_id IS NOT NULL
+            AND (w.mindbody_waitlist_entry_id IS NULL OR w.mindbody_sync_status <> 'synced');
+
+          SELECT 'active_future_local_only_classes|' || count(*)
+          FROM classes
+          WHERE status='active'
+            AND starts_at >= now()
+            AND starts_at < now() + interval '45 days'
+            AND mindbody_class_id IS NULL;
+
+          SELECT 'duplicate_mindbody_coach_mappings|' || count(*) FROM (
+            SELECT remote_id
+            FROM mindbody_sync_state
+            WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
+            GROUP BY remote_id
+            HAVING count(*) > 1
+          ) x;
+
+          SELECT 'legacy_local_coach_alias_groups|' || count(*) FROM (
+            SELECT
+              lower(
+                CASE
+                  WHEN trim(display_name) ~* '^coach[[:space:]]+' THEN regexp_replace(trim(display_name), '^coach[[:space:]]+', '', 'i')
+                  WHEN array_length(regexp_split_to_array(trim(display_name), '[[:space:]]+'),1)=2
+                       AND lower(split_part(trim(display_name),' ',1))=lower(split_part(trim(display_name),' ',2))
+                    THEN split_part(trim(display_name),' ',1)
+                  ELSE regexp_replace(trim(display_name), '[[:space:]]+', ' ', 'g')
+                END
+              ) AS canon
+            FROM coaches
+            WHERE active=true AND trim(display_name)<>''
+            GROUP BY 1
+            HAVING count(*) > 1
+               AND bool_or(
+                 trim(display_name) ~* '^coach[[:space:]]+'
+                 OR (
+                   array_length(regexp_split_to_array(trim(display_name), '[[:space:]]+'),1)=2
+                   AND lower(split_part(trim(display_name),' ',1))=lower(split_part(trim(display_name),' ',2))
+                 )
+               )
+          ) x;
           SQL
+          )"
+
+          printf '%s\n' "$INTEGRITY"
+          BAD="$(printf '%s\n' "$INTEGRITY" | awk -F'|' 'NF==2 && ($2+0)!=0 {print}')"
+          if [ -n "$BAD" ]; then
+            echo "Production sync integrity violations:"
+            printf '%s\n' "$BAD"
+            exit 3
+          fi
+          echo "Production sync integrity: OK"
           REMOTE
