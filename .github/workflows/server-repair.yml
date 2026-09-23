@@ -28,17 +28,12 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- compare github deploy target with public dns ---'
+          echo '--- test whether current deploy credentials reach public dns host ---'
           DNS_IP="$(getent ahostsv4 classy.smarbiz.sbs | awk 'NR==1{print $1}')"
-          if [ "$HOST" = "$DNS_IP" ]; then
-            echo 'GITHUB_HOST_EQUALS_DNS=yes'
+          if SSHPASS="$PASS" sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@"$DNS_IP" 'echo PUBLIC_DNS_SSH_OK; test -d /opt/classypilates && echo PUBLIC_HAS_CLASSY=yes || echo PUBLIC_HAS_CLASSY=no' 2>/dev/null; then
+            echo 'PUBLIC_DNS_SSH_WITH_CURRENT_PASS=yes'
           else
-            echo 'GITHUB_HOST_EQUALS_DNS=no'
-          fi
-          if hostname -I | tr ' ' '\n' | grep -Fxq "$DNS_IP"; then
-            echo 'DNS_IS_LOCAL_ADDRESS=yes'
-          else
-            echo 'DNS_IS_LOCAL_ADDRESS=no'
+            echo 'PUBLIC_DNS_SSH_WITH_CURRENT_PASS=no'
           fi
 
           echo '--- api health after targeted reconcile ---'
