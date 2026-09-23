@@ -48,20 +48,32 @@ jobs:
               print("PROCESSING_EVENT null")
           PY
 
-          echo '--- reproduce full mirror with traceback watchdog ---'
-          timeout 100 docker compose exec -T api python - <<'PY' || true
-          import faulthandler, time, json, sys
-          import mindbody_sync as mb
-          faulthandler.enable(file=sys.stderr)
-          faulthandler.dump_traceback_later(60, repeat=False, file=sys.stderr)
-          started=time.monotonic()
-          print("SYNC_PROBE_START", flush=True)
-          try:
-              result=mb.sync_staff_and_assignments()
-              print("SYNC_PROBE_DONE",json.dumps(result,sort_keys=True),"seconds",round(time.monotonic()-started,2),flush=True)
-          finally:
-              faulthandler.cancel_dump_traceback_later()
+          echo '--- post-deadlock-fix queue and audit ---'
+          docker compose exec -T api python - <<'PY'
+          import json
+          from sqlalchemy import text, select, func
+          import main as core
+          with core.engine.begin() as c:
+              counts=c.execute(text("""
+                SELECT status,COUNT(*) AS n,MIN(created_at) AS oldest,MAX(created_at) AS newest,MAX(processed_at) AS last_processed
+                FROM mindbody_webhook_events GROUP BY status ORDER BY status
+              """)).mappings().all()
+          with core.SessionLocal() as db:
+              latest=db.scalar(select(func.max(core.ClassSession.mindbody_synced_at)))
+          print("QUEUE_COUNTS",json.dumps([dict(x) for x in counts],default=str,sort_keys=True))
+          print("LATEST_SYNC",latest.isoformat() if latest else None)
           PY
+
+          echo '--- run one explicit canonical mirror cycle ---'
+          docker compose exec -T api python - <<'PY'
+          import json, mindbody_sync as mb
+          with mb.RECONCILE_LOCK:
+              result=mb.sync_staff_and_assignments()
+          print("MIRROR_RESULT",json.dumps(result,sort_keys=True))
+          PY
+
+          echo '--- final fresh audit ---'
+          docker compose exec -T api python mindbody_audit.py
 
           echo '--- api health after webhook diagnostics ---'
           curl -fsS http://127.0.0.1:8787/api/health
