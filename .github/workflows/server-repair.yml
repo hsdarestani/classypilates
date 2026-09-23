@@ -28,7 +28,7 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- compare random screenshot classes with Classy production ---'
+          echo '--- compare random screenshot classes with Classy production (fresh) ---'
           docker compose exec -T api python - <<'PY'
           import json, urllib.parse, urllib.request
           from datetime import datetime
