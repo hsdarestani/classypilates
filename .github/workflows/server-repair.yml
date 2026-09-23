@@ -28,19 +28,81 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- force 7-day Mindbody roster reconcile ---'
+          echo '--- reconcile screenshot classes only ---'
           docker compose exec -T api python - <<'PY'
           import json
-          import mindbody_sync
-          result = mindbody_sync.sync_rosters_window(days=7)
-          print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-          if int(result.get("errors", 0)) or int(result.get("waitlist_errors", 0)):
-              raise SystemExit(2)
+          from sqlalchemy import func, select
+          import main as core
+          import mindbody_sync as mb
+
+          client = mb.WriteClient.from_env()
+          payload = client.get_classes(
+              start_date_time="2026-09-23T00:00:00",
+              end_date_time="2026-09-24T00:00:00",
+              limit=200,
+              offset=0,
+          )
+          rows = [x for x in mb._extract_list(payload, ("Classes","classes","Items")) if isinstance(x, dict)]
+
+          wanted = [
+              ("bornheim-andrea-0700", "bornheim", "andrea", "2026-09-23T07:00"),
+              ("mid-jane-1800", "mid", "jane", "2026-09-23T18:00"),
+          ]
+          found = {}
+          for label, studio_key, coach_key, start_key in wanted:
+              for row in rows:
+                  loc = str((row.get("Location") or {}).get("Name") or "").casefold()
+                  staff = str((row.get("Staff") or {}).get("DisplayName") or (row.get("Staff") or {}).get("Name") or "").casefold()
+                  start = str(row.get("StartDateTime") or row.get("startDateTime") or "")
+                  if studio_key in loc and coach_key in staff and start.startswith(start_key):
+                      rid = str(row.get("Id") or row.get("ID") or row.get("ClassId") or "")
+                      visits = [
+                          v for v in mb._extract_class_visits(client.get_class_visits(rid))
+                          if not bool(mb._value(v, "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled", default=False))
+                      ]
+                      print(json.dumps({
+                          "label": label,
+                          "remote_id": rid,
+                          "start": start,
+                          "location": (row.get("Location") or {}).get("Name"),
+                          "staff": (row.get("Staff") or {}).get("DisplayName"),
+                          "capacity": row.get("MaxCapacity"),
+                          "summary_total_booked": row.get("TotalBooked"),
+                          "roster_active_visits": len(visits),
+                      }, ensure_ascii=False, sort_keys=True))
+                      result = mb.reconcile_remote_class(
+                          rid,
+                          start_hint=start,
+                          reconcile_roster=True,
+                          reconcile_waitlist=False,
+                          sync_coach=False,
+                      )
+                      with core.SessionLocal() as db:
+                          klass = db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id == rid))
+                          reserved = db.scalar(select(func.count(core.Booking.id)).where(
+                              core.Booking.class_id == klass.id,
+                              core.Booking.status == "reserved",
+                          )) or 0
+                          spots = max(0, int(klass.capacity or 0) - int(klass.imported_bookings or 0) - int(reserved))
+                          print(json.dumps({
+                              "label": label,
+                              "local_capacity": int(klass.capacity or 0),
+                              "local_reserved": int(reserved),
+                              "local_imported": int(klass.imported_bookings or 0),
+                              "local_spots": spots,
+                              "reconcile": result,
+                          }, ensure_ascii=False, sort_keys=True))
+                          found[label] = spots
+                      break
+
+          expected = {"bornheim-andrea-0700": 0, "mid-jane-1800": 2}
+          missing = [k for k in expected if k not in found]
+          wrong = {k: {"expected": v, "actual": found.get(k)} for k, v in expected.items() if k in found and found[k] != v}
+          print(json.dumps({"found": found, "missing": missing, "wrong": wrong}, ensure_ascii=False, sort_keys=True))
+          if missing or wrong:
+              raise SystemExit(3)
           PY
 
-          echo '--- production Mindbody/Classy audit ---'
-          docker compose exec -T api python mindbody_audit.py
-
-          echo '--- api health after roster reconcile ---'
+          echo '--- api health after targeted reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
           REMOTE
