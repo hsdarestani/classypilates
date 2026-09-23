@@ -2284,6 +2284,107 @@ def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
     return result
 
 
+def _hide_nonpublic_mindbody_classes(
+    db: Session,
+    *,
+    public_ids: set[str],
+    start: datetime,
+    end: datetime,
+    now: datetime,
+) -> int:
+    """Hide provider-backed classes that are not in Mindbody's public-visible feed.
+
+    Staff-authenticated GetClasses intentionally exposes hidden/cancelled instances.
+    The public website must never keep one of those instances active merely because
+    it still exists in Mindbody's staff feed.
+    """
+    rows = db.scalars(
+        select(core.ClassSession).where(
+            core.ClassSession.starts_at >= start,
+            core.ClassSession.starts_at < end,
+            core.ClassSession.status == "active",
+            core.ClassSession.mindbody_class_id.is_not(None),
+        )
+    ).all()
+    hidden = 0
+    for row in rows:
+        remote_id = str(row.mindbody_class_id or "")
+        if remote_id and remote_id not in public_ids:
+            row.status = "hidden"
+            row.mindbody_synced_at = now
+            hidden += 1
+    return hidden
+
+
+def sync_cancelled_classes_window(*, days: int = 45) -> dict[str, int]:
+    """Apply true Mindbody cancellations without creating hidden phantom classes.
+
+    This uses the staff-authenticated lifecycle feed only to update exact provider
+    IDs that already exist locally. It never creates or fuzzy-matches a class.
+    """
+    client = WriteClient.from_env()
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(hours=2)
+    end = now + timedelta(days=max(1, min(45, int(days))))
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        payload = client.get_classes(
+            start_date_time=start.isoformat(),
+            end_date_time=end.isoformat(),
+            limit=200,
+            offset=offset,
+            public_only=False,
+        )
+        batch = [
+            row for row in _extract_list(payload, ("Classes", "classes", "Items"))
+            if isinstance(row, dict)
+        ]
+        rows.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+
+    counts = {
+        "staff_classes_seen": len(rows),
+        "cancelled_seen": 0,
+        "cancelled_local_updated": 0,
+        "cancellation_notifications": 0,
+    }
+    email_jobs: list[tuple] = []
+    with core.SessionLocal() as db:
+        for remote in rows:
+            if not _remote_class_cancelled(remote):
+                continue
+            counts["cancelled_seen"] += 1
+            remote_id = str(_value(remote, "Id", "ID", "ClassId", default="") or "")
+            if not remote_id:
+                continue
+            klass = db.scalar(
+                select(core.ClassSession)
+                .where(core.ClassSession.mindbody_class_id == remote_id)
+                .limit(1)
+            )
+            if not klass:
+                # Critical invariant: staff-only/cancelled rows never claim a local
+                # snapshot row and never create a public class.
+                continue
+            was_cancelled = klass.status == "cancelled"
+            _sync_remote_class_metadata(klass, remote, now)
+            if not was_cancelled and klass.status == "cancelled":
+                counts["cancelled_local_updated"] += 1
+            email_jobs.extend(_apply_remote_class_cancellation(db, klass, now))
+        db.commit()
+
+    for email_job in email_jobs:
+        try:
+            core.send_transactional_email(*email_job)
+        except Exception:
+            pass
+    counts["cancellation_notifications"] = len(email_jobs)
+    return counts
+
+
 def _cancel_unlinked_local_classes(db: Session, *, start: datetime, end: datetime) -> int:
     """Hide local-only sessions inside the live Mindbody window.
 
