@@ -28,49 +28,43 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect public site schedule for screenshot classes ---'
+          echo '--- inspect Bornheim 08 local row ---'
           docker compose exec -T api python - <<'PY'
-          import json, urllib.parse, urllib.request
-          url='http://127.0.0.1:8000/api/schedule?'+urllib.parse.urlencode({
-              'from':'2026-09-23',
-              'to':'2026-09-24',
-          })
-          with urllib.request.urlopen(url, timeout=30) as r:
-              payload=json.loads(r.read().decode())
-          rows=payload if isinstance(payload,list) else payload.get('items') or payload.get('classes') or []
-          wanted=[
-              # Screenshot times are Europe/Berlin CEST (UTC+2 on Sep 23).
-              ('mid-0800','mid','powerformer','06:00'),
-              ('mid-1200','mid','powerformer','10:00'),
-              ('mid-1800','mid','powerformer','16:00'),
-              ('mid-1900','mid','powerformer','17:00'),
-              ('mid-2000','mid','powerformer','18:00'),
-              ('bornheim-0700','bornheim','total body level intense','05:00'),
-              ('bornheim-0800','bornheim','total body level intense','06:00'),
-              ('bornheim-1700','bornheim','total body level intense','15:00'),
-              ('bornheim-1800','bornheim','total body level intense','16:00'),
-              ('bornheim-1900','bornheim','butt & abs','17:00'),
-          ]
-          for label, studio, name_key, time_key in wanted:
-              ms=[]
-              for row in rows:
-                  blob=json.dumps(row,ensure_ascii=False).casefold()
-                  start=str(row.get('starts_at') or row.get('start') or row.get('start_time') or row.get('startsAt') or '')
-                  if studio in blob and name_key in blob and (time_key in start or time_key in blob):
-                      ms.append({
-                          'id':row.get('id'),
-                          'mindbody_class_id':row.get('mindbody_class_id'),
-                          'title':row.get('title') or row.get('name'),
-                          'coach':row.get('coach') or row.get('coach_name'),
-                          'location':row.get('location') or row.get('studio'),
-                          'starts_at':start,
-                          'capacity':row.get('capacity'),
-                          'reserved':row.get('reserved'),
-                          'spots':row.get('spots'),
-                          'spots_left':row.get('spots_left'),
-                          'available':row.get('available'),
-                      })
-              print(label, json.dumps(ms,ensure_ascii=False,sort_keys=True))
+          import json
+          from sqlalchemy import select
+          import main as core
+
+          with core.SessionLocal() as db:
+              row=db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id=="21502"))
+              if row:
+                  print("ROW", json.dumps({
+                      "id":row.id,
+                      "mindbody_class_id":row.mindbody_class_id,
+                      "title":row.title,
+                      "studio_id":row.studio_id,
+                      "starts_at":str(row.starts_at),
+                      "status":row.status,
+                      "capacity":row.capacity,
+                      "imported_bookings":row.imported_bookings,
+                      "source_bookings_total":row.source_bookings_total,
+                      "coach":row.coach.display_name if row.coach else None,
+                  }, ensure_ascii=False, sort_keys=True))
+              else:
+                  print("ROW null")
+
+              rows=db.scalars(select(core.ClassSession).where(
+                  core.ClassSession.studio_id=="bornheim",
+                  core.ClassSession.starts_at >= "2026-09-23T05:30:00+00:00",
+                  core.ClassSession.starts_at < "2026-09-23T06:30:00+00:00",
+              )).all()
+              for r in rows:
+                  print("NEAR", json.dumps({
+                      "id":r.id,"mb":r.mindbody_class_id,"title":r.title,
+                      "start":str(r.starts_at),"status":r.status,
+                      "capacity":r.capacity,"imported":r.imported_bookings,
+                      "source_total":r.source_bookings_total,
+                      "coach":r.coach.display_name if r.coach else None,
+                  }, ensure_ascii=False, sort_keys=True))
           PY
 
           echo '--- api health after targeted reconcile ---'
