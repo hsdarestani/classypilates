@@ -28,43 +28,39 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect Mindbody worker state ---'
-          echo 'SYNC ERRORS:'
-          docker compose logs --since 12h api 2>&1 | grep -E 'Mindbody (mirror cycle failed|roster cycle failed|webhook worker failed|availability prime failed|roster sweep)' | tail -200 || true
-
-          echo 'WEBHOOK QUEUE STATE:'
+          echo '--- identify stuck webhook event ---'
           docker compose exec -T api python - <<'PY'
           import json
           from sqlalchemy import text
           import main as core
           with core.engine.begin() as c:
-              counts = c.execute(text("""
-                SELECT status, COUNT(*) AS n, MIN(created_at) AS oldest, MAX(created_at) AS newest,
-                       MAX(processed_at) AS last_processed
+              row=c.execute(text("""
+                SELECT message_id,event_id,class_id,status,attempts,last_error,created_at,next_attempt_at,processed_at,payload
                 FROM mindbody_webhook_events
-                GROUP BY status
-                ORDER BY status
-              """)).mappings().all()
-              failed = c.execute(text("""
-                SELECT message_id,event_id,class_id,status,attempts,last_error,created_at,next_attempt_at,processed_at
-                FROM mindbody_webhook_events
-                WHERE status!='done'
-                ORDER BY created_at DESC
-                LIMIT 30
-              """)).mappings().all()
-          print("QUEUE_COUNTS", json.dumps([dict(x) for x in counts], default=str, sort_keys=True))
-          print("QUEUE_NOT_DONE", json.dumps([dict(x) for x in failed], default=str, sort_keys=True))
+                WHERE status='processing'
+                ORDER BY created_at ASC
+                LIMIT 1
+              """)).mappings().first()
+          if row:
+              d=dict(row); d["payload"]=json.loads(d["payload"])
+              print("PROCESSING_EVENT",json.dumps(d,default=str,sort_keys=True))
+          else:
+              print("PROCESSING_EVENT null")
           PY
 
-          echo 'RECENT MIRROR TIMESTAMPS:'
-          docker compose exec -T api python - <<'PY'
-          import json
-          from sqlalchemy import select, func
-          import main as core
-          with core.SessionLocal() as db:
-              latest=db.scalar(select(func.max(core.ClassSession.mindbody_synced_at)))
-              active=db.scalar(select(func.count(core.ClassSession.id)).where(core.ClassSession.status=="active"))
-          print(json.dumps({"latest_mindbody_synced_at":latest.isoformat() if latest else None,"active_classes":int(active or 0)},sort_keys=True))
+          echo '--- reproduce full mirror with traceback watchdog ---'
+          timeout 100 docker compose exec -T api python - <<'PY' || true
+          import faulthandler, time, json, sys
+          import mindbody_sync as mb
+          faulthandler.enable(file=sys.stderr)
+          faulthandler.dump_traceback_later(60, repeat=False, file=sys.stderr)
+          started=time.monotonic()
+          print("SYNC_PROBE_START", flush=True)
+          try:
+              result=mb.sync_staff_and_assignments()
+              print("SYNC_PROBE_DONE",json.dumps(result,sort_keys=True),"seconds",round(time.monotonic()-started,2),flush=True)
+          finally:
+              faulthandler.cancel_dump_traceback_later()
           PY
 
           echo '--- api health after webhook diagnostics ---'
