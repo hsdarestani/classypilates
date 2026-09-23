@@ -28,52 +28,112 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect Mid/Jane 18:00 Mindbody state ---'
+          echo '--- inspect all screenshot classes ---'
           docker compose exec -T api python - <<'PY'
           import json
+          from sqlalchemy import func, select
+          import main as core
           import mindbody_sync as mb
 
           client = mb.WriteClient.from_env()
-          rid = "19859"
           payload = client.get_classes(
-              start_date_time="2026-09-23T17:30:00",
-              end_date_time="2026-09-23T18:30:00",
-              limit=100,
+              start_date_time="2026-09-23T00:00:00",
+              end_date_time="2026-09-24T00:00:00",
+              limit=300,
               offset=0,
           )
           rows = [x for x in mb._extract_list(payload, ("Classes","classes","Items")) if isinstance(x, dict)]
-          row = next(x for x in rows if str(x.get("Id") or x.get("ID") or x.get("ClassId") or "") == rid)
-          print("CLASS", json.dumps({
-              k: row.get(k) for k in (
-                  "Id","StartDateTime","MaxCapacity","WebCapacity","TotalBooked",
-                  "TotalWebBooked","TotalWaitlisted","IsAvailable","IsCanceled"
+
+          wanted = [
+              # label, studio, coach, start, screenshot booked, screenshot capacity
+              ("mid-elena-0800", "mid", "elena", "2026-09-23T08:00", 8, 10),
+              ("mid-jane-1200", "mid", "jane", "2026-09-23T12:00", 6, 10),
+              ("mid-jane-1800", "mid", "jane", "2026-09-23T18:00", 8, 10),
+              ("mid-jane-1900", "mid", "jane", "2026-09-23T19:00", 9, 10),
+              ("mid-jane-2000", "mid", "jane", "2026-09-23T20:00", 8, 10),
+              ("bornheim-andrea-0700", "bornheim", "andrea", "2026-09-23T07:00", 8, 8),
+              ("bornheim-andrea-0800", "bornheim", "andrea", "2026-09-23T08:00", 1, 8),
+              ("bornheim-lana-1700", "bornheim", "lana", "2026-09-23T17:00", 5, 8),
+              ("bornheim-lana-1800", "bornheim", "lana", "2026-09-23T18:00", 8, 8),
+              ("bornheim-lana-1900", "bornheim", "lana", "2026-09-23T19:00", 8, 8),
+          ]
+
+          results = []
+          for label, studio_key, coach_key, start_key, screenshot_booked, screenshot_capacity in wanted:
+              match = None
+              for row in rows:
+                  loc = str((row.get("Location") or {}).get("Name") or "").casefold()
+                  staff_obj = row.get("Staff") or {}
+                  staff = str(staff_obj.get("DisplayName") or staff_obj.get("Name") or "").casefold()
+                  start = str(row.get("StartDateTime") or row.get("startDateTime") or "")
+                  if studio_key in loc and coach_key in staff and start.startswith(start_key):
+                      match = row
+                      break
+              if not match:
+                  results.append({"label":label,"missing_remote":True})
+                  continue
+
+              rid = str(match.get("Id") or match.get("ID") or match.get("ClassId") or "")
+              visits_all = mb._extract_class_visits(client.get_class_visits(rid))
+              visits = [
+                  v for v in visits_all
+                  if not bool(mb._value(v, "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled", default=False))
+              ]
+
+              # Reconcile only this class so local state is current before comparison.
+              mb.reconcile_remote_class(
+                  rid,
+                  start_hint=str(match.get("StartDateTime") or ""),
+                  reconcile_roster=True,
+                  reconcile_waitlist=False,
+                  sync_coach=False,
               )
-          }, ensure_ascii=False, sort_keys=True))
 
-          vp = client.get_class_visits(rid)
-          visits = mb._extract_class_visits(vp)
-          print("VISIT_COUNT_ALL", len(visits))
-          state_counts = {}
-          for v in visits:
-              flags = {
-                  "Cancelled": v.get("Cancelled"),
-                  "IsCancelled": v.get("IsCancelled"),
-                  "LateCancelled": v.get("LateCancelled"),
-                  "EarlyCancelled": v.get("EarlyCancelled"),
-                  "SignedIn": v.get("SignedIn"),
-                  "MakeUp": v.get("MakeUp"),
-              }
-              key = json.dumps(flags, sort_keys=True)
-              state_counts[key] = state_counts.get(key, 0) + 1
-          print("VISIT_STATES", json.dumps(state_counts, ensure_ascii=False, sort_keys=True))
+              with core.SessionLocal() as db:
+                  klass = db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id == rid))
+                  local_reserved = db.scalar(select(func.count(core.Booking.id)).where(
+                      core.Booking.class_id == klass.id,
+                      core.Booking.status == "reserved",
+                  )) or 0
+                  local_spots = max(
+                      0,
+                      int(klass.capacity or 0)
+                      - int(klass.imported_bookings or 0)
+                      - int(local_reserved),
+                  )
 
-          try:
-              wait = client.get_waitlist_entries(class_id=rid)
-          except Exception as exc:
-              print("WAITLIST_ERROR", type(exc).__name__, str(exc)[:300])
-              wait = []
-          print("WAITLIST_COUNT", len(wait))
-          print("WAITLIST_SAMPLE", json.dumps(wait[:5], ensure_ascii=False)[:3000])
+              results.append({
+                  "label": label,
+                  "remote_id": rid,
+                  "start": match.get("StartDateTime"),
+                  "location": (match.get("Location") or {}).get("Name"),
+                  "staff": (match.get("Staff") or {}).get("DisplayName"),
+                  "screenshot_booked": screenshot_booked,
+                  "screenshot_capacity": screenshot_capacity,
+                  "screenshot_spots": screenshot_capacity - screenshot_booked,
+                  "api_capacity": match.get("MaxCapacity"),
+                  "api_total_booked": match.get("TotalBooked"),
+                  "api_web_capacity": match.get("WebCapacity"),
+                  "api_total_web_booked": match.get("TotalWebBooked"),
+                  "api_is_available": match.get("IsAvailable"),
+                  "roster_active_visits": len(visits),
+                  "roster_all_visits": len(visits_all),
+                  "local_capacity": int(klass.capacity or 0),
+                  "local_reserved": int(local_reserved),
+                  "local_imported": int(klass.imported_bookings or 0),
+                  "site_spots": int(local_spots),
+                  "screen_vs_api": (
+                      screenshot_capacity != int(match.get("MaxCapacity") or 0)
+                      or screenshot_booked != int(match.get("TotalBooked") or 0)
+                  ),
+                  "api_vs_roster": int(match.get("TotalBooked") or 0) != len(visits),
+                  "screen_vs_site": (screenshot_capacity - screenshot_booked) != int(local_spots),
+              })
+
+          print("ALL_SCREENSHOT_CLASSES_JSON_BEGIN")
+          for item in results:
+              print(json.dumps(item, ensure_ascii=False, sort_keys=True))
+          print("ALL_SCREENSHOT_CLASSES_JSON_END")
           PY
 
           echo '--- api health after targeted reconcile ---'
