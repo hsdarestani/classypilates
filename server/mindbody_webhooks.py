@@ -269,32 +269,43 @@ def _mark_failed(rows: list[dict[str, Any]], error: Exception) -> None:
 
 
 def _process_batch(rows: list[dict[str, Any]]) -> None:
-    payloads = [json.loads(str(row["payload"])) for row in rows]
-    class_id = str(rows[0].get("class_id") or "").strip()
+    # Never let one long-running maintenance cycle pin a webhook event in
+    # "processing" indefinitely. If reconciliation is busy, fail this attempt and
+    # let the durable queue retry it with backoff.
+    acquired = mindbody_sync.RECONCILE_LOCK.acquire(timeout=15)
+    if not acquired:
+        raise RuntimeError("Mindbody reconciliation busy; webhook will retry")
+    try:
+        payloads = [json.loads(str(row["payload"])) for row in rows]
+        class_id = str(rows[0].get("class_id") or "").strip()
 
-    if class_id:
-        event_ids = {str(payload.get("eventId") or "") for payload in payloads}
-        reconcile_roster = any(event_id.startswith("classRosterBooking.") for event_id in event_ids)
-        reconcile_waitlist = any(event_id.startswith("classWaitlistRequest.") for event_id in event_ids)
-        sync_coach = "class.updated" in event_ids
-        start_hint = next(
-            (hint for hint in (_event_start_hint(payload) for payload in payloads) if hint),
-            None,
-        )
-        mindbody_sync.reconcile_remote_class(
-            class_id,
-            start_hint=start_hint,
-            reconcile_roster=reconcile_roster,
-            reconcile_waitlist=reconcile_waitlist,
-            sync_coach=sync_coach,
-        )
-        return
+        if class_id:
+            event_ids = {str(payload.get("eventId") or "") for payload in payloads}
+            reconcile_roster = any(event_id.startswith("classRosterBooking.") for event_id in event_ids)
+            reconcile_waitlist = any(event_id.startswith("classWaitlistRequest.") for event_id in event_ids)
+            sync_coach = "class.updated" in event_ids
+            start_hint = next(
+                (hint for hint in (_event_start_hint(payload) for payload in payloads) if hint),
+                None,
+            )
+            # reconcile_remote_class uses the same RLock; this is safe and
+            # re-entrant while our outer acquisition guarantees bounded waiting.
+            mindbody_sync.reconcile_remote_class(
+                class_id,
+                start_hint=start_hint,
+                reconcile_roster=reconcile_roster,
+                reconcile_waitlist=reconcile_waitlist,
+                sync_coach=sync_coach,
+            )
+            return
 
-    # Schedule/description changes have no individual class ID. They are rare and
-    # use the canonical bounded fast sync rather than guessing affected classes.
-    with mindbody_sync.RECONCILE_LOCK:
-        mindbody_sync.sync_from_mindbody()
+        # Schedule/description changes have no individual class ID. Refresh only
+        # the canonical public schedule/capacity path here; never run heavy staff
+        # maintenance while holding the real-time webhook worker.
+        mindbody_sync.sync_schedule_availability_fast()
         mindbody_sync.retry_pending()
+    finally:
+        mindbody_sync.RECONCILE_LOCK.release()
 
 
 def _cleanup_old_events() -> None:
