@@ -28,61 +28,82 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect Bornheim 2026-09-25 09:00 exactly (live) ---'
+          echo '--- fresh Mindbody/Classy production audit ---'
+          docker compose exec -T api python mindbody_audit.py
+
+          echo '--- fresh screenshot sample comparison ---'
           docker compose exec -T api python - <<'PY'
-          import json, urllib.parse, urllib.request
+          import json
           from datetime import datetime
           from zoneinfo import ZoneInfo
+          import urllib.parse, urllib.request
           import mindbody_sync as mb
 
+          expected = [
+              ("2026-09-24","07:00","mid","powerformer","anna",8,2),
+              ("2026-09-24","07:00","oval","powerformer","sophie",6,4),
+              ("2026-09-24","10:30","bornheim","pregnancy reformer","lana",1,7),
+              ("2026-09-24","11:30","sachsenhausen","reformer","kristina",1,11),
+              ("2026-09-24","12:00","bahnhofsviertel","total body","denise",4,6),
+              ("2026-09-25","07:00","mid","powerformer","denise",3,7),
+              ("2026-09-25","07:00","oval","powerformer","sophie",3,7),
+              ("2026-09-25","09:00","bornheim","total body","ida",1,7),
+              ("2026-09-25","09:00","bahnhofsviertel","total body","luca",1,9),
+          ]
+
           berlin=ZoneInfo("Europe/Berlin")
-          url='http://127.0.0.1:8000/api/schedule?'+urllib.parse.urlencode({
-              'from':'2026-09-25','to':'2026-09-26'
-          })
+          url='http://127.0.0.1:8000/api/schedule?'+urllib.parse.urlencode({'from':'2026-09-24','to':'2026-09-26'})
           with urllib.request.urlopen(url,timeout=30) as r:
               payload=json.loads(r.read().decode())
           rows=payload if isinstance(payload,list) else payload.get('items') or payload.get('classes') or []
 
-          site=[]
-          for row in rows:
+          def local_dt(row):
               raw=str(row.get('starts_at') or row.get('start') or row.get('startsAt') or row.get('start_time') or '')
-              if not raw:
-                  continue
+              if not raw: return None
               dt=datetime.fromisoformat(raw.replace('Z','+00:00'))
               if dt.tzinfo is None:
                   dt=dt.replace(tzinfo=ZoneInfo("UTC"))
-              dt=dt.astimezone(berlin)
-              b=json.dumps(row,ensure_ascii=False).casefold()
-              if dt.strftime("%Y-%m-%d %H:%M")=="2026-09-25 09:00" and "bornheim" in b:
-                  site.append(row)
-          print("SITE_ROWS", json.dumps(site,ensure_ascii=False,sort_keys=True))
+              return dt.astimezone(berlin)
 
-          client=mb.WriteClient.from_env()
-          p=client.get_classes(
-              start_date_time="2026-09-25T00:00:00+02:00",
-              end_date_time="2026-09-26T00:00:00+02:00",
-              limit=300,offset=0,public_only=True
-          )
-          remote=[]
-          for row in mb._extract_list(p,("Classes","classes","Items")):
-              if not isinstance(row,dict):
+          results=[]
+          for date_s,time_s,studio_key,title_key,coach_key,exp_reserved,exp_free in expected:
+              matches=[]
+              for row in rows:
+                  dt=local_dt(row)
+                  if not dt or dt.strftime("%Y-%m-%d")!=date_s or dt.strftime("%H:%M")!=time_s:
+                      continue
+                  blob=json.dumps(row,ensure_ascii=False).casefold()
+                  if studio_key in blob and title_key in blob and coach_key in blob:
+                      matches.append(row)
+              picked=matches[0] if len(matches)==1 else None
+              if not picked:
+                  results.append({"date":date_s,"time":time_s,"studio":studio_key,"coach":coach_key,"match":False,"candidate_count":len(matches)})
                   continue
-              loc=str((row.get("Location") or {}).get("Name") or "").casefold()
-              start_s=str(row.get("StartDateTime") or "")
-              if "bornheim" in loc and start_s.startswith("2026-09-25T09:00"):
-                  desc=row.get("ClassDescription") or {}
-                  staff=row.get("Staff") or {}
-                  remote.append({
-                      "id":row.get("Id") or row.get("ID") or row.get("ClassId"),
-                      "name":desc.get("Name") if isinstance(desc,dict) else row.get("Name"),
-                      "staff":staff.get("DisplayName") or staff.get("Name"),
-                      "start":start_s,
-                      "capacity":row.get("MaxCapacity"),
-                      "booked":row.get("TotalBooked"),
-                      "web_capacity":row.get("WebCapacity"),
-                      "is_available":row.get("IsAvailable"),
-                  })
-          print("MINDBODY_ROWS", json.dumps(remote,ensure_ascii=False,sort_keys=True))
+              cap=int(picked.get('capacity') or 0)
+              spots=int(picked.get('spots') if picked.get('spots') is not None else 0)
+              reserved=int(picked.get('reserved') if picked.get('reserved') is not None else max(0,cap-spots))
+              results.append({
+                  "date":date_s,"time":time_s,"studio":studio_key,"coach":coach_key,
+                  "site_reserved":reserved,"site_free":spots,"expected_reserved":exp_reserved,"expected_free":exp_free,
+                  "mindbody_class_id":picked.get('mindbody_class_id'),
+                  "match":reserved==exp_reserved and spots==exp_free,
+              })
+          print("FRESH_SAMPLE_COMPARE",json.dumps({
+              "checked":len(results),
+              "matched":sum(1 for x in results if x.get("match")),
+              "mismatched":[x for x in results if not x.get("match")],
+              "rows":results,
+          },ensure_ascii=False,sort_keys=True))
+
+          import os
+          import mindbody_webhooks as wh
+          sid=(os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()
+          row=next((x for x in wh._subscriptions() if str(x.get("subscriptionId") or x.get("SubscriptionId") or "")==sid),{})
+          print("FRESH_WEBHOOK",json.dumps({
+              "configured":bool(sid and (os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip()),
+              "status":row.get("status") or row.get("Status"),
+              "url":row.get("webhookUrl") or row.get("WebhookUrl"),
+          },sort_keys=True))
           PY
 
           echo '--- api health after webhook diagnostics ---'
