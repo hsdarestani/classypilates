@@ -28,55 +28,48 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect exact screenshot class candidates ---'
+          echo '--- inspect public site schedule for screenshot classes ---'
           docker compose exec -T api python - <<'PY'
-          import json
-          import mindbody_sync as mb
-
-          client = mb.WriteClient.from_env()
-          payload = client.get_classes(
-              start_date_time="2026-09-23T00:00:00",
-              end_date_time="2026-09-24T00:00:00",
-              limit=300,
-              offset=0,
-          )
-          rows = [x for x in mb._extract_list(payload, ("Classes","classes","Items")) if isinstance(x, dict)]
-
-          checks = [
-              ("mid-0800","mid","elena","2026-09-23T08:00"),
-              ("mid-1200","mid","jane","2026-09-23T12:00"),
-              ("mid-1800","mid","jane","2026-09-23T18:00"),
-              ("mid-1900","mid","jane","2026-09-23T19:00"),
-              ("mid-2000","mid","jane","2026-09-23T20:00"),
-              ("bornheim-0700","bornheim","andrea","2026-09-23T07:00"),
-              ("bornheim-0800","bornheim","andrea","2026-09-23T08:00"),
-              ("bornheim-1700","bornheim","lana","2026-09-23T17:00"),
-              ("bornheim-1800","bornheim","lana","2026-09-23T18:00"),
-              ("bornheim-1900","bornheim","lana","2026-09-23T19:00"),
+          import json, urllib.parse, urllib.request
+          url='http://127.0.0.1:8000/api/schedule?'+urllib.parse.urlencode({
+              'from':'2026-09-23',
+              'to':'2026-09-24',
+          })
+          with urllib.request.urlopen(url, timeout=30) as r:
+              payload=json.loads(r.read().decode())
+          rows=payload if isinstance(payload,list) else payload.get('items') or payload.get('classes') or []
+          wanted=[
+              ('mid-0800','mid','powerformer','08:00'),
+              ('mid-1200','mid','powerformer','12:00'),
+              ('mid-1800','mid','powerformer','18:00'),
+              ('mid-1900','mid','powerformer','19:00'),
+              ('mid-2000','mid','powerformer','20:00'),
+              ('bornheim-0700','bornheim','total body level intense','07:00'),
+              ('bornheim-0800','bornheim','total body level intense','08:00'),
+              ('bornheim-1700','bornheim','total body level intense','17:00'),
+              ('bornheim-1800','bornheim','total body level intense','18:00'),
+              ('bornheim-1900','bornheim','butt & abs','19:00'),
           ]
-
-          for label, studio_key, coach_key, start_key in checks:
-              matches=[]
+          for label, studio, name_key, time_key in wanted:
+              ms=[]
               for row in rows:
-                  loc = str((row.get("Location") or {}).get("Name") or "").casefold()
-                  staff_obj=row.get("Staff") or {}
-                  staff=str(staff_obj.get("DisplayName") or staff_obj.get("Name") or "").casefold()
-                  start=str(row.get("StartDateTime") or row.get("startDateTime") or "")
-                  if studio_key in loc and coach_key in staff and start.startswith(start_key):
-                      desc=row.get("ClassDescription") or row.get("classDescription") or {}
-                      name=(desc.get("Name") if isinstance(desc,dict) else None) or row.get("Name") or row.get("name")
-                      matches.append({
-                          "id":row.get("Id") or row.get("ID") or row.get("ClassId"),
-                          "name":name,
-                          "start":start,
-                          "location":(row.get("Location") or {}).get("Name"),
-                          "staff":(row.get("Staff") or {}).get("DisplayName"),
-                          "capacity":row.get("MaxCapacity"),
-                          "booked":row.get("TotalBooked"),
-                          "web_capacity":row.get("WebCapacity"),
-                          "is_available":row.get("IsAvailable"),
+                  blob=json.dumps(row,ensure_ascii=False).casefold()
+                  start=str(row.get('starts_at') or row.get('start') or row.get('start_time') or row.get('startsAt') or '')
+                  if studio in blob and name_key in blob and (time_key in start or time_key in blob):
+                      ms.append({
+                          'id':row.get('id'),
+                          'mindbody_class_id':row.get('mindbody_class_id'),
+                          'title':row.get('title') or row.get('name'),
+                          'coach':row.get('coach') or row.get('coach_name'),
+                          'location':row.get('location') or row.get('studio'),
+                          'starts_at':start,
+                          'capacity':row.get('capacity'),
+                          'reserved':row.get('reserved'),
+                          'spots':row.get('spots'),
+                          'spots_left':row.get('spots_left'),
+                          'available':row.get('available'),
                       })
-              print(label, json.dumps(matches, ensure_ascii=False, sort_keys=True))
+              print(label, json.dumps(ms,ensure_ascii=False,sort_keys=True))
           PY
 
           echo '--- api health after targeted reconcile ---'
