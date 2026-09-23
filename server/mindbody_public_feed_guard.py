@@ -51,4 +51,29 @@ assert 'target_reserved - int(local_reserved_after)' not in roster_section
 assert 'timedelta(minutes=5)' in roster_section
 assert 'booking.mindbody_synced_at = now\n                continue' not in roster_section
 
+# Worker/deadlock invariants: recurring capacity sync must stay lightweight, DDL
+# initialization must be process-cached and bounded, and webhook lock waits must
+# be retryable rather than pinning an event in "processing" forever.
+assert "_sync_state_ready = False" in sync
+ensure_start = sync.index("def _ensure_sync_state")
+ensure_end = sync.index("\ndef _state_row", ensure_start)
+ensure_section = sync[ensure_start:ensure_end]
+assert "if _sync_state_ready:" in ensure_section
+assert "SET LOCAL lock_timeout = '5s'" in ensure_section
+
+loop_start = sync.index("def _loop()")
+loop_end = sync.index("\n\n@core.app.on_event", loop_start)
+loop_section = sync[loop_start:loop_end]
+assert "sync_schedule_availability_fast()" in loop_section
+assert "sync_staff_and_assignments()" not in loop_section
+assert "RECONCILE_LOCK.acquire(timeout=20)" in loop_section
+
+webhooks = Path("server/mindbody_webhooks.py").read_text(encoding="utf-8")
+process_start = webhooks.index("def _process_batch")
+process_end = webhooks.index("\ndef _cleanup_old_events", process_start)
+process_section = webhooks[process_start:process_end]
+assert "RECONCILE_LOCK.acquire(timeout=15)" in process_section
+assert "Mindbody reconciliation busy; webhook will retry" in process_section
+assert "sync_schedule_availability_fast()" in process_section
+
 print("Mindbody public feed regression guard: OK")

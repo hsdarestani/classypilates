@@ -24,6 +24,8 @@ SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
 _worker_started = False
 _worker_guard = threading.Lock()
+_sync_state_ready = False
+_sync_state_guard = threading.Lock()
 
 # Serialize roster/availability reconciliation across the polling mirror, manual
 # syncs, and webhook-triggered targeted refreshes. Database uniqueness remains the
@@ -43,36 +45,53 @@ def capability_status() -> dict[str, Any]:
 
 
 def _ensure_sync_state() -> None:
-    timestamp_type = "TIMESTAMP" if core.engine.dialect.name == "sqlite" else "TIMESTAMP WITH TIME ZONE"
-    with core.engine.begin() as connection:
-        connection.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS mindbody_sync_state (
-                entity_type VARCHAR(32) NOT NULL,
-                entity_id VARCHAR(100) NOT NULL,
-                remote_id VARCHAR(100),
-                local_changed_at {timestamp_type},
-                remote_changed_at {timestamp_type},
-                local_hash TEXT,
-                remote_hash TEXT,
-                last_synced_at {timestamp_type},
-                sync_error TEXT,
-                PRIMARY KEY (entity_type, entity_id)
-            )
-        """))
-        duplicate_coach_remote = connection.execute(text("""
-            SELECT 1
-            FROM mindbody_sync_state
-            WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
-            GROUP BY remote_id
-            HAVING count(*) > 1
-            LIMIT 1
-        """)).first()
-        if not duplicate_coach_remote:
-            connection.execute(text("""
-                CREATE UNIQUE INDEX IF NOT EXISTS ux_mindbody_sync_coach_remote_id
-                ON mindbody_sync_state (remote_id)
-                WHERE entity_type='coach' AND remote_id IS NOT NULL
+    """Create sync-state storage once per process, never in the hot sync path.
+
+    PostgreSQL DDL can wait on unrelated transactions even with IF NOT EXISTS.
+    The previous implementation ran this DDL every three minutes while holding the
+    global Mindbody reconciliation lock, which could freeze both polling and webhook
+    workers indefinitely. Cache successful initialization and enforce a short DB
+    lock timeout so a transient database lock becomes retryable instead.
+    """
+    global _sync_state_ready
+    if _sync_state_ready:
+        return
+    with _sync_state_guard:
+        if _sync_state_ready:
+            return
+        timestamp_type = "TIMESTAMP" if core.engine.dialect.name == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        with core.engine.begin() as connection:
+            if core.engine.dialect.name == "postgresql":
+                connection.execute(text("SET LOCAL lock_timeout = '5s'"))
+            connection.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS mindbody_sync_state (
+                    entity_type VARCHAR(32) NOT NULL,
+                    entity_id VARCHAR(100) NOT NULL,
+                    remote_id VARCHAR(100),
+                    local_changed_at {timestamp_type},
+                    remote_changed_at {timestamp_type},
+                    local_hash TEXT,
+                    remote_hash TEXT,
+                    last_synced_at {timestamp_type},
+                    sync_error TEXT,
+                    PRIMARY KEY (entity_type, entity_id)
+                )
             """))
+            duplicate_coach_remote = connection.execute(text("""
+                SELECT 1
+                FROM mindbody_sync_state
+                WHERE entity_type='coach' AND remote_id IS NOT NULL AND remote_id <> ''
+                GROUP BY remote_id
+                HAVING count(*) > 1
+                LIMIT 1
+            """)).first()
+            if not duplicate_coach_remote:
+                connection.execute(text("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_mindbody_sync_coach_remote_id
+                    ON mindbody_sync_state (remote_id)
+                    WHERE entity_type='coach' AND remote_id IS NOT NULL
+                """))
+        _sync_state_ready = True
 
 
 def _state_row(db: Session, entity_type: str, entity_id: int | str):
@@ -2778,13 +2797,23 @@ def _loop():
     if INITIAL_SYNC_DELAY:
         time.sleep(INITIAL_SYNC_DELAY)
     while True:
+        acquired = False
         try:
             if capability_status()["configured"]:
-                with RECONCILE_LOCK:
-                    sync_from_mindbody()
+                acquired = RECONCILE_LOCK.acquire(timeout=20)
+                if not acquired:
+                    print("Mindbody mirror cycle skipped: reconciliation lock busy", flush=True)
+                else:
+                    # The frequent mirror owns public schedule/capacity freshness.
+                    # Staff/profile maintenance is intentionally kept off this
+                    # critical three-minute path.
+                    sync_schedule_availability_fast()
                     retry_pending()
         except Exception as exc:
             print(f"Mindbody mirror cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
+        finally:
+            if acquired:
+                RECONCILE_LOCK.release()
         time.sleep(SYNC_INTERVAL)
 
 
@@ -2796,6 +2825,18 @@ def start_worker():
     with _worker_guard:
         if _worker_started:
             return
+
+        # Initialize the sync-state schema once before any recurring worker can
+        # enter it. Failure is bounded by the PostgreSQL lock timeout and can be
+        # retried later by the slower maintenance path.
+        try:
+            _ensure_sync_state()
+        except Exception as exc:
+            print(
+                f"Mindbody sync-state initialization deferred: "
+                f"{type(exc).__name__}: {str(exc)[:300]}",
+                flush=True,
+            )
 
         # Prime class metadata and public availability synchronously before FastAPI
         # announces startup complete. This removes the historical 180-second stale

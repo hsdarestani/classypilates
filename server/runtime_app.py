@@ -531,30 +531,41 @@ ROSTER_WINDOW_DAYS = max(1, min(14, int(os.getenv("MINDBODY_ROSTER_WINDOW_DAYS",
 
 
 def _roster_loop() -> None:
-    # Reconcile today's/next-24h rosters immediately after startup without blocking
-    # API readiness. This is the high-value window for campaign traffic and exact
-    # spot counts. Later sweeps cover the wider configured horizon hourly.
+    # Keep the hourly safety sweep near-term so it cannot monopolize the global
+    # reconciliation lock. Webhooks own real-time identity updates; a wider roster
+    # + staff maintenance pass runs once at startup and then daily.
     if ROSTER_INITIAL_DELAY:
         time.sleep(ROSTER_INITIAL_DELAY)
-    first_pass = True
+    cycle = 0
     while True:
+        acquired = False
         try:
-            days = 1 if first_pass else ROSTER_WINDOW_DAYS
-            with mindbody_sync.RECONCILE_LOCK:
+            full_maintenance = cycle == 0 or cycle % 24 == 0
+            days = ROSTER_WINDOW_DAYS if full_maintenance else 1
+            acquired = mindbody_sync.RECONCILE_LOCK.acquire(timeout=30)
+            if not acquired:
+                print("Mindbody roster sweep skipped: reconciliation lock busy", flush=True)
+            else:
                 result = mindbody_sync.sync_rosters_window(days=days)
                 lifecycle = mindbody_sync.sync_cancelled_classes_window(days=45)
-            print(
-                f"Mindbody roster sweep: days={days} classes={result.get('classes_checked', 0)} "
-                f"visits={result.get('visits', 0)} errors={result.get('errors', 0)} "
-                f"cancelled_seen={lifecycle.get('cancelled_seen', 0)} "
-                f"cancelled_updated={lifecycle.get('cancelled_local_updated', 0)}",
-                flush=True,
-            )
-            if result.get("errors"):
-                print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
+                staff = mindbody_sync.sync_staff_and_assignments() if full_maintenance else {}
+                print(
+                    f"Mindbody roster sweep: days={days} classes={result.get('classes_checked', 0)} "
+                    f"visits={result.get('visits', 0)} errors={result.get('errors', 0)} "
+                    f"cancelled_seen={lifecycle.get('cancelled_seen', 0)} "
+                    f"cancelled_updated={lifecycle.get('cancelled_local_updated', 0)} "
+                    f"staff_maintenance={bool(full_maintenance)} "
+                    f"staff_errors={staff.get('staff_errors', 0)}",
+                    flush=True,
+                )
+                if result.get("errors"):
+                    print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
         except Exception as exc:
             print(f"Mindbody roster cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
-        first_pass = False
+        finally:
+            if acquired:
+                mindbody_sync.RECONCILE_LOCK.release()
+        cycle += 1
         time.sleep(ROSTER_SYNC_INTERVAL)
 
 
