@@ -55,6 +55,14 @@ jobs:
           UPLOAD_DIR: /tmp/classy-public-feed-uploads
         run: python server/mindbody_public_feed_guard.py
 
+      - name: Production domain guard
+        run: |
+          grep -q 'new.classypilates.de' .github/workflows/deploy-production.yml
+          if grep -Eq 'https://classy\.smarbiz\.sbs|server_name classy\.smarbiz\.sbs|letsencrypt/live/classy\.smarbiz\.sbs|certbot .*classy\.smarbiz\.sbs' .github/workflows/deploy-production.yml; then
+            echo "Legacy smarbiz domain must not be used as a production endpoint" >&2
+            exit 1
+          fi
+
       - name: Reject duplicate FastAPI routes
         run: |
           python - <<'PY'
