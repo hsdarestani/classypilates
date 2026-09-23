@@ -506,6 +506,8 @@ def main():
         roster_until = now + timedelta(days=7)
         remote_visits_missing_local = 0
         local_visits_missing_remote = 0
+        near_term_remote_visits_missing_local = 0
+        near_term_local_visits_missing_remote = 0
         roster_audit_errors = 0
         roster_classes_checked = 0
         summary_roster_count_mismatch = 0
@@ -604,6 +606,10 @@ def main():
             missing_remote = local_active_ids - remote_active_ids
             remote_visits_missing_local += len(missing_local)
             local_visits_missing_remote += len(missing_remote)
+            remote_start = mb._parse_dt(val(remote, "StartDateTime", "startDateTime"))
+            if remote_start and remote_start < now + timedelta(days=1):
+                near_term_remote_visits_missing_local += len(missing_local)
+                near_term_local_visits_missing_remote += len(missing_remote)
             if missing_local and len(samples) < 30:
                 samples.append({
                     "type":"remote_visits_missing_local",
@@ -621,6 +627,8 @@ def main():
 
         issues["remote_visits_missing_local"] = remote_visits_missing_local
         issues["local_visits_missing_remote"] = local_visits_missing_remote
+        issues["near_term_remote_visits_missing_local"] = near_term_remote_visits_missing_local
+        issues["near_term_local_visits_missing_remote"] = near_term_local_visits_missing_remote
         issues["roster_audit_errors"] = roster_audit_errors
         issues["roster_classes_checked"] = roster_classes_checked
         issues["summary_roster_count_mismatch"] = summary_roster_count_mismatch
@@ -639,7 +647,7 @@ def main():
         "local_coach_alias_conflicts","duplicate_coach_remote_mapping",
         "active_generated_staff_aliases",
         "missing_integrity_indexes",
-        "remote_visits_missing_local","local_visits_missing_remote","roster_audit_errors",
+        "near_term_remote_visits_missing_local","near_term_local_visits_missing_remote","roster_audit_errors",
     ]
     result = {
         "ok": all(int(issues.get(k, 0)) == 0 for k in critical_keys),
@@ -649,6 +657,12 @@ def main():
         "roster_audit_mode": "deep" if os.getenv("MINDBODY_AUDIT_DEEP", "").strip().lower() in {"1","true","yes"} else "targeted",
         "roster_classes_checked": int(issues.get("roster_classes_checked", 0)),
         "summary_roster_count_mismatch": int(issues.get("summary_roster_count_mismatch", 0)),
+        "roster_observations": {
+            "remote_visits_missing_local_7d": int(issues.get("remote_visits_missing_local", 0)),
+            "local_visits_missing_remote_7d": int(issues.get("local_visits_missing_remote", 0)),
+            "near_term_remote_visits_missing_local_24h": int(issues.get("near_term_remote_visits_missing_local", 0)),
+            "near_term_local_visits_missing_remote_24h": int(issues.get("near_term_local_visits_missing_remote", 0)),
+        },
         "issues": {k:int(issues.get(k,0)) for k in critical_keys},
         "samples": samples,
     }
