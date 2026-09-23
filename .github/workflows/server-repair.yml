@@ -47,7 +47,7 @@ jobs:
               ("2026-09-25","09:00","bahnhofsviertel","total body","luca",1,9),
           ]
 
-          url='http://127.0.0.1:8787/api/schedule?'+urllib.parse.urlencode({
+          url='http://127.0.0.1:8000/api/schedule?'+urllib.parse.urlencode({
               'from':'2026-09-24',
               'to':'2026-09-26',
           })
