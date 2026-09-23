@@ -48,5 +48,7 @@ assert 'klass.imported_bookings = 0' in roster_section
 assert '_sync_class_availability(' in roster_section
 assert '_find_remote_class(client, klass)' in roster_section
 assert 'target_reserved - int(local_reserved_after)' not in roster_section
+assert 'timedelta(minutes=5)' in roster_section
+assert 'booking.mindbody_synced_at = now\n                continue' not in roster_section
 
 print("Mindbody public feed regression guard: OK")

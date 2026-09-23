@@ -1936,13 +1936,17 @@ def _reconcile_class_roster(
             select(core.Booking).where(core.Booking.mindbody_visit_id == visit_id)
         )
         if booking:
-            # Do not resurrect a cancellation that Classy already confirmed. An
-            # upstream roster can briefly remain stale after remove-from-class.
+            # A confirmed remove-from-class can remain visible in ClassVisits for a
+            # short propagation window. Preserve the local cancellation briefly,
+            # but never ignore an active provider Visit forever. If Mindbody still
+            # reports the exact Visit ID after the grace period, provider state wins
+            # again so occupancy and identity cannot drift permanently.
             if booking.status == "cancelled" and booking.mindbody_sync_status in {
                 "cancelled", "cancelled_remote"
             }:
-                booking.mindbody_synced_at = now
-                continue
+                cancelled_sync_at = core.as_utc(booking.mindbody_synced_at) if booking.mindbody_synced_at else None
+                if cancelled_sync_at and now - cancelled_sync_at < timedelta(minutes=5):
+                    continue
             booking.status = "reserved"
             booking.mindbody_sync_status = "synced"
             booking.mindbody_sync_error = ""
