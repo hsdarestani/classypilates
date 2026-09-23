@@ -28,79 +28,52 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- reconcile screenshot classes only ---'
+          echo '--- inspect Mid/Jane 18:00 Mindbody state ---'
           docker compose exec -T api python - <<'PY'
           import json
-          from sqlalchemy import func, select
-          import main as core
           import mindbody_sync as mb
 
           client = mb.WriteClient.from_env()
+          rid = "19859"
           payload = client.get_classes(
-              start_date_time="2026-09-23T00:00:00",
-              end_date_time="2026-09-24T00:00:00",
-              limit=200,
+              start_date_time="2026-09-23T17:30:00",
+              end_date_time="2026-09-23T18:30:00",
+              limit=100,
               offset=0,
           )
           rows = [x for x in mb._extract_list(payload, ("Classes","classes","Items")) if isinstance(x, dict)]
+          row = next(x for x in rows if str(x.get("Id") or x.get("ID") or x.get("ClassId") or "") == rid)
+          print("CLASS", json.dumps({
+              k: row.get(k) for k in (
+                  "Id","StartDateTime","MaxCapacity","WebCapacity","TotalBooked",
+                  "TotalWebBooked","TotalWaitlisted","IsAvailable","IsCanceled"
+              )
+          }, ensure_ascii=False, sort_keys=True))
 
-          wanted = [
-              ("bornheim-andrea-0700", "bornheim", "andrea", "2026-09-23T07:00"),
-              ("mid-jane-1800", "mid", "jane", "2026-09-23T18:00"),
-          ]
-          found = {}
-          for label, studio_key, coach_key, start_key in wanted:
-              for row in rows:
-                  loc = str((row.get("Location") or {}).get("Name") or "").casefold()
-                  staff = str((row.get("Staff") or {}).get("DisplayName") or (row.get("Staff") or {}).get("Name") or "").casefold()
-                  start = str(row.get("StartDateTime") or row.get("startDateTime") or "")
-                  if studio_key in loc and coach_key in staff and start.startswith(start_key):
-                      rid = str(row.get("Id") or row.get("ID") or row.get("ClassId") or "")
-                      visits = [
-                          v for v in mb._extract_class_visits(client.get_class_visits(rid))
-                          if not bool(mb._value(v, "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled", default=False))
-                      ]
-                      print(json.dumps({
-                          "label": label,
-                          "remote_id": rid,
-                          "start": start,
-                          "location": (row.get("Location") or {}).get("Name"),
-                          "staff": (row.get("Staff") or {}).get("DisplayName"),
-                          "capacity": row.get("MaxCapacity"),
-                          "summary_total_booked": row.get("TotalBooked"),
-                          "roster_active_visits": len(visits),
-                      }, ensure_ascii=False, sort_keys=True))
-                      result = mb.reconcile_remote_class(
-                          rid,
-                          start_hint=start,
-                          reconcile_roster=True,
-                          reconcile_waitlist=False,
-                          sync_coach=False,
-                      )
-                      with core.SessionLocal() as db:
-                          klass = db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id == rid))
-                          reserved = db.scalar(select(func.count(core.Booking.id)).where(
-                              core.Booking.class_id == klass.id,
-                              core.Booking.status == "reserved",
-                          )) or 0
-                          spots = max(0, int(klass.capacity or 0) - int(klass.imported_bookings or 0) - int(reserved))
-                          print(json.dumps({
-                              "label": label,
-                              "local_capacity": int(klass.capacity or 0),
-                              "local_reserved": int(reserved),
-                              "local_imported": int(klass.imported_bookings or 0),
-                              "local_spots": spots,
-                              "reconcile": result,
-                          }, ensure_ascii=False, sort_keys=True))
-                          found[label] = spots
-                      break
+          vp = client.get_class_visits(rid)
+          visits = mb._extract_class_visits(vp)
+          print("VISIT_COUNT_ALL", len(visits))
+          state_counts = {}
+          for v in visits:
+              flags = {
+                  "Cancelled": v.get("Cancelled"),
+                  "IsCancelled": v.get("IsCancelled"),
+                  "LateCancelled": v.get("LateCancelled"),
+                  "EarlyCancelled": v.get("EarlyCancelled"),
+                  "SignedIn": v.get("SignedIn"),
+                  "MakeUp": v.get("MakeUp"),
+              }
+              key = json.dumps(flags, sort_keys=True)
+              state_counts[key] = state_counts.get(key, 0) + 1
+          print("VISIT_STATES", json.dumps(state_counts, ensure_ascii=False, sort_keys=True))
 
-          expected = {"bornheim-andrea-0700": 0, "mid-jane-1800": 2}
-          missing = [k for k in expected if k not in found]
-          wrong = {k: {"expected": v, "actual": found.get(k)} for k, v in expected.items() if k in found and found[k] != v}
-          print(json.dumps({"found": found, "missing": missing, "wrong": wrong}, ensure_ascii=False, sort_keys=True))
-          if missing or wrong:
-              raise SystemExit(3)
+          try:
+              wait = client.get_waitlist_entries(class_id=rid)
+          except Exception as exc:
+              print("WAITLIST_ERROR", type(exc).__name__, str(exc)[:300])
+              wait = []
+          print("WAITLIST_COUNT", len(wait))
+          print("WAITLIST_SAMPLE", json.dumps(wait[:5], ensure_ascii=False)[:3000])
           PY
 
           echo '--- api health after targeted reconcile ---'
