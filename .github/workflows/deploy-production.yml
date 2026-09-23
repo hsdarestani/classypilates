@@ -253,12 +253,12 @@ jobs:
               }
           NGINX_ROUTES
 
-            if [ -f /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem ] && [ -f /etc/letsencrypt/live/classy.smarbiz.sbs/privkey.pem ]; then
-              cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX_TLS'
+            if [ -f /etc/letsencrypt/live/new.classypilates.de/fullchain.pem ] && [ -f /etc/letsencrypt/live/new.classypilates.de/privkey.pem ]; then
+              cat > /etc/nginx/sites-available/new.classypilates.de <<'NGINX_TLS'
           server {
               listen 80;
               listen [::]:80;
-              server_name classy.smarbiz.sbs;
+              server_name new.classypilates.de;
               return 301 https://$host$request_uri;
           }
 
@@ -266,41 +266,34 @@ jobs:
               listen 443 ssl;
               listen [::]:443 ssl;
               http2 on;
-              server_name classy.smarbiz.sbs;
-              ssl_certificate /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem;
-              ssl_certificate_key /etc/letsencrypt/live/classy.smarbiz.sbs/privkey.pem;
+              server_name new.classypilates.de;
+              ssl_certificate /etc/letsencrypt/live/new.classypilates.de/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/new.classypilates.de/privkey.pem;
               ssl_protocols TLSv1.2 TLSv1.3;
               include /etc/nginx/snippets/classy-routes.conf;
           }
           NGINX_TLS
             else
-              cat > /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX_HTTP'
-          server {
-              listen 80;
-              listen [::]:80;
-              server_name classy.smarbiz.sbs;
-              include /etc/nginx/snippets/classy-routes.conf;
-          }
-          NGINX_HTTP
-            fi
-            cat >> /etc/nginx/sites-available/classy.smarbiz.sbs <<'NGINX_PREVIEW'
+              cat > /etc/nginx/sites-available/new.classypilates.de <<'NGINX_HTTP'
           server {
               listen 80;
               listen [::]:80;
               server_name new.classypilates.de;
               include /etc/nginx/snippets/classy-routes.conf;
           }
-
-          # Prepared in advance for the final DNS cutover. HTTPS is enabled
-          # only after classypilates.de and www resolve to this server.
+          NGINX_HTTP
+            fi
+            cat >> /etc/nginx/sites-available/new.classypilates.de <<'NGINX_APEX_PREVIEW'
+          # Prepared in advance for the future apex-domain cutover.
           server {
               listen 80;
               listen [::]:80;
               server_name classypilates.de www.classypilates.de;
               include /etc/nginx/snippets/classy-routes.conf;
           }
-          NGINX_PREVIEW
-            ln -sfn /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs
+          NGINX_APEX_PREVIEW
+            rm -f /etc/nginx/sites-enabled/classy.smarbiz.sbs
+            ln -sfn /etc/nginx/sites-available/new.classypilates.de /etc/nginx/sites-enabled/new.classypilates.de
             nginx -t
             systemctl reload nginx || nginx -s reload
           }
@@ -308,10 +301,10 @@ jobs:
           if command -v nginx >/dev/null 2>&1; then
             configure_nginx
           elif command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
-            if ! grep -q 'classy.smarbiz.sbs' /etc/caddy/Caddyfile; then
+            if ! grep -q 'new.classypilates.de' /etc/caddy/Caddyfile; then
               cat >> /etc/caddy/Caddyfile <<'CADDY'
 
-          classy.smarbiz.sbs {
+          new.classypilates.de {
               encode zstd gzip
               root * /opt/classypilates/public
               handle /api/* {
@@ -333,19 +326,19 @@ jobs:
           fi
 
           if command -v certbot >/dev/null 2>&1 && command -v nginx >/dev/null 2>&1; then
-            if [ ! -f /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem ] || [ ! -f /etc/letsencrypt/live/classy.smarbiz.sbs/privkey.pem ]; then
-              certbot --nginx -d classy.smarbiz.sbs --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+            if [ ! -f /etc/letsencrypt/live/new.classypilates.de/fullchain.pem ] || [ ! -f /etc/letsencrypt/live/new.classypilates.de/privkey.pem ]; then
+              certbot --nginx -d new.classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
               configure_nginx
             fi
           fi
 
           if command -v nginx >/dev/null 2>&1; then
-            if [ -f /etc/letsencrypt/live/classy.smarbiz.sbs/fullchain.pem ]; then
-              VERIFY_URL="https://classy.smarbiz.sbs"
-              VERIFY_RESOLVE=(--resolve classy.smarbiz.sbs:443:127.0.0.1)
+            if [ -f /etc/letsencrypt/live/new.classypilates.de/fullchain.pem ]; then
+              VERIFY_URL="https://new.classypilates.de"
+              VERIFY_RESOLVE=(--resolve new.classypilates.de:443:127.0.0.1)
             else
               VERIFY_URL="http://127.0.0.1"
-              VERIFY_RESOLVE=(-H "Host: classy.smarbiz.sbs")
+              VERIFY_RESOLVE=(-H "Host: new.classypilates.de")
             fi
             curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login" | grep -q 'ONE LOGIN'
             curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account" | grep -q 'MY CLASSY'
@@ -359,7 +352,7 @@ jobs:
           # reachable. The subscription is created in PendingActivation, its
           # one-time signature key is persisted to .env, the API is restarted with
           # that key, and only then is the subscription activated.
-          WEBHOOK_URL='https://classy.smarbiz.sbs/api/integrations/mindbody/webhook'
+          WEBHOOK_URL='https://new.classypilates.de/api/integrations/mindbody/webhook'
           if WEBHOOK_PREPARE="$(docker compose exec -T api python mindbody_webhooks.py prepare --webhook-url "$WEBHOOK_URL" 2>/tmp/classy-webhook-prepare.err)"; then
             WEBHOOK_KEY="$(printf '%s' "$WEBHOOK_PREPARE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("signature_key",""))')"
             WEBHOOK_SUBSCRIPTION_ID="$(printf '%s' "$WEBHOOK_PREPARE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("subscription_id",""))')"
@@ -405,9 +398,9 @@ jobs:
         id: public_verify
         run: |
           sleep 5
-          curl -fsSIL --max-time 20 https://classy.smarbiz.sbs/ >/dev/null
-          curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/health | grep -q '"ok":true'
-          curl -fsSL --max-time 20 https://classy.smarbiz.sbs/api/checkout/create | grep -q '"provider":"sumup"'
+          curl -fsSIL --max-time 20 https://new.classypilates.de/ >/dev/null
+          curl -fsSL --max-time 20 https://new.classypilates.de/api/health | grep -q '"ok":true'
+          curl -fsSL --max-time 20 https://new.classypilates.de/api/checkout/create | grep -q '"provider":"sumup"'
 
       - name: Verify production sync integrity
         env:
