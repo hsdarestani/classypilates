@@ -453,6 +453,7 @@ def _find_remote_class(client: WriteClient, klass: core.ClassSession) -> dict[st
         end_date_time=(starts + timedelta(hours=2)).isoformat(),
         limit=100,
         offset=0,
+        public_only=True,
     )
     target = str(klass.mindbody_class_id)
     return next(
@@ -2204,6 +2205,7 @@ def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
             end_date_time=end.isoformat(),
             limit=200,
             offset=offset,
+            public_only=True,
         )
         batch = [
             x for x in _extract_list(payload, ("Classes", "classes", "Items"))
@@ -2322,6 +2324,7 @@ def sync_schedule_availability_fast() -> dict[str, int]:
             end_date_time=end.isoformat(),
             limit=200,
             offset=offset,
+            public_only=True,
         )
         batch = [
             row for row in _extract_list(payload, ("Classes", "classes", "Items"))
@@ -2432,6 +2435,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
             end_date_time=end.isoformat(),
             limit=200,
             offset=offset,
+            public_only=True,
         )
         batch = [x for x in _extract_list(payload, ("Classes", "classes", "Items")) if isinstance(x, dict)]
         classes.extend(batch)
