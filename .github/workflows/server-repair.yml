@@ -28,43 +28,77 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect Bornheim 08 local row ---'
+          echo '--- compare authenticated vs public GetClasses ---'
           docker compose exec -T api python - <<'PY'
-          import json
-          from sqlalchemy import select
-          import main as core
+          import json, urllib.parse, urllib.request
+          import mindbody_sync as mb
 
-          with core.SessionLocal() as db:
-              row=db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id=="21502"))
-              if row:
-                  print("ROW", json.dumps({
-                      "id":row.id,
-                      "mindbody_class_id":row.mindbody_class_id,
-                      "title":row.title,
-                      "studio_id":row.studio_id,
-                      "starts_at":str(row.starts_at),
-                      "status":row.status,
-                      "capacity":row.capacity,
-                      "imported_bookings":row.imported_bookings,
-                      "source_bookings_total":row.source_bookings_total,
-                      "coach":row.coach.display_name if row.coach else None,
-                  }, ensure_ascii=False, sort_keys=True))
-              else:
-                  print("ROW null")
+          client=mb.WriteClient.from_env()
+          params={
+              "request.startDateTime":"2026-09-23T00:00:00",
+              "request.endDateTime":"2026-09-24T00:00:00",
+              "request.hideCanceledClasses":False,
+              "request.limit":300,
+              "request.offset":0,
+          }
+          auth=client.get_classes(
+              start_date_time=params["request.startDateTime"],
+              end_date_time=params["request.endDateTime"],
+              limit=300,offset=0,
+          )
+          query=urllib.parse.urlencode(params)
+          req=urllib.request.Request(
+              f"{client.config.api_url}/class/classes?{query}",
+              headers={
+                  "API-Key":client.config.api_key,
+                  "SiteId":client.config.site_id,
+                  "Accept":"application/json",
+                  "User-Agent":"ClassyPilates/2.0",
+              },
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+              public=json.loads(r.read().decode() or "{}")
 
-              rows=db.scalars(select(core.ClassSession).where(
-                  core.ClassSession.studio_id=="bornheim",
-                  core.ClassSession.starts_at >= "2026-09-23T05:30:00+00:00",
-                  core.ClassSession.starts_at < "2026-09-23T06:30:00+00:00",
-              )).all()
-              for r in rows:
-                  print("NEAR", json.dumps({
-                      "id":r.id,"mb":r.mindbody_class_id,"title":r.title,
-                      "start":str(r.starts_at),"status":r.status,
-                      "capacity":r.capacity,"imported":r.imported_bookings,
-                      "source_total":r.source_bookings_total,
-                      "coach":r.coach.display_name if r.coach else None,
-                  }, ensure_ascii=False, sort_keys=True))
+          def rows(payload):
+              return [x for x in mb._extract_list(payload,("Classes","classes","Items")) if isinstance(x,dict)]
+          def slim(row):
+              desc=row.get("ClassDescription") or {}
+              loc=row.get("Location") or {}
+              staff=row.get("Staff") or {}
+              return {
+                  "id":row.get("Id") or row.get("ID") or row.get("ClassId"),
+                  "name":desc.get("Name") or row.get("Name"),
+                  "start":row.get("StartDateTime"),
+                  "location":loc.get("Name"),
+                  "staff":staff.get("DisplayName") or staff.get("Name"),
+                  "schedule_id":row.get("ClassScheduleId") or row.get("ClassScheduleID"),
+                  "is_canceled":row.get("IsCanceled"),
+                  "is_available":row.get("IsAvailable"),
+                  "max_capacity":row.get("MaxCapacity"),
+                  "total_booked":row.get("TotalBooked"),
+                  "web_capacity":row.get("WebCapacity"),
+              }
+
+          targets=[
+              ("mid","Coach Elena","2026-09-23T08:00:00"),
+              ("mid","Coach Jane","2026-09-23T18:00:00"),
+              ("bornheim","Coach Andrea","2026-09-23T07:00:00"),
+              ("bornheim","Coach Andrea","2026-09-23T08:00:00"),
+              ("bornheim","Coach Lana","2026-09-23T17:00:00"),
+              ("bornheim","Coach Lana","2026-09-23T18:00:00"),
+          ]
+          for label,payload in [("AUTH",auth),("PUBLIC",public)]:
+              rr=rows(payload)
+              print(label,"COUNT",len(rr))
+              for studio,coach,start_at in targets:
+                  ms=[]
+                  for row in rr:
+                      loc=str((row.get("Location") or {}).get("Name") or "").casefold()
+                      st=str((row.get("Staff") or {}).get("DisplayName") or (row.get("Staff") or {}).get("Name") or "")
+                      start=str(row.get("StartDateTime") or "")
+                      if studio in loc and st==coach and start.startswith(start_at):
+                          ms.append(slim(row))
+                  print(label,studio,coach,start_at,json.dumps(ms,ensure_ascii=False,sort_keys=True))
           PY
 
           echo '--- api health after targeted reconcile ---'
