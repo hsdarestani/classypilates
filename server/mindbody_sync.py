@@ -1903,19 +1903,6 @@ def _reconcile_class_roster(
     """Mirror one Mindbody class roster into Classy by stable Visit ID."""
     counts = {"visits": 0, "created": 0, "cancelled": 0, "unresolved": 0}
 
-    # Preserve the effective occupancy target produced by the summary sync. That
-    # target may intentionally be higher than the physical roster count when
-    # Mindbody applies a stricter WebCapacity.
-    local_reserved_before = db.scalar(
-        select(func.count(core.Booking.id)).where(
-            core.Booking.class_id == klass.id,
-            core.Booking.status == "reserved",
-        )
-    ) or 0
-    target_reserved = min(
-        max(0, int(klass.capacity or 0)),
-        max(0, int(local_reserved_before)) + max(0, int(klass.imported_bookings or 0)),
-    )
     payload = client.get_class_visits(remote_id)
     visits = _extract_class_visits(payload)
     active_ids: set[str] = set()
