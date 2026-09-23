@@ -463,8 +463,8 @@ def prepare_subscription(webhook_url: str) -> dict[str, Any]:
     # always uses the exact new ID returned below instead of searching by reference.
     try:
         for row in _subscriptions():
-            reference = str(row.get("referenceId") or "")
-            subscription_id = str(row.get("subscriptionId") or "").strip()
+            reference = str(_response_value(row, "referenceId", "ReferenceId") or "")
+            subscription_id = str(_response_value(row, "subscriptionId", "SubscriptionId") or "").strip()
             if reference.startswith(SUBSCRIPTION_REFERENCE) and subscription_id:
                 try:
                     _push_request("DELETE", f"subscriptions/{subscription_id}")
