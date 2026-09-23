@@ -39,16 +39,17 @@ jobs:
               payload=json.loads(r.read().decode())
           rows=payload if isinstance(payload,list) else payload.get('items') or payload.get('classes') or []
           wanted=[
-              ('mid-0800','mid','powerformer','08:00'),
-              ('mid-1200','mid','powerformer','12:00'),
-              ('mid-1800','mid','powerformer','18:00'),
-              ('mid-1900','mid','powerformer','19:00'),
-              ('mid-2000','mid','powerformer','20:00'),
-              ('bornheim-0700','bornheim','total body level intense','07:00'),
-              ('bornheim-0800','bornheim','total body level intense','08:00'),
-              ('bornheim-1700','bornheim','total body level intense','17:00'),
-              ('bornheim-1800','bornheim','total body level intense','18:00'),
-              ('bornheim-1900','bornheim','butt & abs','19:00'),
+              # Screenshot times are Europe/Berlin CEST (UTC+2 on Sep 23).
+              ('mid-0800','mid','powerformer','06:00'),
+              ('mid-1200','mid','powerformer','10:00'),
+              ('mid-1800','mid','powerformer','16:00'),
+              ('mid-1900','mid','powerformer','17:00'),
+              ('mid-2000','mid','powerformer','18:00'),
+              ('bornheim-0700','bornheim','total body level intense','05:00'),
+              ('bornheim-0800','bornheim','total body level intense','06:00'),
+              ('bornheim-1700','bornheim','total body level intense','15:00'),
+              ('bornheim-1800','bornheim','total body level intense','16:00'),
+              ('bornheim-1900','bornheim','butt & abs','17:00'),
           ]
           for label, studio, name_key, time_key in wanted:
               ms=[]
