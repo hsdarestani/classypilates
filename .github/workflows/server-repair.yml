@@ -28,80 +28,33 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect and reconcile remaining Mindbody visit identities ---'
+          echo '--- inspect Mindbody webhook account state ---'
           docker compose exec -T api python - <<'PY'
-          import json
-          from sqlalchemy import select
-          import main as core
-          import mindbody_sync as mb
+          import json, os
+          import mindbody_webhooks as wh
 
-          targets = {
-              "8123": "128893",
-              "20601": "128892",
-              "23354": "128862",
-          }
-          client = mb.WriteClient.from_env()
-
-          for class_id, wanted_visit in targets.items():
-              payload = client.get_class_visits(class_id)
-              visits = mb._extract_class_visits(payload)
-              visit = next(
-                  (v for v in visits if str(mb._value(v,"Id","ID","VisitId","VisitID",default="") or "") == wanted_visit),
-                  None,
-              )
-              print("REMOTE", json.dumps({
-                  "class_id": class_id,
-                  "visit_id": wanted_visit,
-                  "found": bool(visit),
-                  "client_id": str(mb._value(visit or {}, "ClientId","ClientID", default=mb._value((visit or {}).get("Client") or {},"Id","ID",default="")) or ""),
-                  "cancelled": bool(mb._value(visit or {}, "Cancelled","IsCancelled","LateCancelled","EarlyCancelled",default=False)),
-                  "has_client_object": bool((visit or {}).get("Client")),
-                  "client_email": str(mb._value((visit or {}).get("Client") or {},"Email","email",default="") or ""),
-              }, ensure_ascii=False, sort_keys=True))
-
-              with core.SessionLocal() as db:
-                  klass = db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id == class_id))
-                  print("LOCAL_BEFORE", json.dumps({
-                      "class_id": class_id,
-                      "local_class_id": getattr(klass,"id",None),
-                      "status": getattr(klass,"status",None),
-                      "capacity": getattr(klass,"capacity",None),
-                      "imported": getattr(klass,"imported_bookings",None),
-                      "source_total": getattr(klass,"source_bookings_total",None),
-                  }, ensure_ascii=False, sort_keys=True))
-                  if klass:
-                      rows = db.scalars(select(core.Booking).where(core.Booking.class_id == klass.id)).all()
-                      print("BOOKINGS_BEFORE", json.dumps([{
-                          "id": b.id,
-                          "source": b.source,
-                          "status": b.status,
-                          "visit_id": b.mindbody_visit_id,
-                          "client_id": b.mindbody_client_id,
-                          "email": b.email,
-                          "sync": b.mindbody_sync_status,
-                      } for b in rows], ensure_ascii=False, sort_keys=True))
-
-              result = mb.reconcile_remote_class(
-                  class_id,
-                  reconcile_roster=True,
-                  reconcile_waitlist=False,
-                  sync_coach=False,
-              )
-              print("RECONCILE", class_id, json.dumps(result, ensure_ascii=False, sort_keys=True))
-
-              with core.SessionLocal() as db:
-                  klass = db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id == class_id))
-                  rows = db.scalars(select(core.Booking).where(core.Booking.class_id == klass.id)).all() if klass else []
-                  print("LOCAL_AFTER", json.dumps({
-                      "class_id": class_id,
-                      "imported": getattr(klass,"imported_bookings",None),
-                      "source_total": getattr(klass,"source_bookings_total",None),
-                      "visit_ids": sorted(str(b.mindbody_visit_id or "") for b in rows if b.status=="reserved"),
-                  }, ensure_ascii=False, sort_keys=True))
+          print("ENV", json.dumps({
+              "signature_key_present": bool((os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip()),
+              "subscription_id_present": bool((os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()),
+              "api_key_present": bool((os.getenv("MINDBODY_API_KEY") or "").strip()),
+          }, sort_keys=True))
+          try:
+              payload = wh._push_request("GET", "subscriptions")
+              items = payload.get("items") or payload.get("Items") or []
+              print("SUBSCRIPTIONS", json.dumps([{
+                  "subscriptionId": row.get("subscriptionId"),
+                  "status": row.get("status"),
+                  "referenceId": row.get("referenceId"),
+                  "webhookUrl": row.get("webhookUrl"),
+                  "eventIds": row.get("eventIds"),
+                  "statusChangeMessage": row.get("statusChangeMessage"),
+              } for row in items if isinstance(row, dict)], ensure_ascii=False, sort_keys=True))
+          except Exception as exc:
+              print("SUBSCRIPTIONS_ERROR", type(exc).__name__, str(exc)[:1500])
           PY
 
-          echo '--- audit after targeted reconcile ---'
-          docker compose exec -T api python mindbody_audit.py
+          echo '--- api health after webhook diagnostics ---'
+          curl -fsS http://127.0.0.1:8787/api/health
 
           echo '--- api health after targeted reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
