@@ -1,6 +1,6 @@
 const studios=[
-{id:'bhf1',name:'Bahnhofsviertel · 1F',short:'Bahnhofsviertel 1F',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Bahnhofviertel_01-scaled.jpg'},
-{id:'ladies',name:'Bahnhofsviertel · Ladies',short:'Ladies 2F',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer · Ladies only',image:'https://classypilates.de/wp-content/uploads/2026/05/Ladies_02-scaled.jpg'},
+{id:'bhf1',name:'Bahnhofsviertel · 1st Floor',short:'Bahnhofsviertel 1st Floor',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Bahnhofviertel_01-scaled.jpg'},
+{id:'ladies',name:'Bahnhofsviertel · Ladies · 2nd Floor',short:'Ladies 2nd Floor',address:'Kaiserstraße 61 · 60329 Frankfurt',type:'Reformer · Ladies only',image:'https://classypilates.de/wp-content/uploads/2026/05/Ladies_02-scaled.jpg'},
 {id:'sachsen',name:'Sachsenhausen',short:'Sachsenhausen',address:'Zum Gipelhof 5 · 60594 Frankfurt',type:'Reformer · Mat',image:'https://classypilates.de/wp-content/uploads/2026/06/IMG_2751-scaled.jpeg'},
 {id:'bornheim',name:'Bornheim',short:'Bornheim',address:'Wiesenstraße 33 · 60385 Frankfurt',type:'Reformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Bornheim_07-scaled.jpg'},
 {id:'mid',name:'Mid',short:'Mid',address:'Große Eschenheimer Straße 45 · 60313 Frankfurt',type:'Powerformer',image:'https://classypilates.de/wp-content/uploads/2026/05/Mid_03-scaled.jpg'},

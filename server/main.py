@@ -467,8 +467,8 @@ ALL_PERMISSIONS = [
 DEFAULT_COACH_PERMS = ["dashboard.view", "bookings.view", "classes.view", "classes.create", "classes.edit_own", "schedules.upload"]
 
 STUDIOS = [
-    ("bhf1", "Bahnhofsviertel · 1F", "Kaiserstraße 61 · 60329 Frankfurt", 8),
-    ("ladies", "Bahnhofsviertel · Ladies 2F", "Kaiserstraße 61 · 60329 Frankfurt", 10),
+    ("bhf1", "Bahnhofsviertel · 1st Floor", "Kaiserstraße 61 · 60329 Frankfurt", 8),
+    ("ladies", "Bahnhofsviertel · Ladies · 2nd Floor", "Kaiserstraße 61 · 60329 Frankfurt", 10),
     ("sachsen", "Sachsenhausen", "Zum Gipfelhof 5 · 60594 Frankfurt", 12),
     ("bornheim", "Bornheim", "Wiesenstraße 33 · 60385 Frankfurt", 8),
     ("mid", "Mid", "Große Eschenheimer Straße 45 · 60313 Frankfurt", 10),

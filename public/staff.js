@@ -2,7 +2,7 @@
   const $=(s,c=document)=>c.querySelector(s), $$=(s,c=document)=>[...c.querySelectorAll(s)];
   const state={token:localStorage.getItem('cpStaffToken')||'',user:null,view:'dashboard',roles:[],permissions:[]};
   const titles={dashboard:['OPERATIONS','Overview'],bookings:['CUSTOMERS','Bookings'],customers:['CRM','Customers'],classes:['SCHEDULE','Classes & schedule'],coaches:['TEAM','Coaches'],finance:['REVENUE','Finance'],roles:['ACCESS CONTROL','Roles & access'],uploads:['IMPORT','Upload schedule'],procenter:['PREMIUM MODULES','Pro Center'],profile:['COACH PROFILE','My profile']};
-  const studios=[['bhf1','Bahnhofsviertel · 1F'],['ladies','Bahnhofsviertel · Ladies 2F'],['sachsen','Sachsenhausen'],['bornheim','Bornheim'],['mid','Mid'],['oval','Oval']];
+  const studios=[['bhf1','Bahnhofsviertel · 1st Floor'],['ladies','Bahnhofsviertel · Ladies · 2nd Floor'],['sachsen','Sachsenhausen'],['bornheim','Bornheim'],['mid','Mid'],['oval','Oval']];
   const studioOptions=studios.map(x=>`<option value="${x[0]}">${x[1]}</option>`).join('');
   const toast=t=>{const el=$('#toast');el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)};
   const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));

@@ -30,14 +30,14 @@ core.Base.metadata.create_all(core.engine, tables=[StudioProfile.__table__])
 
 STUDIO_DEFAULTS = {
     "bhf1": {
-        "short_name": "Bahnhofsviertel 1F",
+        "short_name": "Bahnhofsviertel 1st Floor",
         "public_type": "Reformer",
         "image_url": "https://classypilates.de/wp-content/uploads/2026/05/Bahnhofviertel_01-scaled.jpg",
         "sort_order": 10,
         "mindbody_location": "Bahnhofsviertel",
     },
     "ladies": {
-        "short_name": "Ladies 2F",
+        "short_name": "Ladies 2nd Floor",
         "public_type": "Reformer · Ladies only",
         "image_url": "https://classypilates.de/wp-content/uploads/2026/05/Ladies_02-scaled.jpg",
         "sort_order": 20,
@@ -91,12 +91,26 @@ def _profile(db: Session, studio_id: str) -> StudioProfile | None:
 
 def _restore_studio_overrides() -> None:
     """Re-apply admin edits after the legacy seed has populated canonical studios."""
+    legacy_names = {
+        "Bahnhofsviertel · 1F": "Bahnhofsviertel · 1st Floor",
+        "Bahnhofsviertel · Ladies 2F": "Bahnhofsviertel · Ladies · 2nd Floor",
+    }
+    legacy_short_names = {
+        "Bahnhofsviertel 1F": "Bahnhofsviertel 1st Floor",
+        "Ladies 2F": "Ladies 2nd Floor",
+    }
     with core.SessionLocal() as db:
         changed = False
         for profile in db.scalars(select(StudioProfile)).all():
             studio = db.get(core.Studio, profile.studio_id)
             if not studio:
                 continue
+            if profile.name_override in legacy_names:
+                profile.name_override = legacy_names[profile.name_override]
+                changed = True
+            if profile.short_name in legacy_short_names:
+                profile.short_name = legacy_short_names[profile.short_name]
+                changed = True
             if profile.name_override is not None:
                 studio.name = profile.name_override
                 changed = True
