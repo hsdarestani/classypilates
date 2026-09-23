@@ -21,7 +21,7 @@ jobs:
 
           if command -v nginx >/dev/null 2>&1; then
             mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
-            ln -sf /etc/nginx/sites-available/classy.smarbiz.sbs /etc/nginx/sites-enabled/classy.smarbiz.sbs || true
+            ln -sf /etc/nginx/sites-available/new.classypilates.de /etc/nginx/sites-enabled/new.classypilates.de || true
             nginx -t && systemctl reload nginx || true
           fi
 
@@ -32,6 +32,6 @@ jobs:
           echo '--- api ---'
           curl -fsS http://127.0.0.1:8787/api/health
           echo '--- public ---'
-          curl -I --max-time 20 http://classy.smarbiz.sbs || true
-          curl -I --max-time 20 https://classy.smarbiz.sbs || true
+          curl -I --max-time 20 http://new.classypilates.de || true
+          curl -I --max-time 20 https://new.classypilates.de || true
           REMOTE
