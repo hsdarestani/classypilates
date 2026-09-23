@@ -28,35 +28,90 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- reconcile final pre-webhook roster drift ---'
+          echo '--- compare random screenshot classes with Classy production ---'
           docker compose exec -T api python - <<'PY'
-          import json
-          import mindbody_sync as mb
+          import json, urllib.parse, urllib.request
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
 
-          for class_id in ("26275", "29035", "23354"):
-              result = mb.reconcile_remote_class(
-                  class_id,
-                  reconcile_roster=True,
-                  reconcile_waitlist=False,
-                  sync_coach=False,
-              )
-              print("RECONCILED", class_id, json.dumps(result, sort_keys=True))
-          PY
+          expected = [
+              # date, local time, studio key, title key, coach key, reserved, free
+              ("2026-09-24","07:00","mid","powerformer","anna",8,2),
+              ("2026-09-24","07:00","oval","powerformer","sophie",6,4),
+              ("2026-09-24","10:30","bornheim","pregnancy reformer","lana",1,7),
+              ("2026-09-24","11:30","sachsenhausen","reformer","kristina",1,11),
+              ("2026-09-24","12:00","bahnhofsviertel","total body","denise",4,6),
+              ("2026-09-25","07:00","mid","powerformer","denise",3,7),
+              ("2026-09-25","07:00","oval","powerformer","sophie",3,7),
+              ("2026-09-25","09:00","bornheim","total body level 1.0","ida",1,7),
+              ("2026-09-25","09:00","bahnhofsviertel","total body","luca",1,9),
+          ]
 
-          echo '--- final production Mindbody/Classy audit ---'
-          docker compose exec -T api python mindbody_audit.py
+          url='http://127.0.0.1:8787/api/schedule?'+urllib.parse.urlencode({
+              'from':'2026-09-24',
+              'to':'2026-09-26',
+          })
+          with urllib.request.urlopen(url,timeout=30) as r:
+              payload=json.loads(r.read().decode())
+          rows=payload if isinstance(payload,list) else payload.get('items') or payload.get('classes') or []
 
-          echo '--- webhook state ---'
-          docker compose exec -T api python - <<'PY'
-          import json, os
-          import mindbody_webhooks as wh
-          sid=(os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()
-          row=next((x for x in wh._subscriptions() if str(x.get("subscriptionId") or x.get("SubscriptionId") or "") == sid), {})
-          print("WEBHOOK", json.dumps({
-              "configured": bool(sid and (os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip()),
-              "status": row.get("status") or row.get("Status"),
-              "url": row.get("webhookUrl") or row.get("WebhookUrl"),
-          }, sort_keys=True))
+          berlin=ZoneInfo("Europe/Berlin")
+          def local_dt(row):
+              raw=str(row.get('starts_at') or row.get('start') or row.get('startsAt') or row.get('start_time') or '')
+              if not raw: return None
+              dt=datetime.fromisoformat(raw.replace('Z','+00:00'))
+              if dt.tzinfo is None:
+                  dt=dt.replace(tzinfo=ZoneInfo("UTC"))
+              return dt.astimezone(berlin)
+
+          def blob(row):
+              return json.dumps(row,ensure_ascii=False).casefold()
+
+          results=[]
+          for date_s,time_s,studio_key,title_key,coach_key,exp_reserved,exp_free in expected:
+              matches=[]
+              for row in rows:
+                  dt=local_dt(row)
+                  if not dt or dt.strftime("%Y-%m-%d")!=date_s or dt.strftime("%H:%M")!=time_s:
+                      continue
+                  b=blob(row)
+                  if studio_key.casefold() not in b or title_key.casefold() not in b or coach_key.casefold() not in b:
+                      continue
+                  matches.append(row)
+              picked=matches[0] if len(matches)==1 else None
+              if picked:
+                  capacity=int(picked.get('capacity') or 0)
+                  spots=picked.get('spots')
+                  if spots is None: spots=picked.get('spots_left')
+                  if spots is None: spots=picked.get('available')
+                  spots=int(spots or 0)
+                  reserved=picked.get('reserved')
+                  if reserved is None: reserved=max(0,capacity-spots)
+                  reserved=int(reserved or 0)
+                  results.append({
+                      "date":date_s,"time":time_s,"studio":studio_key,"coach":coach_key,
+                      "expected_reserved":exp_reserved,"expected_free":exp_free,
+                      "site_reserved":reserved,"site_free":spots,"capacity":capacity,
+                      "match": reserved==exp_reserved and spots==exp_free,
+                      "title":picked.get('title') or picked.get('name'),
+                      "mindbody_class_id":picked.get('mindbody_class_id'),
+                  })
+              else:
+                  results.append({
+                      "date":date_s,"time":time_s,"studio":studio_key,"coach":coach_key,
+                      "expected_reserved":exp_reserved,"expected_free":exp_free,
+                      "match":False,"candidate_count":len(matches)
+                  })
+
+          print("SCREENSHOT_COMPARE_BEGIN")
+          for row in results:
+              print(json.dumps(row,ensure_ascii=False,sort_keys=True))
+          print("SCREENSHOT_COMPARE_END")
+          print("SUMMARY", json.dumps({
+              "checked":len(results),
+              "matched":sum(1 for r in results if r.get("match")),
+              "mismatched":[r for r in results if not r.get("match")],
+          }, ensure_ascii=False, sort_keys=True))
           PY
 
           echo '--- api health after webhook diagnostics ---'
