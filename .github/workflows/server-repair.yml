@@ -28,21 +28,15 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect public routing target ---'
-          echo 'DNS:'
-          getent ahostsv4 classy.smarbiz.sbs | head -5 || true
-          echo 'LOCAL ADDRS:'
-          hostname -I || true
-          echo 'NGINX ACTIVE CONFIG FOR CLASSY:'
-          nginx -T 2>/dev/null | awk '
-            /server_name classy\.smarbiz\.sbs/ {show=1; count=0}
-            show {print; count++}
-            show && count>80 {show=0}
-          ' | head -200
-          echo 'HOST HEADER TO LOCAL NGINX:'
-          curl -ski -H 'Host: classy.smarbiz.sbs' https://127.0.0.1/api/integrations/mindbody/webhook || true
-          echo 'DIRECT API:'
-          curl -si http://127.0.0.1:8787/api/integrations/mindbody/webhook || true
+          echo '--- reproduce webhook with TLS SNI and find duplicate nginx hosts ---'
+          echo 'SNI LOCAL:'
+          curl -ski --resolve classy.smarbiz.sbs:443:127.0.0.1 https://classy.smarbiz.sbs/api/integrations/mindbody/webhook || true
+          echo 'ALL CLASSY SERVER_NAME OCCURRENCES:'
+          nginx -T 2>&1 | grep -n -B8 -A30 'server_name classy\.smarbiz\.sbs' || true
+          echo 'ENABLED SITES:'
+          ls -la /etc/nginx/sites-enabled || true
+          echo 'FILES CONTAINING DOMAIN:'
+          grep -RIl 'server_name classy\.smarbiz\.sbs' /etc/nginx 2>/dev/null || true
 
           echo '--- api health after targeted reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
