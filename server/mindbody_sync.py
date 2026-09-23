@@ -2026,10 +2026,23 @@ def _reconcile_class_roster(
             core.Booking.status == "reserved",
         )
     ) or 0
-    # Keep the summary-derived target (including WebCapacity restrictions) while
-    # replacing synthetic occupancy with real mirrored rows as they become known.
-    klass.imported_bookings = max(0, target_reserved - int(local_reserved_after))
+
+    # The roster is exact identity-level truth. Drop any synthetic occupancy left
+    # over from an older summary pass, then rebuild only the synthetic amount still
+    # required by the CURRENT public Mindbody class payload (for example a stricter
+    # WebCapacity). This prevents a cancelled/promoted visit from being counted once
+    # as a real booking and once again through stale imported_bookings.
+    klass.imported_bookings = 0
     klass.source_bookings_total = len(active_ids) + int(counts["unresolved"])
+    remote = _find_remote_class(client, klass)
+    if remote is not None:
+        _sync_class_availability(
+            db,
+            klass,
+            remote,
+            int(local_reserved_after),
+        )
+
     klass.mindbody_synced_at = now
     db.commit()
     return counts
