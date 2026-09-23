@@ -48,7 +48,7 @@ jobs:
               print("PROCESSING_EVENT null")
           PY
 
-          echo '--- post-deadlock-fix queue and audit ---'
+          echo '--- confirm webhook queue keeps draining ---'
           docker compose exec -T api python - <<'PY'
           import json
           from sqlalchemy import text, select, func
@@ -58,22 +58,18 @@ jobs:
                 SELECT status,COUNT(*) AS n,MIN(created_at) AS oldest,MAX(created_at) AS newest,MAX(processed_at) AS last_processed
                 FROM mindbody_webhook_events GROUP BY status ORDER BY status
               """)).mappings().all()
+              active=c.execute(text("""
+                SELECT message_id,event_id,class_id,status,attempts,created_at
+                FROM mindbody_webhook_events
+                WHERE status IN ('processing','pending','failed')
+                ORDER BY created_at ASC LIMIT 5
+              """)).mappings().all()
           with core.SessionLocal() as db:
               latest=db.scalar(select(func.max(core.ClassSession.mindbody_synced_at)))
-          print("QUEUE_COUNTS",json.dumps([dict(x) for x in counts],default=str,sort_keys=True))
-          print("LATEST_SYNC",latest.isoformat() if latest else None)
+          print("QUEUE_FINAL",json.dumps([dict(x) for x in counts],default=str,sort_keys=True))
+          print("QUEUE_OLDEST_OPEN",json.dumps([dict(x) for x in active],default=str,sort_keys=True))
+          print("LATEST_SYNC_FINAL",latest.isoformat() if latest else None)
           PY
-
-          echo '--- run one explicit canonical mirror cycle ---'
-          docker compose exec -T api python - <<'PY'
-          import json, mindbody_sync as mb
-          with mb.RECONCILE_LOCK:
-              result=mb.sync_staff_and_assignments()
-          print("MIRROR_RESULT",json.dumps(result,sort_keys=True))
-          PY
-
-          echo '--- final fresh audit ---'
-          docker compose exec -T api python mindbody_audit.py
 
           echo '--- api health after webhook diagnostics ---'
           curl -fsS http://127.0.0.1:8787/api/health
