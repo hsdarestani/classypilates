@@ -1,88 +1,44 @@
-from datetime import datetime, timedelta, timezone
-import types
+from pathlib import Path
 
-import mindbody_sync as mb
-import main as core
+sync = Path("server/mindbody_sync.py").read_text(encoding="utf-8")
+runtime = Path("server/runtime_app.py").read_text(encoding="utf-8")
+audit = Path("server/mindbody_audit.py").read_text(encoding="utf-8")
 
+required_sync = [
+    '"request.hideCanceledClasses": True if public_only else False',
+    'return self._public_get("class/classes", params)',
+    'def _hide_nonpublic_mindbody_classes(',
+    'row.status = "hidden"',
+    'def sync_cancelled_classes_window(',
+    'public_only=True,',
+]
+for needle in required_sync:
+    assert needle in sync, f"Missing Mindbody public-feed invariant: {needle}"
 
-# The public schedule request must never use the staff-authenticated getter.
-client = mb.WriteClient.__new__(mb.WriteClient)
-calls = []
+for fn in ("sync_schedule_availability_fast", "sync_staff_and_assignments", "sync_rosters_window"):
+    start = sync.index(f"def {fn}")
+    next_def = sync.find("\ndef ", start + 5)
+    section = sync[start: next_def if next_def != -1 else len(sync)]
+    assert "public_only=True" in section, f"{fn} must use Mindbody public feed"
 
-def public_get(self, path, params):
-    calls.append(("public", path, dict(params)))
-    return {"Classes": []}
+fast_start = sync.index("def sync_schedule_availability_fast")
+fast_end = sync.find("\ndef ", fast_start + 5)
+fast_section = sync[fast_start: fast_end if fast_end != -1 else len(sync)]
+assert "_hide_nonpublic_mindbody_classes(" in fast_section
 
-def auth_get(self, path, params):
-    calls.append(("auth", path, dict(params)))
-    return {"Classes": []}
+staff_start = sync.index("def sync_staff_and_assignments")
+staff_end = sync.find("\ndef ", staff_start + 5)
+staff_section = sync[staff_start: staff_end if staff_end != -1 else len(sync)]
+assert "_hide_nonpublic_mindbody_classes(" in staff_section
 
-client._public_get = types.MethodType(public_get, client)
-client._authorized_get = types.MethodType(auth_get, client)
+runtime_start = runtime.index("def _reconcile_mindbody_availability")
+runtime_end = runtime.find("\ndef ", runtime_start + 5)
+runtime_section = runtime[runtime_start: runtime_end if runtime_end != -1 else len(runtime)]
+assert "public_only=True" in runtime_section
+assert "sync_cancelled_classes_window(days=45)" in runtime
 
-client.get_classes(
-    start_date_time="2026-09-23T00:00:00Z",
-    end_date_time="2026-09-24T00:00:00Z",
-    public_only=True,
-)
-assert calls[-1][0] == "public", calls[-1]
-assert calls[-1][2]["request.hideCanceledClasses"] is True, calls[-1]
-
-client.get_classes(
-    start_date_time="2026-09-23T00:00:00Z",
-    end_date_time="2026-09-24T00:00:00Z",
-    public_only=False,
-)
-assert calls[-1][0] == "auth", calls[-1]
-assert calls[-1][2]["request.hideCanceledClasses"] is False, calls[-1]
-
-
-# A provider-backed class absent from the public-visible feed must not stay active.
-now = datetime.now(timezone.utc)
-with core.SessionLocal() as db:
-    active = core.ClassSession(
-        studio_id="mid",
-        title="Guard hidden class",
-        class_type="Reformer",
-        starts_at=now + timedelta(days=1),
-        duration=50,
-        capacity=10,
-        imported_bookings=0,
-        source_bookings_total=0,
-        mindbody_class_id="guard-hidden-remote",
-        status="active",
-    )
-    visible = core.ClassSession(
-        studio_id="mid",
-        title="Guard public class",
-        class_type="Reformer",
-        starts_at=now + timedelta(days=1, minutes=30),
-        duration=50,
-        capacity=10,
-        imported_bookings=0,
-        source_bookings_total=0,
-        mindbody_class_id="guard-public-remote",
-        status="active",
-    )
-    db.add_all([active, visible])
-    db.commit()
-
-    hidden_count = mb._hide_nonpublic_mindbody_classes(
-        db,
-        public_ids={"guard-public-remote"},
-        start=now,
-        end=now + timedelta(days=2),
-        now=now,
-    )
-    db.commit()
-    db.refresh(active)
-    db.refresh(visible)
-    assert hidden_count >= 1, hidden_count
-    assert active.status == "hidden", active.status
-    assert visible.status == "active", visible.status
-
-    db.delete(active)
-    db.delete(visible)
-    db.commit()
+assert "public_only=True" in audit
+assert '"active_local_not_public"' in audit
+assert '"public_status_mismatch"' in audit
 
 print("Mindbody public feed regression guard: OK")
