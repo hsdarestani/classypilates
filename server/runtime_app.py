@@ -322,6 +322,7 @@ def _reconcile_mindbody_availability() -> int:
             end_date_time=end.isoformat(),
             limit=200,
             offset=offset,
+            public_only=True,
         )
         batch = [
             item
@@ -541,9 +542,12 @@ def _roster_loop() -> None:
             days = 1 if first_pass else ROSTER_WINDOW_DAYS
             with mindbody_sync.RECONCILE_LOCK:
                 result = mindbody_sync.sync_rosters_window(days=days)
+                lifecycle = mindbody_sync.sync_cancelled_classes_window(days=45)
             print(
                 f"Mindbody roster sweep: days={days} classes={result.get('classes_checked', 0)} "
-                f"visits={result.get('visits', 0)} errors={result.get('errors', 0)}",
+                f"visits={result.get('visits', 0)} errors={result.get('errors', 0)} "
+                f"cancelled_seen={lifecycle.get('cancelled_seen', 0)} "
+                f"cancelled_updated={lifecycle.get('cancelled_local_updated', 0)}",
                 flush=True,
             )
             if result.get("errors"):

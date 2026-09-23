@@ -80,6 +80,7 @@ def main():
             end_date_time=end.isoformat(),
             limit=200,
             offset=offset,
+            public_only=True,
         )
         batch = [x for x in mb._extract_list(payload, ("Classes", "classes", "Items")) if isinstance(x, dict)]
         remotes.extend(batch)
@@ -124,6 +125,15 @@ def main():
                 if len(samples) < 30:
                     samples.append({"type":"missing_local_class","remote_id":remote_id,"title":mb._class_name(remote)})
                 continue
+
+            if klass.status != "active":
+                issues["public_status_mismatch"] += 1
+                if len(samples) < 30:
+                    samples.append({
+                        "type":"public_status_mismatch",
+                        "remote_id":remote_id,
+                        "local_status":klass.status,
+                    })
 
             cap = as_int(remote, "MaxCapacity", "Capacity")
             if cap is not None and int(klass.capacity or 0) != cap:
@@ -202,6 +212,23 @@ def main():
                     issues["trainer_mismatch"] += 1
                     if len(samples) < 30:
                         samples.append({"type":"trainer_mismatch","remote_id":remote_id,"remote_staff":remote_staff_id,"local_staff":local_remote_staff_id})
+
+        active_local_not_public = [
+            row for row in local_rows
+            if row.status == "active"
+            and core.as_utc(row.starts_at) >= now
+            and core.as_utc(row.starts_at) < end
+            and str(row.mindbody_class_id or "") not in seen_remote
+        ]
+        issues["active_local_not_public"] = len(active_local_not_public)
+        for row in active_local_not_public[: max(0, 30 - len(samples))]:
+            samples.append({
+                "type":"active_local_not_public",
+                "remote_id":str(row.mindbody_class_id or ""),
+                "title":row.title,
+                "starts_at":core.as_utc(row.starts_at).isoformat(),
+                "status":row.status,
+            })
 
         unlinked_future_classes = db.scalar(select(func.count(core.ClassSession.id)).where(
             core.ClassSession.starts_at >= now,
@@ -634,7 +661,8 @@ def main():
         issues["summary_roster_count_mismatch"] = summary_roster_count_mismatch
 
     critical_keys = [
-        "duplicate_remote_ids","missing_local_class","capacity_mismatch","availability_mismatch",
+        "duplicate_remote_ids","missing_local_class","public_status_mismatch","active_local_not_public",
+        "capacity_mismatch","availability_mismatch",
         "start_time_mismatch","studio_mismatch","title_mismatch","duration_mismatch",
         "description_mismatch","cancel_status_mismatch","trainer_mismatch",
         "unlinked_future_classes","waitlist_unsynced","stale_pending_holds",

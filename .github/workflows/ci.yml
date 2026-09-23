@@ -49,6 +49,12 @@ jobs:
           UPLOAD_DIR: /tmp/classy-availability-uploads
         run: python server/availability_regression_guard.py
 
+      - name: Mindbody public feed regression guard
+        env:
+          DATABASE_URL: sqlite:////tmp/classy-public-feed-guard.db
+          UPLOAD_DIR: /tmp/classy-public-feed-uploads
+        run: python server/mindbody_public_feed_guard.py
+
       - name: Reject duplicate FastAPI routes
         run: |
           python - <<'PY'
