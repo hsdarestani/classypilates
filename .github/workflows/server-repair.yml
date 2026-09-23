@@ -28,7 +28,7 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect Bornheim 2026-09-25 09:00 exactly (fresh) ---'
+          echo '--- inspect Bornheim 2026-09-25 09:00 exactly (live) ---'
           docker compose exec -T api python - <<'PY'
           import json, urllib.parse, urllib.request
           from datetime import datetime
