@@ -28,17 +28,18 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- compare dns target with deploy host routing ---'
+          echo '--- compare github deploy target with public dns ---'
           DNS_IP="$(getent ahostsv4 classy.smarbiz.sbs | awk 'NR==1{print $1}')"
+          if [ "$HOST" = "$DNS_IP" ]; then
+            echo 'GITHUB_HOST_EQUALS_DNS=yes'
+          else
+            echo 'GITHUB_HOST_EQUALS_DNS=no'
+          fi
           if hostname -I | tr ' ' '\n' | grep -Fxq "$DNS_IP"; then
             echo 'DNS_IS_LOCAL_ADDRESS=yes'
           else
             echo 'DNS_IS_LOCAL_ADDRESS=no'
           fi
-          echo 'PUBLIC URL FROM DEPLOY HOST:'
-          curl -ski --max-time 20 https://classy.smarbiz.sbs/api/integrations/mindbody/webhook | head -20 || true
-          echo 'PUBLIC URL FORCED TO LOCAL:'
-          curl -ski --resolve classy.smarbiz.sbs:443:127.0.0.1 https://classy.smarbiz.sbs/api/integrations/mindbody/webhook | head -20 || true
 
           echo '--- api health after targeted reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
