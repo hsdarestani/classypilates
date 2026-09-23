@@ -28,94 +28,34 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- recreate and activate Mindbody webhook securely ---'
-          WEBHOOK_URL='https://new.classypilates.de/api/integrations/mindbody/webhook'
-
-          # Deactivate every Classy-managed subscription whose one-time signature
-          # key is no longer available locally.
+          echo '--- reconcile final pre-webhook roster drift ---'
           docker compose exec -T api python - <<'PY'
-          import mindbody_webhooks as wh
-          for row in wh._subscriptions():
-              ref = str(row.get("referenceId") or "")
-              sid = str(row.get("subscriptionId") or "")
-              if ref.startswith(wh.SUBSCRIPTION_REFERENCE) and sid:
-                  try:
-                      wh._push_request("DELETE", f"subscriptions/{sid}")
-                  except Exception:
-                      pass
+          import json
+          import mindbody_sync as mb
+
+          for class_id in ("26275", "29035", "23354"):
+              result = mb.reconcile_remote_class(
+                  class_id,
+                  reconcile_roster=True,
+                  reconcile_waitlist=False,
+                  sync_coach=False,
+              )
+              print("RECONCILED", class_id, json.dumps(result, sort_keys=True))
           PY
 
-          CREATED="$(docker compose exec -T api python - <<'PY'
-          import json, os, time
-          import mindbody_webhooks as wh
+          echo '--- final production Mindbody/Classy audit ---'
+          docker compose exec -T api python mindbody_audit.py
 
-          payload = {
-              "eventIds": list(wh.EVENT_IDS),
-              "eventSchemaVersion": 1,
-              "referenceId": f"{wh.SUBSCRIPTION_REFERENCE}:{os.getenv('MINDBODY_SITE_ID') or 'site'}:{int(time.time())}",
-              "webhookUrl": "https://new.classypilates.de/api/integrations/mindbody/webhook",
-          }
-          response = wh._push_request("POST", "subscriptions", payload)
-
-          def find_value(obj, key):
-              if isinstance(obj, dict):
-                  if obj.get(key):
-                      return obj.get(key)
-                  for value in obj.values():
-                      found = find_value(value, key)
-                      if found:
-                          return found
-              elif isinstance(obj, list):
-                  for value in obj:
-                      found = find_value(value, key)
-                      if found:
-                          return found
-              return ""
-
-          sid = str(find_value(response, "subscriptionId") or "").strip()
-          key = str(find_value(response, "messageSignatureKey") or "").strip()
-          if not sid or not key:
-              safe = response
-              if isinstance(safe, dict):
-                  safe = {k: ("<present>" if k == "messageSignatureKey" and v else v) for k, v in safe.items()}
-              raise SystemExit("Mindbody create-subscription response missing required fields; keys=" + ",".join(response.keys() if isinstance(response, dict) else []))
-          print(json.dumps({"subscription_id": sid, "signature_key": key}, separators=(",", ":")))
-          PY
-          )"
-
-          WEBHOOK_SUBSCRIPTION_ID="$(printf '%s' "$CREATED" | python3 -c 'import json,sys; print(json.load(sys.stdin)["subscription_id"])')"
-          WEBHOOK_KEY="$(printf '%s' "$CREATED" | python3 -c 'import json,sys; print(json.load(sys.stdin)["signature_key"])')"
-          test -n "$WEBHOOK_SUBSCRIPTION_ID" && test -n "$WEBHOOK_KEY"
-
-          sed -i '/^MINDBODY_WEBHOOK_SIGNATURE_KEY=/d;/^MINDBODY_WEBHOOK_SUBSCRIPTION_ID=/d' .env
-          {
-            printf 'MINDBODY_WEBHOOK_SIGNATURE_KEY=%s\n' "$WEBHOOK_KEY"
-            printf 'MINDBODY_WEBHOOK_SUBSCRIPTION_ID=%s\n' "$WEBHOOK_SUBSCRIPTION_ID"
-          } >> .env
-          chmod 600 .env
-          unset WEBHOOK_KEY CREATED
-
-          docker compose up -d --force-recreate api
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
-            sleep 2
-          done
-          curl -fsS http://127.0.0.1:8787/api/health >/dev/null
-
-          docker compose exec -T api python mindbody_webhooks.py activate             --webhook-url "$WEBHOOK_URL"             --subscription-id "$WEBHOOK_SUBSCRIPTION_ID"
-
+          echo '--- webhook state ---'
           docker compose exec -T api python - <<'PY'
           import json, os
           import mindbody_webhooks as wh
-          sid = (os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()
-          row = next((x for x in wh._subscriptions() if str(x.get("subscriptionId") or "") == sid), {})
-          print("WEBHOOK_FINAL", json.dumps({
-              "subscription_id_present": bool(sid),
-              "signature_key_present": bool((os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip()),
-              "status": row.get("status"),
-              "webhookUrl": row.get("webhookUrl"),
-              "event_count": len(row.get("eventIds") or []),
-              "statusChangeMessage": row.get("statusChangeMessage"),
+          sid=(os.getenv("MINDBODY_WEBHOOK_SUBSCRIPTION_ID") or "").strip()
+          row=next((x for x in wh._subscriptions() if str(x.get("subscriptionId") or x.get("SubscriptionId") or "") == sid), {})
+          print("WEBHOOK", json.dumps({
+              "configured": bool(sid and (os.getenv("MINDBODY_WEBHOOK_SIGNATURE_KEY") or "").strip()),
+              "status": row.get("status") or row.get("Status"),
+              "url": row.get("webhookUrl") or row.get("WebhookUrl"),
           }, sort_keys=True))
           PY
 
