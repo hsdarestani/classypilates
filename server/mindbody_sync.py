@@ -193,20 +193,48 @@ class WriteClient(MindbodyClient):
         end_date_time: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        public_only: bool = False,
     ) -> dict[str, Any]:
-        # Use staff authorization so hidden/cancelled classes and capacity fields are
-        # visible consistently, even when consumer-mode settings mask them publicly.
-        return self._authorized_get("class/classes", {
+        params = {
             "request.startDateTime": start_date_time,
             "request.endDateTime": end_date_time,
-            "request.hideCanceledClasses": False,
+            "request.hideCanceledClasses": True if public_only else False,
             "request.limit": limit,
             "request.offset": offset,
-        })
+        }
+        # Mindbody V6 intentionally returns hidden/cancelled classes to an
+        # authenticated staff request. Public schedule mirroring must therefore use
+        # the unauthenticated/public-visible feed; staff auth is reserved for
+        # lifecycle, roster and write operations.
+        if public_only:
+            return self._public_get("class/classes", params)
+        return self._authorized_get("class/classes", params)
 
     def find_clients(self, email: str) -> list[dict[str, Any]]:
         payload = self._authorized_get("client/clients", {"SearchText": email, "Limit": 50})
         return [x for x in _extract_list(payload, ("Clients", "clients", "Items")) if isinstance(x, dict)]
+
+    def _public_get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        import json, urllib.error, urllib.parse, urllib.request
+        query = urllib.parse.urlencode(
+            {k: v for k, v in params.items() if v is not None},
+            doseq=True,
+        )
+        request = urllib.request.Request(
+            f"{self.config.api_url}/{path}?{query}",
+            headers={
+                "API-Key": self.config.api_key,
+                "SiteId": self.config.site_id,
+                "Accept": "application/json",
+                "User-Agent": "ClassyPilates/2.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode() or "{}")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")
+            raise MindbodyError(detail[:1000], status=exc.code) from exc
 
     def _authorized_get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         import json, urllib.error, urllib.parse, urllib.request
