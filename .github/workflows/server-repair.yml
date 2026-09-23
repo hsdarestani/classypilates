@@ -28,77 +28,56 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- compare authenticated vs public GetClasses ---'
+          echo '--- inspect final availability drift classes ---'
           docker compose exec -T api python - <<'PY'
-          import json, urllib.parse, urllib.request
+          import json
+          from sqlalchemy import select
+          import main as core
           import mindbody_sync as mb
 
           client=mb.WriteClient.from_env()
-          params={
-              "request.startDateTime":"2026-09-23T00:00:00",
-              "request.endDateTime":"2026-09-24T00:00:00",
-              "request.hideCanceledClasses":False,
-              "request.limit":300,
-              "request.offset":0,
-          }
-          auth=client.get_classes(
-              start_date_time=params["request.startDateTime"],
-              end_date_time=params["request.endDateTime"],
-              limit=300,offset=0,
-          )
-          query=urllib.parse.urlencode(params)
-          req=urllib.request.Request(
-              f"{client.config.api_url}/class/classes?{query}",
-              headers={
-                  "API-Key":client.config.api_key,
-                  "SiteId":client.config.site_id,
-                  "Accept":"application/json",
-                  "User-Agent":"ClassyPilates/2.0",
-              },
-          )
-          with urllib.request.urlopen(req,timeout=30) as r:
-              public=json.loads(r.read().decode() or "{}")
-
-          def rows(payload):
-              return [x for x in mb._extract_list(payload,("Classes","classes","Items")) if isinstance(x,dict)]
-          def slim(row):
-              desc=row.get("ClassDescription") or {}
-              loc=row.get("Location") or {}
-              staff=row.get("Staff") or {}
-              return {
-                  "id":row.get("Id") or row.get("ID") or row.get("ClassId"),
-                  "name":desc.get("Name") or row.get("Name"),
-                  "start":row.get("StartDateTime"),
-                  "location":loc.get("Name"),
-                  "staff":staff.get("DisplayName") or staff.get("Name"),
-                  "schedule_id":row.get("ClassScheduleId") or row.get("ClassScheduleID"),
-                  "is_canceled":row.get("IsCanceled"),
-                  "is_available":row.get("IsAvailable"),
-                  "max_capacity":row.get("MaxCapacity"),
-                  "total_booked":row.get("TotalBooked"),
-                  "web_capacity":row.get("WebCapacity"),
-              }
-
-          targets=[
-              ("mid","Coach Elena","2026-09-23T08:00:00"),
-              ("mid","Coach Jane","2026-09-23T18:00:00"),
-              ("bornheim","Coach Andrea","2026-09-23T07:00:00"),
-              ("bornheim","Coach Andrea","2026-09-23T08:00:00"),
-              ("bornheim","Coach Lana","2026-09-23T17:00:00"),
-              ("bornheim","Coach Lana","2026-09-23T18:00:00"),
-          ]
-          for label,payload in [("AUTH",auth),("PUBLIC",public)]:
-              rr=rows(payload)
-              print(label,"COUNT",len(rr))
-              for studio,coach,start_at in targets:
-                  ms=[]
-                  for row in rr:
-                      loc=str((row.get("Location") or {}).get("Name") or "").casefold()
-                      st=str((row.get("Staff") or {}).get("DisplayName") or (row.get("Staff") or {}).get("Name") or "")
-                      start=str(row.get("StartDateTime") or "")
-                      if studio in loc and st==coach and start.startswith(start_at):
-                          ms.append(slim(row))
-                  print(label,studio,coach,start_at,json.dumps(ms,ensure_ascii=False,sort_keys=True))
+          for rid in ("24949","27605"):
+              with core.SessionLocal() as db:
+                  klass=db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id==rid))
+                  if not klass:
+                      print("CLASS",rid,"LOCAL_MISSING")
+                      continue
+                  remote=mb._find_remote_class(client,klass)
+                  visits_all=mb._extract_class_visits(client.get_class_visits(rid))
+                  visits=[v for v in visits_all if not bool(mb._value(v,"Cancelled","IsCancelled","LateCancelled","EarlyCancelled",default=False))]
+                  bookings=db.scalars(select(core.Booking).where(core.Booking.class_id==klass.id).order_by(core.Booking.id)).all()
+                  print("CLASS",json.dumps({
+                      "rid":rid,
+                      "local_id":klass.id,
+                      "title":klass.title,
+                      "start":str(klass.starts_at),
+                      "capacity":klass.capacity,
+                      "status":klass.status,
+                      "imported":klass.imported_bookings,
+                      "source_total":klass.source_bookings_total,
+                      "remote_capacity":mb._value(remote or {},"MaxCapacity","Capacity",default=None),
+                      "remote_total":mb._value(remote or {},"TotalBooked","TotalClients",default=None),
+                      "remote_web_capacity":mb._value(remote or {},"WebCapacity",default=None),
+                      "remote_web_booked":mb._value(remote or {},"TotalWebBooked","WebBooked",default=None),
+                      "remote_available":mb._value(remote or {},"IsAvailable",default=None),
+                      "roster_active":len(visits),
+                      "roster_all":len(visits_all),
+                  },ensure_ascii=False,sort_keys=True))
+                  for b in bookings:
+                      print("BOOKING",json.dumps({
+                          "rid":rid,"id":b.id,"ref":b.reference,"source":b.source,
+                          "status":b.status,"payment_status":b.payment_status,
+                          "method":b.payment_method,"email":b.email,
+                          "visit_id":b.mindbody_visit_id,"client_id":b.mindbody_client_id,
+                          "sync":b.mindbody_sync_status,"sync_error":b.mindbody_sync_error,
+                      },ensure_ascii=False,sort_keys=True))
+                  for v in visits:
+                      print("VISIT",json.dumps({
+                          "rid":rid,
+                          "visit_id":str(mb._value(v,"Id","ID","VisitId","VisitID",default="") or ""),
+                          "client_id":str(mb._value(v,"ClientId","ClientID",default=mb._value(v.get("Client") or {},"Id","ID",default="")) or ""),
+                          "cancelled":bool(mb._value(v,"Cancelled","IsCancelled","LateCancelled","EarlyCancelled",default=False)),
+                      },ensure_ascii=False,sort_keys=True))
           PY
 
           echo '--- api health after targeted reconcile ---'
