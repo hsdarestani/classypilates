@@ -26,8 +26,8 @@ import main as core
 import mindbody_sync
 
 
-# External production URL is configured by deploy-production.yml and currently
-# resolves through the Strato host at new.classypilates.de.
+# External production URL is configured by deploy-production.yml and resolves
+# through the Strato host at new.classypilates.de.
 WEBHOOK_PATH = "/api/integrations/mindbody/webhook"
 SUBSCRIPTION_REFERENCE = "classypilates-production-webhooks-v1"
 PUSH_API_BASE = "https://mb-api.mindbodyonline.com/push/api/v1"
