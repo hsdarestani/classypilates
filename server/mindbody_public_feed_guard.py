@@ -41,4 +41,12 @@ assert "public_only=True" in audit
 assert '"active_local_not_public"' in audit
 assert '"public_status_mismatch"' in audit
 
+roster_start = sync.index("def _reconcile_class_roster")
+roster_end = sync.find("\ndef ", roster_start + 5)
+roster_section = sync[roster_start: roster_end if roster_end != -1 else len(sync)]
+assert 'klass.imported_bookings = 0' in roster_section
+assert '_sync_class_availability(' in roster_section
+assert '_find_remote_class(client, klass)' in roster_section
+assert 'target_reserved - int(local_reserved_after)' not in roster_section
+
 print("Mindbody public feed regression guard: OK")
