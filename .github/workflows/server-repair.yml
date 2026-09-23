@@ -28,14 +28,44 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect Mindbody runtime health ---'
-          echo 'CAPABILITIES:'
-          curl -fsS http://127.0.0.1:8787/api/capabilities || true
-          echo
-          echo 'API LOGS (Mindbody, last 12h):'
-          docker compose logs --since 12h api 2>&1 | grep -E 'Mindbody|mindbody|webhook|roster|mirror|sync' | tail -500 || true
-          echo 'CONTAINER STATUS:'
-          docker compose ps
+          echo '--- inspect Mindbody worker state ---'
+          echo 'SYNC ERRORS:'
+          docker compose logs --since 12h api 2>&1 | grep -E 'Mindbody (mirror cycle failed|roster cycle failed|webhook worker failed|availability prime failed|roster sweep)' | tail -200 || true
+
+          echo 'WEBHOOK QUEUE STATE:'
+          docker compose exec -T api python - <<'PY'
+          import json
+          from sqlalchemy import text
+          import main as core
+          with core.engine.begin() as c:
+              counts = c.execute(text("""
+                SELECT status, COUNT(*) AS n, MIN(created_at) AS oldest, MAX(created_at) AS newest,
+                       MAX(processed_at) AS last_processed
+                FROM mindbody_webhook_events
+                GROUP BY status
+                ORDER BY status
+              """)).mappings().all()
+              failed = c.execute(text("""
+                SELECT message_id,event_id,class_id,status,attempts,last_error,created_at,next_attempt_at,processed_at
+                FROM mindbody_webhook_events
+                WHERE status!='done'
+                ORDER BY created_at DESC
+                LIMIT 30
+              """)).mappings().all()
+          print("QUEUE_COUNTS", json.dumps([dict(x) for x in counts], default=str, sort_keys=True))
+          print("QUEUE_NOT_DONE", json.dumps([dict(x) for x in failed], default=str, sort_keys=True))
+          PY
+
+          echo 'RECENT MIRROR TIMESTAMPS:'
+          docker compose exec -T api python - <<'PY'
+          import json
+          from sqlalchemy import select, func
+          import main as core
+          with core.SessionLocal() as db:
+              latest=db.scalar(select(func.max(core.ClassSession.mindbody_synced_at)))
+              active=db.scalar(select(func.count(core.ClassSession.id)).where(core.ClassSession.status=="active"))
+          print(json.dumps({"latest_mindbody_synced_at":latest.isoformat() if latest else None,"active_classes":int(active or 0)},sort_keys=True))
+          PY
 
           echo '--- api health after webhook diagnostics ---'
           curl -fsS http://127.0.0.1:8787/api/health
