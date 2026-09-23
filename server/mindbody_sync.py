@@ -2436,6 +2436,11 @@ def sync_schedule_availability_fast() -> dict[str, int]:
             break
         offset += len(batch)
 
+    public_ids = {
+        str(_value(row, "Id", "ID", "ClassId", default="") or "")
+        for row in classes
+        if str(_value(row, "Id", "ID", "ClassId", default="") or "")
+    }
     counts = {
         "classes_seen": len(classes),
         "classes_matched": 0,
@@ -2443,6 +2448,7 @@ def sync_schedule_availability_fast() -> dict[str, int]:
         "classes_skipped_unmapped": 0,
         "metadata_updated": 0,
         "availability_updated": 0,
+        "nonpublic_hidden": 0,
         "local_only_cancelled": 0,
     }
     cancellation_email_jobs: list[tuple] = []
@@ -2501,6 +2507,9 @@ def sync_schedule_availability_fast() -> dict[str, int]:
                 counts["availability_updated"] += 1
             counts["classes_matched"] += 1
 
+        counts["nonpublic_hidden"] = _hide_nonpublic_mindbody_classes(
+            db, public_ids=public_ids, start=now, end=end, now=now
+        )
         counts["local_only_cancelled"] = _cancel_unlinked_local_classes(
             db, start=now, end=end
         )
