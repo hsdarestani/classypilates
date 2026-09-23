@@ -503,7 +503,11 @@ def main():
         # Compare individual active Mindbody visits against local rows for the near-term
         # schedule. This catches both "booking missing in Classy" and "booking exists
         # locally but no longer exists in Mindbody".
-        roster_until = now + timedelta(days=7)
+        deep_roster_audit = os.getenv("MINDBODY_AUDIT_DEEP", "").strip().lower() in {"1", "true", "yes"}
+        # Deployment health is strict for the next 24h, which is reconciled immediately.
+        # The explicit deep audit keeps the full 7-day identity check available without
+        # turning an in-progress background sweep into a false production failure.
+        roster_until = now + timedelta(days=7 if deep_roster_audit else 1)
         remote_visits_missing_local = 0
         local_visits_missing_remote = 0
         roster_audit_errors = 0
@@ -516,7 +520,6 @@ def main():
             if starts and now <= starts < roster_until and not remote_cancelled(remote):
                 near_remote.append(remote)
 
-        deep_roster_audit = os.getenv("MINDBODY_AUDIT_DEEP", "").strip().lower() in {"1", "true", "yes"}
         if not deep_roster_audit:
             local_visit_counts = {}
             if local_ids:

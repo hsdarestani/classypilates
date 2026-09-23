@@ -530,15 +530,13 @@ ROSTER_WINDOW_DAYS = max(1, min(14, int(os.getenv("MINDBODY_ROSTER_WINDOW_DAYS",
 
 
 def _roster_loop() -> None:
-    # Reconcile today's/next-24h rosters immediately after startup without blocking
-    # API readiness. This is the high-value window for campaign traffic and exact
-    # spot counts. Later sweeps cover the wider configured horizon hourly.
+    # Reconcile the full configured roster horizon immediately after startup without
+    # blocking API readiness, then repeat on the normal interval.
     if ROSTER_INITIAL_DELAY:
         time.sleep(ROSTER_INITIAL_DELAY)
-    first_pass = True
     while True:
         try:
-            days = 1 if first_pass else ROSTER_WINDOW_DAYS
+            days = ROSTER_WINDOW_DAYS
             with mindbody_sync.RECONCILE_LOCK:
                 result = mindbody_sync.sync_rosters_window(days=days)
             print(
@@ -550,7 +548,6 @@ def _roster_loop() -> None:
                 print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
         except Exception as exc:
             print(f"Mindbody roster cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
-        first_pass = False
         time.sleep(ROSTER_SYNC_INTERVAL)
 
 
