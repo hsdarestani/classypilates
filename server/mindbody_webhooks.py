@@ -425,6 +425,17 @@ def _push_request(method: str, path: str, payload: dict[str, Any] | None = None)
         raise RuntimeError(f"Mindbody Webhooks API unavailable: {exc.reason}") from exc
 
 
+def _response_value(payload: Any, *names: str, default: Any = "") -> Any:
+    """Read Mindbody Webhooks fields across camelCase/PascalCase responses."""
+    if not isinstance(payload, dict):
+        return default
+    wanted = {str(name).casefold() for name in names}
+    for key, value in payload.items():
+        if str(key).casefold() in wanted:
+            return value
+    return default
+
+
 def _subscriptions() -> list[dict[str, Any]]:
     payload = _push_request("GET", "subscriptions")
     items = payload.get("items") or payload.get("Items") or []
@@ -452,8 +463,8 @@ def prepare_subscription(webhook_url: str) -> dict[str, Any]:
     # always uses the exact new ID returned below instead of searching by reference.
     try:
         for row in _subscriptions():
-            reference = str(row.get("referenceId") or "")
-            subscription_id = str(row.get("subscriptionId") or "").strip()
+            reference = str(_response_value(row, "referenceId", "ReferenceId") or "")
+            subscription_id = str(_response_value(row, "subscriptionId", "SubscriptionId") or "").strip()
             if reference.startswith(SUBSCRIPTION_REFERENCE) and subscription_id:
                 try:
                     _push_request("DELETE", f"subscriptions/{subscription_id}")
@@ -479,13 +490,13 @@ def prepare_subscription(webhook_url: str) -> dict[str, Any]:
             "webhookUrl": webhook_url,
         },
     )
-    subscription_id = str(created.get("subscriptionId") or "").strip()
-    signature_key = str(created.get("messageSignatureKey") or "").strip()
+    subscription_id = str(_response_value(created, "subscriptionId", "SubscriptionId") or "").strip()
+    signature_key = str(_response_value(created, "messageSignatureKey", "MessageSignatureKey") or "").strip()
     if not subscription_id or not signature_key:
         raise RuntimeError("Mindbody did not return a webhook subscription ID/signature key")
     return {
         "subscription_id": subscription_id,
-        "status": str(created.get("status") or ""),
+        "status": str(_response_value(created, "status", "Status") or ""),
         "signature_key": signature_key,
         "created": True,
     }
@@ -512,9 +523,9 @@ def activate_subscription(webhook_url: str, subscription_id: str | None = None) 
     )
     return {
         "subscription_id": subscription_id,
-        "status": str(updated.get("status") or ""),
-        "webhook_url": str(updated.get("webhookUrl") or webhook_url),
-        "events": len(updated.get("eventIds") or EVENT_IDS),
+        "status": str(_response_value(updated, "status", "Status") or ""),
+        "webhook_url": str(_response_value(updated, "webhookUrl", "WebhookUrl") or webhook_url),
+        "events": len(_response_value(updated, "eventIds", "EventIds", default=[]) or EVENT_IDS),
     }
 
 
