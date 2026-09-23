@@ -28,56 +28,22 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- inspect final availability drift classes ---'
+          echo '--- inspect live webhook route registration ---'
+          cd /opt/classypilates
+          echo 'LOCAL HEAD:'
+          curl -si -X HEAD http://127.0.0.1:8787/api/integrations/mindbody/webhook || true
+          echo 'LOCAL GET:'
+          curl -si http://127.0.0.1:8787/api/integrations/mindbody/webhook || true
+          echo 'ROUTES FROM RUNNING CODE:'
           docker compose exec -T api python - <<'PY'
-          import json
-          from sqlalchemy import select
-          import main as core
-          import mindbody_sync as mb
-
-          client=mb.WriteClient.from_env()
-          for rid in ("24949","27605"):
-              with core.SessionLocal() as db:
-                  klass=db.scalar(select(core.ClassSession).where(core.ClassSession.mindbody_class_id==rid))
-                  if not klass:
-                      print("CLASS",rid,"LOCAL_MISSING")
-                      continue
-                  remote=mb._find_remote_class(client,klass)
-                  visits_all=mb._extract_class_visits(client.get_class_visits(rid))
-                  visits=[v for v in visits_all if not bool(mb._value(v,"Cancelled","IsCancelled","LateCancelled","EarlyCancelled",default=False))]
-                  bookings=db.scalars(select(core.Booking).where(core.Booking.class_id==klass.id).order_by(core.Booking.id)).all()
-                  print("CLASS",json.dumps({
-                      "rid":rid,
-                      "local_id":klass.id,
-                      "title":klass.title,
-                      "start":str(klass.starts_at),
-                      "capacity":klass.capacity,
-                      "status":klass.status,
-                      "imported":klass.imported_bookings,
-                      "source_total":klass.source_bookings_total,
-                      "remote_capacity":mb._value(remote or {},"MaxCapacity","Capacity",default=None),
-                      "remote_total":mb._value(remote or {},"TotalBooked","TotalClients",default=None),
-                      "remote_web_capacity":mb._value(remote or {},"WebCapacity",default=None),
-                      "remote_web_booked":mb._value(remote or {},"TotalWebBooked","WebBooked",default=None),
-                      "remote_available":mb._value(remote or {},"IsAvailable",default=None),
-                      "roster_active":len(visits),
-                      "roster_all":len(visits_all),
-                  },ensure_ascii=False,sort_keys=True))
-                  for b in bookings:
-                      print("BOOKING",json.dumps({
-                          "rid":rid,"id":b.id,"ref":b.reference,"source":b.source,
-                          "status":b.status,"payment_status":b.payment_status,
-                          "method":b.payment_method,"email":b.email,
-                          "visit_id":b.mindbody_visit_id,"client_id":b.mindbody_client_id,
-                          "sync":b.mindbody_sync_status,"sync_error":b.mindbody_sync_error,
-                      },ensure_ascii=False,sort_keys=True))
-                  for v in visits:
-                      print("VISIT",json.dumps({
-                          "rid":rid,
-                          "visit_id":str(mb._value(v,"Id","ID","VisitId","VisitID",default="") or ""),
-                          "client_id":str(mb._value(v,"ClientId","ClientID",default=mb._value(v.get("Client") or {},"Id","ID",default="")) or ""),
-                          "cancelled":bool(mb._value(v,"Cancelled","IsCancelled","LateCancelled","EarlyCancelled",default=False)),
-                      },ensure_ascii=False,sort_keys=True))
+          import runtime_app
+          import mindbody_webhooks
+          print("runtime_file", runtime_app.__file__)
+          print("webhook_file", mindbody_webhooks.__file__)
+          for r in runtime_app.app.router.routes:
+              p=getattr(r,"path","")
+              if "mindbody" in p or "integrations" in p:
+                  print("ROUTE",p,sorted(getattr(r,"methods",[]) or []),getattr(r,"name",""))
           PY
 
           echo '--- api health after targeted reconcile ---'
