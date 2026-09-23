@@ -28,13 +28,28 @@ jobs:
           echo '--- api health before roster reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
 
-          echo '--- test whether current deploy credentials reach public dns host ---'
-          DNS_IP="$(getent ahostsv4 classy.smarbiz.sbs | awk 'NR==1{print $1}')"
-          if SSHPASS="$PASS" sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@"$DNS_IP" 'echo PUBLIC_DNS_SSH_OK; test -d /opt/classypilates && echo PUBLIC_HAS_CLASSY=yes || echo PUBLIC_HAS_CLASSY=no' 2>/dev/null; then
-            echo 'PUBLIC_DNS_SSH_WITH_CURRENT_PASS=yes'
+          echo '--- confirm HOST is new.classypilates.de production ---'
+          NEW_DNS="$(getent ahostsv4 new.classypilates.de | awk 'NR==1{print $1}')"
+          OLD_DNS="$(getent ahostsv4 classy.smarbiz.sbs | awk 'NR==1{print $1}')"
+          if [ "$HOST" = "$NEW_DNS" ]; then
+            echo 'HOST_EQUALS_NEW_CLASSY_DNS=yes'
           else
-            echo 'PUBLIC_DNS_SSH_WITH_CURRENT_PASS=no'
+            echo 'HOST_EQUALS_NEW_CLASSY_DNS=no'
           fi
+          if [ "$HOST" = "$OLD_DNS" ]; then
+            echo 'HOST_EQUALS_OLD_SMARBIZ_DNS=yes'
+          else
+            echo 'HOST_EQUALS_OLD_SMARBIZ_DNS=no'
+          fi
+          if hostname -I | tr ' ' '\n' | grep -Fxq "$NEW_DNS"; then
+            echo 'NEW_CLASSY_DNS_IS_LOCAL_ADDRESS=yes'
+          else
+            echo 'NEW_CLASSY_DNS_IS_LOCAL_ADDRESS=no'
+          fi
+          echo 'NEW DOMAIN FROM DEPLOY HOST:'
+          curl -ski --max-time 20 https://new.classypilates.de/api/health | head -20 || true
+          echo 'NEW DOMAIN WEBHOOK:'
+          curl -ski --max-time 20 https://new.classypilates.de/api/integrations/mindbody/webhook | head -20 || true
 
           echo '--- api health after targeted reconcile ---'
           curl -fsS http://127.0.0.1:8787/api/health
