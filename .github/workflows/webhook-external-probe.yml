@@ -12,7 +12,7 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe public webhook endpoint
+      - name: Probe public webhook endpoint again
         run: |
           set -euxo pipefail
           curl -vkI --max-time 20 https://classy.smarbiz.sbs/api/integrations/mindbody/webhook
