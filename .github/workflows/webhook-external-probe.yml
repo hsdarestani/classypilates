@@ -1,0 +1,19 @@
+name: External Mindbody Webhook Probe
+
+on:
+  push:
+    branches:
+      - ops/oneoff-roster-reconcile
+    paths:
+      - .github/workflows/webhook-external-probe.yml
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe public webhook endpoint
+        run: |
+          set -euxo pipefail
+          curl -vkI --max-time 20 https://classy.smarbiz.sbs/api/integrations/mindbody/webhook
+          curl -vk --max-time 20 https://classy.smarbiz.sbs/api/integrations/mindbody/webhook -o /dev/null
