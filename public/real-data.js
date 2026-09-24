@@ -8,10 +8,9 @@
   const api=async path=>{const response=await fetch(path,{headers:{accept:'application/json'},cache:'no-store'});if(!response.ok)throw new Error(path);return response.json()};
 
   /*
-   * These supplied portraits are intentionally rendered as CSS backgrounds in
-   * the coach cards instead of <img> + object-fit. That makes the 16:10 crop
-   * deterministic across Chrome/Safari/Android/iOS and prevents later image
-   * rules from changing the framing.
+   * Coach portraits use one editorial frame on every device: a softly blurred
+   * full-bleed copy fills the frame while the real portrait stays uncropped in
+   * front. This avoids harsh side gaps without cutting faces or bodies.
    */
   const LOCAL_COACH_PHOTOS=[
     {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',cardPosition:'50% 35%'},
@@ -74,7 +73,7 @@
 
     let avatar='';
     if(local){
-      avatar=`<div class="coach-real-avatar coach-real-avatar--fixed-photo" data-coach-photo-frame data-photo-mode="background" style="background-image:url(&quot;${esc(local.src)}&quot;);background-position:${esc(local.cardPosition)}"></div>`;
+      avatar=`<div class="coach-real-avatar" data-coach-photo-frame style="--coach-pos:${esc(local.cardPosition)}"><span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(local.src)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
     }else if(remotePhoto){
       avatar=`<div class="coach-real-avatar" data-coach-photo-frame><span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(remotePhoto)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
     }else{
@@ -86,7 +85,6 @@
 
   function prepareCoachPhotoFrames(grid){
     grid.querySelectorAll('[data-coach-photo-frame]').forEach(frame=>{
-      if(frame.dataset.photoMode==='background')return;
       const image=frame.querySelector('img');
       const backdrop=frame.querySelector('.coach-real-backdrop');
       if(!image||!backdrop)return;
