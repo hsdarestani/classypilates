@@ -8,9 +8,9 @@
   const api=async path=>{const response=await fetch(path,{headers:{accept:'application/json'},cache:'no-store'});if(!response.ok)throw new Error(path);return response.json()};
 
   /*
-   * Coach portraits use one editorial frame on every device: a softly blurred
-   * full-bleed copy fills the frame while the real portrait stays uncropped in
-   * front. This avoids harsh side gaps without cutting faces or bodies.
+   * Coach portraits use a clean full-bleed editorial crop. The frame itself is
+   * portrait-oriented, so faces stay visible without the awkward side gutters
+   * created by contain/blur treatments.
    */
   const LOCAL_COACH_PHOTOS=[
     {match:name=>/^anna\s*k\b/.test(name),src:'/anna%20K.jpg',cardPosition:'50% 35%'},
@@ -73,23 +73,20 @@
 
     let avatar='';
     if(local){
-      avatar=`<div class="coach-real-avatar" data-coach-photo-frame style="--coach-pos:${esc(local.cardPosition)}"><span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(local.src)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
+      avatar=`<div class="coach-real-avatar" data-coach-photo-frame style="--coach-pos:${esc(local.cardPosition)}"><img src="${esc(local.src)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
     }else if(remotePhoto){
-      avatar=`<div class="coach-real-avatar" data-coach-photo-frame><span class="coach-real-backdrop" aria-hidden="true"></span><img src="${esc(remotePhoto)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
+      avatar=`<div class="coach-real-avatar" data-coach-photo-frame><img src="${esc(remotePhoto)}" alt="Coach ${esc(coach.display_name)}" loading="lazy" decoding="async"></div>`;
     }else{
       avatar=`<div class="coach-real-avatar" data-coach-photo-frame><span class="coach-real-initials">${esc(initials(coach.display_name))}</span></div>`;
     }
 
-    return `<article class="coach-real-card" data-coach-card>${avatar}<div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div><b>${count(coach.sessions)}</b><small>Sessions</small><b>${count(coach.bookings)}</b><small>Bookings</small></div></div></article>`;
+    return `<article class="coach-real-card" data-coach-card>${avatar}<div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div class="coach-real-stats"><span><b>${count(coach.sessions)}</b><small>Sessions</small></span><span><b>${count(coach.bookings)}</b><small>Bookings</small></span></div></div></article>`;
   }
 
   function prepareCoachPhotoFrames(grid){
     grid.querySelectorAll('[data-coach-photo-frame]').forEach(frame=>{
       const image=frame.querySelector('img');
-      const backdrop=frame.querySelector('.coach-real-backdrop');
-      if(!image||!backdrop)return;
-      const src=image.getAttribute('src')||image.src;
-      if(src)backdrop.style.backgroundImage=`url("${cssUrl(src)}")`;
+      if(!image)return;
       image.addEventListener('error',()=>{
         frame.classList.add('coach-photo-error');
         frame.innerHTML=`<span class="coach-real-initials">${esc(initials(image.alt.replace(/^Coach\s+/i,'')))}</span>`;
