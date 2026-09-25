@@ -36,6 +36,11 @@
   $('#loginBox').onsubmit=async e=>{e.preventDefault();const button=$('#loginBtn');try{button.disabled=true;button.textContent='Checking…';$('#loginMsg').textContent='';const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:$('#loginEmail').value.trim(),password:$('#loginPassword').value})});state.token=d.token;state.user=d.user;localStorage.setItem('cpStaffToken',d.token);history.replaceState({},'',location.pathname.startsWith('/coach')?'/coach':'/admin');showApp()}catch(e){const messages={invalid_credentials:'Email or password is incorrect.',inactive_user:'This account has been disabled.',server_unreachable:'The login server is unavailable. Please try again.',request_failed:'Login failed. Please try again.'};$('#loginMsg').textContent=messages[e.message]||e.message}finally{button.disabled=false;button.textContent='Sign in'}};
   $('#setupBtn').onclick=async()=>{try{$('#setupMsg').textContent='';const d=await api('/api/auth/bootstrap',{method:'POST',body:JSON.stringify({email:$('#setupEmail').value,password:$('#setupPassword').value,first_name:$('#setupFirst').value})});state.token=d.token;state.user=d.user;localStorage.setItem('cpStaffToken',d.token);showApp();toast('Administrator created')}catch(e){$('#setupMsg').textContent=e.message==='password_too_short'?'Password must be at least 10 characters.':e.message}};
   $('#logout').onclick=logout;$('#mobileNav').onclick=()=>$('.sidebar').classList.toggle('open');
+  document.addEventListener('click',event=>{
+    const trigger=event.target.closest?.('[data-customer-profile]');if(!trigger)return;
+    event.preventDefault();
+    customerProfileModal({email:trigger.dataset.email||'',mindbodyClientId:trigger.dataset.mb||'',localId:trigger.dataset.localId||'',name:trigger.dataset.name||'Customer'})
+  });
 
   function showApp(){
     $('#authScreen').hidden=true;$('#authScreen').style.display='none';$('#app').hidden=false;$('#app').style.display='grid';
@@ -74,37 +79,44 @@
     $('#heroProfile')?.addEventListener('click',()=>switchView('profile'));
   }
 
-  function bookingTable(rows,manage=true){return `<div class="table"><div class="trow head"><span>CUSTOMER</span><span>CLASS</span><span>STUDIO / TIME</span><span>SOURCE</span><span>STATUS</span><span></span></div>${rows.map(b=>`<div class="trow"><div><b>${esc(b.customer_name||b.email)}</b><small>${esc(b.email)}</small></div><div><b>${esc(b.class_name)}</b><small>${esc(b.reference)}</small></div><div><b>${esc(b.studio)}</b><small>${dt(b.starts_at)}</small></div><div><b>${b.source==='mindbody'?'Mindbody':'Website'}</b><small>${esc(b.mindbody_sync_status||'')}</small></div><div><span class="status ${esc(b.status)}">${esc(b.status)}</span><small>${esc(b.payment_status)}${b.mindbody_sync_error?' · sync error':''}</small></div><div>${manage&&has('bookings.manage')&&b.source!=='mindbody'?`<button class="secondary" data-booking="${b.id}" data-status="${b.status==='reserved'?'cancelled':'reserved'}">${b.status==='reserved'?'Cancel':'Activate'}</button>`:''}</div></div>`).join('')}</div>`}
+  function bookingTable(rows,manage=true){
+    const body=rows.map(b=>{
+      const customer='<button type="button" class="customer-profile-link" data-customer-profile data-email="'+esc(b.email||'')+'" data-mb="'+esc(b.mindbody_client_id||'')+'" data-name="'+esc(b.customer_name||b.email||'Customer')+'"><b>'+esc(b.customer_name||b.email)+'</b><small>'+esc(b.email)+'</small></button>';
+      const action=manage&&has('bookings.manage')&&b.source!=='mindbody'?'<button class="secondary" data-booking="'+b.id+'" data-status="'+(b.status==='reserved'?'cancelled':'reserved')+'">'+(b.status==='reserved'?'Cancel':'Activate')+'</button>':'';
+      return '<div class="trow"><div>'+customer+'</div><div><b>'+esc(b.class_name)+'</b><small>'+esc(b.reference)+'</small></div><div><b>'+esc(b.studio)+'</b><small>'+dt(b.starts_at)+'</small></div><div><b>'+(b.source==='mindbody'?'Mindbody':'Website')+'</b><small>'+esc(b.mindbody_sync_status||'')+'</small></div><div><span class="status '+esc(b.status)+'">'+esc(b.status)+'</span><small>'+esc(b.payment_status)+(b.mindbody_sync_error?' · sync error':'')+'</small></div><div>'+action+'</div></div>';
+    }).join('');
+    return '<div class="table"><div class="trow head"><span>CUSTOMER</span><span>CLASS</span><span>STUDIO / TIME</span><span>SOURCE</span><span>STATUS</span><span></span></div>'+body+'</div>';
+  }
   async function bookings(){const d=await api('/api/staff/bookings');let mb={};try{mb=await api('/api/staff/mindbody/status')}catch(_){}$('#view').innerHTML=`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY MIRROR</p><h2>${mb.configured?'Live two-way sync':'Setup required'}</h2><p>${mb.last_synced_at?'Last sync '+dt(mb.last_synced_at):'Waiting for first live sync'} · ${mb.pending||0} pending · ${mb.failed||0} failed</p></div>${has('bookings.manage')?'<button class="secondary" id="syncMindbody">Sync now</button>':''}</div></section><section class="panel"><div class="panel-head"><div><p class="kicker">BOOKING MANAGEMENT</p><h2>Website & Mindbody bookings</h2><p>${d.bookings.length} mirrored entries · customer, source, payment and sync state.</p></div></div>${d.bookings.length?bookingTable(d.bookings):'<div class="empty">No bookings yet.</div>'}</section>`;$('#syncMindbody')?.addEventListener('click',async()=>{await api('/api/staff/mindbody/sync',{method:'POST'});toast('Mindbody sync queued')});$$('[data-booking]').forEach(b=>b.onclick=async()=>{await api(`/api/staff/bookings/${b.dataset.booking}`,{method:'PATCH',body:JSON.stringify({status:b.dataset.status})});toast('Booking updated');bookings()})}
 
   async function customers(){
-    const d=await api('/api/staff/customers');
+    const d=await api('/api/staff/customers?limit=50&offset=0&include_accounts=true');
     let sales=[];try{sales=(await api('/api/staff/class-passes')).sales}catch(_){}
-    const localAccounts=d.customers.filter(x=>x.local_id);
-    const customerOptions=localAccounts.map(x=>`<option value="${x.local_id}">${esc([x.first_name,x.last_name].filter(Boolean).join(' ')||x.email)} · ${esc(x.email)}</option>`).join('');
+    const localAccounts=d.local_accounts||[];
+    const customerOptions=localAccounts.map(x=>`<option value="${x.id}">${esc([x.first_name,x.last_name].filter(Boolean).join(' ')||x.email)} · ${esc(x.email)}</option>`).join('');
     const counts=d.counts||{};
     const mindbodyCount=(counts.mindbody||0)+(counts.both||0);
-    const loginCount=d.customers.filter(x=>x.has_login).length;
+    const loginCount=Number(counts.classy_logins||0);
 
     const passPanel=has('customers.manage')?`<section class="panel pass-sale-panel"><div class="panel-head"><div><p class="kicker">ON-SITE SALES</p><h2>Sell a 10-Class Pass</h2><p>Class Credits are assigned to Classy customer accounts. Mindbody-only profiles remain visible in the same customer directory without creating an artificial login.</p></div></div><div class="pass-sale-grid"><label>PASS TYPE<select id="passMode"><option value="account">For customer account</option><option value="gift">As a gift code</option></select></label><label>PAYMENT<select id="passPayment"><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label id="passCustomerLabel">CUSTOMER<select id="passCustomer">${customerOptions}</select></label><div class="pass-summary"><span>10 CLASS CREDITS</span><b>219 € · 10 bookings</b><small>Valid across all Classy studios.</small></div><button class="primary" id="sellPass">Complete on-site sale</button></div><div id="passResult"></div>${sales.length?`<div class="pass-history"><h3>Recent passes</h3>${sales.slice(0,8).map(s=>`<div><span>${s.mode==='gift'?'Gift code':'Customer account'}</span><b>${esc(s.code||'10 credits assigned')}</b><small>${money(s.amount_cents)} · ${esc(s.payment_method)} · ${dt(s.created_at)}</small></div>`).join('')}</div>`:''}</section>`:'';
 
     $('#view').innerHTML=`<div class="cards">
-      <article class="metric"><span>ALL CUSTOMERS</span><b>${d.customers.length}</b><small>one unified directory</small></article>
+      <article class="metric"><span>ALL CUSTOMERS</span><b>${Number(counts.total||0).toLocaleString()}</b><small>one unified directory</small></article>
       <article class="metric"><span>MINDBODY</span><b>${mindbodyCount}</b><small>provider profiles</small></article>
       <article class="metric"><span>CLASSY LOGINS</span><b>${loginCount}</b><small>customer accounts</small></article>
-      <article class="metric"><span>BOOKINGS</span><b>${d.customers.reduce((sum,x)=>sum+Number(x.booking_count||0),0)}</b><small>linked across both sources</small></article>
+      <article class="metric"><span>BOOKINGS</span><b>${Number(counts.bookings||0).toLocaleString()}</b><small>linked across both sources</small></article>
     </div>
     ${passPanel}
     <section class="panel customer-directory-panel">
       <div class="panel-head"><div><p class="kicker">CUSTOMER DIRECTORY</p><h2>Customers</h2><p>Classy and Mindbody profiles live in the same list. Source stays visible on every profile.</p></div><button class="secondary" id="refreshMindbodyCustomers">Refresh Mindbody</button></div>
       <div class="list-toolbar customer-toolbar"><input id="customerSearch" type="search" placeholder="Search name, email, phone or Mindbody ID…"><select id="customerSourceFilter" aria-label="Filter customer source"><option value="">All sources</option><option value="Classy">Classy</option><option value="Mindbody">Mindbody</option><option value="Classy + Mindbody">Classy + Mindbody</option></select><select id="customerStateFilter" aria-label="Filter customer status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select><span id="customerCount"></span></div>
       <div id="customerDirectory"></div>
+      <div class="customer-directory-pager" id="customerPager"><button class="secondary" type="button" id="customerPrev">← Previous</button><span id="customerPage"></span><button class="secondary" type="button" id="customerNext">Next →</button></div>
     </section>`;
 
     const customerRows=rows=>{
-      const limited=rows.slice(0,250);
-      if(!limited.length)return '<div class="empty">No matching customers.</div>';
-      return `<div class="table customer-directory"><div class="trow head"><span>CUSTOMER</span><span>CONTACT</span><span>SOURCE</span><span>BOOKINGS</span><span>PROFILE</span><span></span></div>${limited.map(x=>{
+      if(!rows.length)return '<div class="empty">No matching customers.</div>';
+      return `<div class="table customer-directory"><div class="trow head"><span>CUSTOMER</span><span>CONTACT</span><span>SOURCE</span><span>BOOKINGS</span><span>PROFILE</span><span></span></div>${rows.map(x=>{
         const name=[x.first_name,x.last_name].filter(Boolean).join(' ')||x.email||`Mindbody ${x.mindbody_client_id||''}`;
         const contact=x.email||x.phone||'No contact exposed';
         const sourceClass=x.source==='Mindbody'?'mindbody':x.source==='Classy + Mindbody'?'both':'classy';
@@ -112,7 +124,7 @@
         const secondary=x.phone&&x.email?x.phone:(x.birth_date?`DOB ${x.birth_date}`:'—');
         const providerState=x.provider_status||((x.provider_active??x.is_active)?'Active':'Inactive');
         return `<div class="trow">
-          <div><b>${esc(name)}</b><small>${esc(contact)}</small></div>
+          <div><button type="button" class="customer-profile-link" data-customer-profile data-local-id="${x.local_id||''}" data-email="${esc(x.email||'')}" data-mb="${esc(x.mindbody_client_id||'')}" data-name="${esc(name)}"><b>${esc(name)}</b><small>${esc(contact)}</small></button></div>
           <div><b>${esc(secondary)}</b><small>${x.home_location?esc(x.home_location):x.client_type?esc(x.client_type):''}</small></div>
           <div><span class="source-badge ${sourceClass}">${esc(sourceLabel)}</span><small>${x.mindbody_client_id?`MB ${esc(x.mindbody_client_id)}`:x.has_login?'Classy account':''}</small></div>
           <div><b>${Number(x.active_bookings||0)} active</b><small>${Number(x.booking_count||0)} total</small></div>
@@ -122,35 +134,53 @@
             ${x.local_id&&has('customers.manage')?`<button class="secondary" data-credit="${x.local_id}" data-current="${Number(x.credits||0)}">Credits</button><button class="${x.is_active?'danger':'secondary'}" data-customer-state="${x.local_id}" data-active="${x.is_active?'0':'1'}">${x.is_active?'Disable':'Activate'}</button>`:''}
           </div>
         </div>`
-      }).join('')}</div>${rows.length>limited.length?`<p class="directory-limit-note">Showing the first ${limited.length} of ${rows.length}. Use search to narrow the list.</p>`:''}`
+      }).join('')}</div>`
     };
 
     const wireRows=()=>{
-      $$('[data-credit]').forEach(button=>button.onclick=async()=>{const value=prompt('New Class Credit balance',button.dataset.current);if(value===null)return;const credits=Number(value);if(!Number.isInteger(credits)||credits<0)return toast('Enter a valid number');await api(`/api/staff/customers/${button.dataset.credit}`,{method:'PATCH',body:JSON.stringify({credits})});toast('Credits updated');customers()});
-      $$('[data-customer-state]').forEach(button=>button.onclick=async()=>{await api(`/api/staff/customers/${button.dataset.customerState}`,{method:'PATCH',body:JSON.stringify({is_active:button.dataset.active==='1'})});toast('Customer status updated');customers()});
+      $$('[data-credit]').forEach(button=>button.onclick=async()=>{const value=prompt('New Class Credit balance',button.dataset.current);if(value===null)return;const credits=Number(value);if(!Number.isInteger(credits)||credits<0)return toast('Enter a valid number');await api(`/api/staff/customers/${button.dataset.credit}`,{method:'PATCH',body:JSON.stringify({credits})});toast('Credits updated');loadDirectory()});
+      $$('[data-customer-state]').forEach(button=>button.onclick=async()=>{await api(`/api/staff/customers/${button.dataset.customerState}`,{method:'PATCH',body:JSON.stringify({is_active:button.dataset.active==='1'})});toast('Customer status updated');loadDirectory()});
       $$('[data-mb-customer]').forEach(button=>{button.onclick=()=>mindbodyCustomerModal(button.dataset.mbCustomer,d.customers.find(x=>String(x.mindbody_client_id)===String(button.dataset.mbCustomer)))})
     };
-    const renderRows=rows=>{
+    const pageState={q:'',source:'',status:'',offset:0,limit:Number(d.limit||50),total:Number(d.filtered_total||0),loading:false};
+    let current=d;
+    const renderRows=payload=>{
+      current=payload;
+      const rows=payload.customers||[];
+      pageState.total=Number(payload.filtered_total||0);
+      pageState.offset=Number(payload.offset||0);
+      pageState.limit=Number(payload.limit||50);
       $('#customerDirectory').innerHTML=customerRows(rows);
-      $('#customerCount').textContent=`${rows.length} of ${d.customers.length}`;
+      const from=pageState.total?pageState.offset+1:0,to=Math.min(pageState.offset+rows.length,pageState.total);
+      $('#customerCount').textContent=from+'–'+to+' of '+pageState.total.toLocaleString();
+      const page=Math.floor(pageState.offset/pageState.limit)+1,pages=Math.max(1,Math.ceil(pageState.total/pageState.limit));
+      $('#customerPage').textContent='Page '+page+' / '+pages;
+      $('#customerPrev').disabled=pageState.loading||pageState.offset<=0;
+      $('#customerNext').disabled=pageState.loading||pageState.offset+pageState.limit>=pageState.total;
+      $('#customerPager').hidden=pageState.total<=pageState.limit;
       wireRows()
     };
-    const applyCustomerFilters=()=>{
-      const q=($('#customerSearch')?.value||'').trim().toLowerCase();
-      const source=$('#customerSourceFilter')?.value||'';
-      const stateFilter=$('#customerStateFilter')?.value||'';
-      renderRows(d.customers.filter(x=>{
-        const matchesQuery=!q||[x.first_name,x.last_name,x.email,x.phone,x.mindbody_client_id,x.client_type,x.home_location,x.source].some(value=>String(value||'').toLowerCase().includes(q));
-        const matchesSource=!source||x.source===source;
-        const active=Boolean(x.provider_active??x.is_active);
-        const matchesState=!stateFilter||(stateFilter==='active'?active:!active);
-        return matchesQuery&&matchesSource&&matchesState;
-      }))
+    const loadDirectory=async(reset=false)=>{
+      if(pageState.loading)return;
+      if(reset)pageState.offset=0;
+      pageState.loading=true;
+      $('#customerDirectory')?.classList.add('is-loading');
+      try{
+        const params=new URLSearchParams({limit:String(pageState.limit),offset:String(pageState.offset)});
+        if(pageState.q)params.set('q',pageState.q);
+        if(pageState.source)params.set('source',pageState.source);
+        if(pageState.status)params.set('status',pageState.status);
+        renderRows(await api('/api/staff/customers?'+params.toString()))
+      }catch(error){toast(error.message)}
+      finally{pageState.loading=false;$('#customerDirectory')?.classList.remove('is-loading');if(current)renderRows(current)}
     };
-    renderRows(d.customers);
-    $('#customerSearch')?.addEventListener('input',applyCustomerFilters);
-    $('#customerSourceFilter')?.addEventListener('change',applyCustomerFilters);
-    $('#customerStateFilter')?.addEventListener('change',applyCustomerFilters);
+    renderRows(d);
+    let searchTimer=0;
+    $('#customerSearch')?.addEventListener('input',event=>{pageState.q=event.target.value.trim();clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadDirectory(true),280)});
+    $('#customerSourceFilter')?.addEventListener('change',event=>{pageState.source=event.target.value;loadDirectory(true)});
+    $('#customerStateFilter')?.addEventListener('change',event=>{pageState.status=event.target.value;loadDirectory(true)});
+    $('#customerPrev')?.addEventListener('click',()=>{pageState.offset=Math.max(0,pageState.offset-pageState.limit);loadDirectory()});
+    $('#customerNext')?.addEventListener('click',()=>{pageState.offset+=pageState.limit;loadDirectory()});
 
     $('#refreshMindbodyCustomers')?.addEventListener('click',async()=>{
       const button=$('#refreshMindbodyCustomers'),old=button.textContent;
@@ -172,6 +202,28 @@
       $('#copyVoucher')?.addEventListener('click',async()=>{await navigator.clipboard.writeText(sale.code);toast('Code copied')});
       toast('10-Class Pass created')
     })
+  }
+
+  async function customerProfileModal({email='',mindbodyClientId='',localId='',name='Customer'}={}){
+    const old=document.querySelector('.customer-profile-modal');if(old)old.remove();
+    const wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop customer-profile-modal';
+    wrap.innerHTML='<div class="panel modal customer-detail-card"><div class="panel-head"><div><p class="kicker">CUSTOMER PROFILE</p><h2>'+esc(name||'Customer')+'</h2><p>Loading unified Classy and Mindbody profile…</p></div><button class="secondary" data-close>×</button></div><div class="empty">Loading…</div></div>';
+    document.body.appendChild(wrap);
+    const close=()=>wrap.remove();$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};
+    const params=new URLSearchParams();if(email)params.set('email',email);if(mindbodyClientId)params.set('mindbody_client_id',mindbodyClientId);if(localId)params.set('local_id',localId);
+    try{
+      const payload=await api('/api/staff/customer-profile?'+params.toString()),x=payload.customer||{},bookings=payload.bookings||[];
+      const fullName=[x.first_name,x.last_name].filter(Boolean).join(' ')||x.email||name||'Customer';
+      const active=x.source==='Mindbody'?x.provider_active:x.is_active;
+      const history=bookings.length?'<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>DATE</span><span>SOURCE</span><span>STATUS</span><span>PAYMENT</span></div>'+bookings.map(b=>'<div class="trow"><b>'+esc(b.class_name)+'</b><span>'+esc(b.studio)+'</span><small>'+dt(b.starts_at)+'</small><span>'+(b.source==='mindbody'?'Mindbody':'Website')+'</span><span class="status '+esc(b.status)+'">'+esc(b.status)+'</span><small>'+esc(b.payment_status)+'</small></div>').join('')+'</div>':'<div class="empty">No booking history yet.</div>';
+      const card=wrap.querySelector('.customer-detail-card');
+      card.innerHTML='<div class="panel-head"><div><p class="kicker">'+esc(x.source||'CUSTOMER')+'</p><h2>'+esc(fullName)+'</h2><p>'+Number(x.booking_count||0)+' bookings · '+Number(x.active_bookings||0)+' active</p></div><button class="secondary" data-close>×</button></div>'+
+        '<div class="customer-detail-grid"><div><span>EMAIL</span><b>'+esc(x.email||'—')+'</b></div><div><span>PHONE</span><b>'+esc(x.phone||'—')+'</b></div><div><span>DATE OF BIRTH</span><b>'+esc(x.birth_date||'—')+'</b></div><div><span>STATUS</span><b>'+(active?'Active':'Inactive')+'</b></div><div><span>SOURCE</span><b>'+esc(x.source||'—')+'</b></div><div><span>MINDBODY ID</span><b>'+esc(x.mindbody_client_id||'—')+'</b></div><div><span>CLASSY CREDITS</span><b>'+(x.has_login?Number(x.credits||0):'—')+'</b></div><div><span>MINDBODY BALANCE</span><b>'+esc(x.account_balance||'—')+'</b></div><div><span>CLIENT TYPE</span><b>'+esc(x.client_type||'—')+'</b></div><div><span>HOME LOCATION</span><b>'+esc(x.home_location||'—')+'</b></div></div>'+
+        (x.mindbody_client_id?'<div class="customer-profile-actions"><button class="secondary" type="button" id="liveMindbodyProfile">Live Mindbody details</button></div>':'')+
+        '<div class="customer-profile-history"><div class="panel-head compact"><div><p class="kicker">HISTORY</p><h3>Recent bookings</h3></div></div>'+history+'</div>';
+      $('[data-close]',wrap).forEach(button=>button.onclick=close);
+      $('#liveMindbodyProfile',wrap)?.addEventListener('click',()=>{close();mindbodyCustomerModal(x.mindbody_client_id,x)})
+    }catch(error){const empty=wrap.querySelector('.empty');if(empty)empty.textContent=error.message||'Unable to load customer profile.'}
   }
 
   async function mindbodyCustomerModal(clientId,cached){
