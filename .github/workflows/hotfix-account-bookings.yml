@@ -23,5 +23,8 @@ jobs:
         run: |
           set -euo pipefail
           export SSHPASS="$PASS"
+          LOCAL_SHA="$(sha256sum public/account.js | awk '{print $1}')"
           sshpass -e scp -o StrictHostKeyChecking=no public/account.js root@"$HOST":/opt/classypilates/public/account.js
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "python3 -c \"from pathlib import Path; c=Path('/opt/classypilates/public/account.js').read_text(); assert \\\"\\$\\$('[data-cancel]')\\\" in c; print('account_selector_hotfix_verified')\""
+          REMOTE_SHA="$(sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "sha256sum /opt/classypilates/public/account.js | awk '{print \\$1}'")"
+          test "$LOCAL_SHA" = "$REMOTE_SHA"
+          echo "account_script_hotfix_verified"
