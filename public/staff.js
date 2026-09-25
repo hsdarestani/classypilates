@@ -88,9 +88,139 @@
     $$('[data-customer-state]').forEach(button=>button.onclick=async()=>{await api(`/api/staff/customers/${button.dataset.customerState}`,{method:'PATCH',body:JSON.stringify({is_active:button.dataset.active==='1'})});toast('Customer status updated');customers()})
   }
 
-  async function classes(){const d=await api('/api/staff/classes');const mindbodyManaged=d.classes.some(c=>c.mindbody_managed);let coachRows=[];if(has('coaches.view'))try{coachRows=(await api('/api/staff/coaches')).coaches}catch(_){}const coachSelect=coachRows.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join('');$('#view').innerHTML=`${has('classes.create')?`<section class="panel"><div class="panel-head"><div><p class="kicker">NEW SESSION</p><h2>Create class</h2><p>Create one session or repeat it automatically every week.</p></div></div><div class="form-grid"><label>STUDIO<select id="cStudio">${studioOptions}</select></label><label>CLASS<input id="cTitle" value="Total Body"></label><label>TYPE<select id="cType"><option>Reformer</option><option>Powerformer</option><option>Mat</option><option>Barre</option></select></label>${has('classes.edit')?`<label>COACH<select id="cCoach"><option value="">No coach</option>${coachSelect}</select></label>`:''}<label>START<input id="cStart" type="datetime-local"></label><label>DURATION<input id="cDuration" type="number" value="50"></label><label>CAPACITY<input id="cCapacity" type="number" value="10"></label><label>WEEKLY REPEAT<input id="cRepeat" type="number" min="1" max="52" value="12"><small>1 = once, 12 = every week for 12 weeks</small></label><label class="full">DESCRIPTION<textarea id="cDescription" rows="4" placeholder="What customers should know about this class"></textarea></label><div><button class="primary" id="createClass">Save class series</button></div></div></section>`:''}<section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center.</p></div></div>${classTable(d.classes)}</section>`;if(mindbodyManaged){const createButton=$('#createClass');const panel=createButton?.closest('section.panel');if(panel)panel.innerHTML='<div class="panel-head"><div><p class="kicker">MINDBODY SYNC</p><h2>Schedule managed in Mindbody</h2><p>Create classes and change time, studio, duration or capacity in Mindbody. These fields sync automatically to Classy. Coach changes and single-class cancellation remain available here.</p></div></div>'}if($('#cStart')){const x=new Date(Date.now()+86400000);x.setMinutes(0,0,0);$('#cStart').value=new Date(x.getTime()-x.getTimezoneOffset()*60000).toISOString().slice(0,16)}$('#createClass')?.addEventListener('click',async()=>{const body={studio_id:$('#cStudio').value,title:$('#cTitle').value,description:$('#cDescription').value,class_type:$('#cType').value,coach_id:$('#cCoach')?.value?Number($('#cCoach').value):null,starts_at:new Date($('#cStart').value).toISOString(),duration:Number($('#cDuration').value),capacity:Number($('#cCapacity').value),repeat_weeks:Number($('#cRepeat').value)};const result=await api('/api/staff/classes',{method:'POST',body:JSON.stringify(body)});toast(`${result.created_count} class${result.created_count===1?'':'es'} saved`);classes()});$$('[data-edit-class]').forEach(b=>b.onclick=()=>classModal(d.classes.find(c=>c.id===Number(b.dataset.editClass)),coachRows));$$('[data-delete-class]').forEach(b=>b.onclick=async()=>{if(!confirm('Cancel this class?'))return;await api(`/api/staff/classes/${b.dataset.deleteClass}`,{method:'DELETE'});toast('Class cancelled');classes()})}
-  function classModal(c,coaches){const old=document.querySelector('.modal-wrap');if(old)old.remove();const local=new Date(new Date(c.starts_at).getTime()-new Date(c.starts_at).getTimezoneOffset()*60000).toISOString().slice(0,16);const w=document.createElement('div');w.className='modal-wrap';w.style.cssText='position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px';w.innerHTML=`<div class="panel modal" style="width:min(760px,100%);margin:0"><div class="panel-head"><div><p class="kicker">EDIT SESSION</p><h2>Edit class</h2></div><button class="secondary" id="ecClose">×</button></div><div class="form-grid"><label>STUDIO<select id="ecStudio">${studioOptions}</select></label><label>CLASS<input id="ecTitle" value="${esc(c.name)}"></label><label>TYPE<select id="ecType"><option>Reformer</option><option>Powerformer</option><option>Mat</option><option>Barre</option></select></label>${has('classes.edit')?`<label>COACH<select id="ecCoach"><option value="">No coach</option>${coaches.map(x=>`<option value="${x.id}">${esc(x.display_name)}</option>`).join('')}</select></label>`:''}<label>START<input id="ecStart" type="datetime-local" value="${local}"></label><label>DURATION<input id="ecDuration" type="number" value="${c.duration}"></label><label>CAPACITY<input id="ecCapacity" type="number" value="${c.capacity}"></label><label class="full">DESCRIPTION<textarea id="ecDescription" rows="5">${esc(c.description||'')}</textarea></label></div><button class="primary" id="ecSave">Save changes</button></div>`;document.body.appendChild(w);$('#ecStudio',w).value=c.studio;$('#ecType',w).value=c.type;if($('#ecCoach',w))$('#ecCoach',w).value=c.coach_id||'';if(c.mindbody_managed){['ecStudio','ecTitle','ecType','ecStart','ecDuration','ecCapacity','ecDescription'].forEach(id=>{const el=$('#'+id,w);if(el)el.disabled=true});const head=w.querySelector('.panel-head>div');if(head)head.insertAdjacentHTML('beforeend','<p>Schedule fields are synced from Mindbody. Only the coach can be changed here.</p>')}$('#ecClose',w).onclick=()=>w.remove();$('#ecSave',w).onclick=async()=>{await api(`/api/staff/classes/${c.id}`,{method:'PATCH',body:JSON.stringify({studio_id:$('#ecStudio',w).value,title:$('#ecTitle',w).value,description:$('#ecDescription',w).value,class_type:$('#ecType',w).value,coach_id:$('#ecCoach',w)?.value?Number($('#ecCoach',w).value):c.coach_id,starts_at:new Date($('#ecStart',w).value).toISOString(),duration:Number($('#ecDuration',w).value),capacity:Number($('#ecCapacity',w).value),repeat_weeks:1})});w.remove();toast('Class updated');classes()}}
-  function classTable(rows){return `<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>START</span><span>COACH</span><span>CAPACITY</span><span></span></div>${rows.map(c=>`<div class="trow"><div><b>${esc(c.name)}</b><small>${esc(c.type)}${c.description?` · ${esc(c.description)}`:''}</small></div><div><b>${esc(c.studio_name)}</b><small>${esc(c.status)}</small></div><div><b>${dt(c.starts_at)}</b><small>${c.duration} Min.</small></div><div><b>${esc(c.coach)}</b></div><div><b>${c.reserved}/${c.capacity}</b><small>${c.spots} available</small></div><div class="actions">${(has('classes.edit')||has('classes.edit_own'))&&c.status==='active'?`<button class="secondary" data-edit-class="${c.id}">Edit</button>`:''}${has('classes.delete')&&c.status==='active'?`<button class="danger" data-delete-class="${c.id}">Cancel</button>`:''}</div></div>`).join('')}</div>`}
+  async function classes(){
+    const d=await api('/api/staff/classes');
+    let catalog=null;
+    try{catalog=await api('/api/staff/mindbody/catalog')}catch(_){}
+    let coachRows=[];
+    if(has('coaches.view'))try{coachRows=(await api('/api/staff/coaches')).coaches}catch(_){}
+
+    const providerReady=Boolean(catalog&&Array.isArray(catalog.class_descriptions)&&catalog.class_descriptions.length);
+    const coachSelect=coachRows.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join('');
+    const descriptionOptions=providerReady
+      ? catalog.class_descriptions.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
+      : '';
+    const createCopy=providerReady
+      ? 'Classes created here are written to Mindbody first and then mirrored back to Classy. Choose an existing Mindbody class type, studio, coach and schedule.'
+      : 'Create one session or repeat it automatically every month.';
+
+    $('#view').innerHTML=`${has('classes.create')?`<section class="panel provider-create-panel">
+      <div class="panel-head"><div><p class="kicker">NEW SESSION</p><h2>Create class</h2><p>${createCopy}</p></div>${providerReady?'<span class="provider-chip mindbody">Mindbody write-through</span>':''}</div>
+      ${providerReady?`<div class="provider-note"><b>Mindbody is the schedule source.</b><span>Creation and schedule changes are saved in Mindbody first. Class name and description come from the selected Mindbody Class Description.</span></div>`:''}
+      <div class="form-grid">
+        <label>STUDIO<select id="cStudio">${studioOptions}</select></label>
+        ${providerReady
+          ? `<label>MINDBODY CLASS<select id="cDescriptionId">${descriptionOptions}</select><small id="cDescriptionHint"></small></label>`
+          : '<label>CLASS<input id="cTitle" value="Total Body"></label>'}
+        ${providerReady?'':`<label>TYPE<select id="cType"><option>Reformer</option><option>Powerformer</option><option>Mat</option><option>Barre</option></select></label>`}
+        ${has('classes.edit')?`<label>COACH<select id="cCoach"><option value="">No coach</option>${coachSelect}</select></label>`:''}
+        <label>START<input id="cStart" type="datetime-local"></label>
+        <label>DURATION<input id="cDuration" type="number" min="15" max="180" value="50"></label>
+        <label>CAPACITY<input id="cCapacity" type="number" min="1" max="100" value="10"></label>
+        <label>MONTHLY REPEAT<input id="cRepeat" type="number" min="1" max="36" value="1"><small>1 = once · 12 = once per month for 12 months</small></label>
+        ${providerReady?'':`<label class="full">DESCRIPTION<textarea id="cDescription" rows="4" placeholder="What customers should know about this class"></textarea></label>`}
+        <div><button class="primary" id="createClass">${providerReady?'Create in Mindbody':'Save class series'}</button></div>
+      </div>
+    </section>`:''}
+    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. Mindbody-backed rows write schedule changes back to Mindbody.</p></div></div>${classTable(d.classes)}</section>`;
+
+    if($('#cStart')){
+      const x=new Date(Date.now()+86400000);x.setMinutes(0,0,0);
+      $('#cStart').value=new Date(x.getTime()-x.getTimezoneOffset()*60000).toISOString().slice(0,16)
+    }
+
+    const syncDescriptionHint=()=>{
+      if(!providerReady)return;
+      const row=catalog.class_descriptions.find(x=>String(x.id)===String($('#cDescriptionId')?.value));
+      const hint=$('#cDescriptionHint');
+      if(hint)hint.textContent=row?.description||'Uses the existing Mindbody Class Description.'
+    };
+    $('#cDescriptionId')?.addEventListener('change',syncDescriptionHint);
+    syncDescriptionHint();
+
+    $('#createClass')?.addEventListener('click',async()=>{
+      const button=$('#createClass'),old=button.textContent;
+      try{
+        button.disabled=true;button.textContent=providerReady?'Creating in Mindbody…':'Saving…';
+        const selected=providerReady?catalog.class_descriptions.find(x=>String(x.id)===String($('#cDescriptionId').value)):null;
+        const body={
+          studio_id:$('#cStudio').value,
+          title:providerReady?(selected?.name||'Class'):$('#cTitle').value,
+          description:providerReady?(selected?.description||''):($('#cDescription')?.value||''),
+          class_type:providerReady?'Reformer':$('#cType').value,
+          mindbody_class_description_id:providerReady?Number($('#cDescriptionId').value):null,
+          coach_id:$('#cCoach')?.value?Number($('#cCoach').value):null,
+          starts_at:new Date($('#cStart').value).toISOString(),
+          duration:Number($('#cDuration').value),
+          capacity:Number($('#cCapacity').value),
+          repeat_months:Number($('#cRepeat').value)
+        };
+        const result=await api('/api/staff/classes',{method:'POST',body:JSON.stringify(body)});
+        toast(result.mindbody?`${result.created_count} Mindbody schedule${result.created_count===1?'':'s'} created`:`${result.created_count} class${result.created_count===1?'':'es'} saved`);
+        classes()
+      }catch(error){
+        const msg={
+          mindbody_class_description_required:'Choose an existing Mindbody class type.',
+          mindbody_coach_required:'Choose a coach before creating the class.',
+          mindbody_coach_not_synced:'This coach is not synced to Mindbody yet. Run sync and try again.',
+          mindbody_location_mapping_failed:'The selected studio could not be mapped to a Mindbody location.'
+        }[error.message]||error.message;
+        toast(msg)
+      }finally{if(button?.isConnected){button.disabled=false;button.textContent=old}}
+    });
+
+    $$('[data-edit-class]').forEach(b=>b.onclick=()=>classModal(d.classes.find(c=>c.id===Number(b.dataset.editClass)),coachRows));
+    $$('[data-delete-class]').forEach(b=>b.onclick=async()=>{
+      if(!confirm('Cancel this class?'))return;
+      await api(`/api/staff/classes/${b.dataset.deleteClass}`,{method:'DELETE'});
+      toast('Class cancelled');classes()
+    })
+  }
+
+  function classModal(c,coaches){
+    const old=document.querySelector('.modal-wrap');if(old)old.remove();
+    const local=new Date(new Date(c.starts_at).getTime()-new Date(c.starts_at).getTimezoneOffset()*60000).toISOString().slice(0,16);
+    const w=document.createElement('div');w.className='modal-wrap';w.style.cssText='position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px';
+    w.innerHTML=`<div class="panel modal" style="width:min(760px,100%);margin:0"><div class="panel-head"><div><p class="kicker">EDIT SESSION</p><h2>Edit class</h2>${c.mindbody_managed?'<p>Studio, coach, time, duration and capacity are written to Mindbody first. The class name, type and description remain managed by the Mindbody Class Description.</p>':''}</div><button class="secondary" id="ecClose">×</button></div>
+      ${c.mindbody_managed?'<div class="provider-note"><b>Mindbody write-through</b><span>If this class belongs to a recurring Mindbody schedule, schedule-level changes can affect the series. You will see the scope after saving.</span></div>':''}
+      <div class="form-grid">
+        <label>STUDIO<select id="ecStudio">${studioOptions}</select></label>
+        <label>CLASS<input id="ecTitle" value="${esc(c.name)}" ${c.mindbody_managed?'disabled':''}></label>
+        <label>TYPE<select id="ecType" ${c.mindbody_managed?'disabled':''}><option>Reformer</option><option>Powerformer</option><option>Mat</option><option>Barre</option></select></label>
+        ${has('classes.edit')?`<label>COACH<select id="ecCoach"><option value="">No coach</option>${coaches.map(x=>`<option value="${x.id}">${esc(x.display_name)}</option>`).join('')}</select></label>`:''}
+        <label>START<input id="ecStart" type="datetime-local" value="${local}"></label>
+        <label>DURATION<input id="ecDuration" type="number" value="${c.duration}"></label>
+        <label>CAPACITY<input id="ecCapacity" type="number" value="${c.capacity}"></label>
+        <label class="full">DESCRIPTION<textarea id="ecDescription" rows="5" ${c.mindbody_managed?'disabled':''}>${esc(c.description||'')}</textarea></label>
+      </div><button class="primary" id="ecSave">${c.mindbody_managed?'Save to Mindbody':'Save changes'}</button></div>`;
+    document.body.appendChild(w);
+    $('#ecStudio',w).value=c.studio;$('#ecType',w).value=c.type;if($('#ecCoach',w))$('#ecCoach',w).value=c.coach_id||'';
+    $('#ecClose',w).onclick=()=>w.remove();
+    $('#ecSave',w).onclick=async()=>{
+      const button=$('#ecSave',w),oldLabel=button.textContent;
+      try{
+        button.disabled=true;button.textContent=c.mindbody_managed?'Updating Mindbody…':'Saving…';
+        const result=await api(`/api/staff/classes/${c.id}`,{method:'PATCH',body:JSON.stringify({
+          studio_id:$('#ecStudio',w).value,
+          title:$('#ecTitle',w).value,
+          description:$('#ecDescription',w).value,
+          class_type:$('#ecType',w).value,
+          coach_id:$('#ecCoach',w)?.value?Number($('#ecCoach',w).value):c.coach_id,
+          starts_at:new Date($('#ecStart',w).value).toISOString(),
+          duration:Number($('#ecDuration',w).value),
+          capacity:Number($('#ecCapacity',w).value),
+          repeat_months:1
+        })});
+        w.remove();
+        toast(result.mindbody?(result.mindbody_scope==='series'?'Mindbody series updated':'Mindbody class updated'):'Class updated');
+        classes()
+      }catch(error){toast(error.message);button.disabled=false;button.textContent=oldLabel}
+    }
+  }
+
+  function classTable(rows){return `<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>START</span><span>COACH</span><span>CAPACITY</span><span></span></div>${rows.map(c=>`<div class="trow"><div><b>${esc(c.name)}</b><small>${esc(c.type)}${c.mindbody_managed?' · Mindbody':''}${c.description?` · ${esc(c.description)}`:''}</small></div><div><b>${esc(c.studio_name)}</b><small>${esc(c.status)}</small></div><div><b>${dt(c.starts_at)}</b><small>${c.duration} Min.</small></div><div><b>${esc(c.coach)}</b></div><div><b>${c.reserved}/${c.capacity}</b><small>${c.spots} available</small></div><div class="actions">${(has('classes.edit')||has('classes.edit_own'))&&c.status==='active'?`<button class="secondary" data-edit-class="${c.id}">Edit</button>`:''}${has('classes.delete')&&c.status==='active'?`<button class="danger" data-delete-class="${c.id}">Cancel</button>`:''}</div></div>`).join('')}</div>`}
+
+
 
   async function coachManager(){
     const data=await api('/api/staff/coaches');let rolesData={roles:[]},users=[];
