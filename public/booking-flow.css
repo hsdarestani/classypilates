@@ -56,3 +56,18 @@
   .booking-v2 .voucher-box button{width:100%!important}
   .booking-v2 .wizard-sticky-actions{grid-template-columns:1fr}
 }
+
+
+/* Checkout follow-up 2026-09-25: do not let the mobile action bar cover voucher help text. */
+@media(max-width:780px){
+  .booking-v2 .payment-panel .wizard-sticky-actions{
+    position:static!important;
+    bottom:auto!important;
+    padding:0!important;
+    margin-top:18px!important;
+    background:none!important;
+  }
+  .booking-v2 .payment-panel .voucher-box{
+    margin-bottom:18px!important;
+  }
+}

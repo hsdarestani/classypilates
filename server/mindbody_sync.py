@@ -169,7 +169,7 @@ class WriteClient(MindbodyClient):
             "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "ClassyPilates/2.0",
         }
         if authenticated:
-            headers["Authorization"] = self.access_token
+            headers["Authorization"] = f"Bearer {self.access_token}"
         request = urllib.request.Request(
             f"{self.config.api_url}/{path.lstrip('/')}", data=json.dumps(payload).encode(), headers=headers, method="POST"
         )
@@ -260,7 +260,7 @@ class WriteClient(MindbodyClient):
         if not self.access_token: self.issue_token()
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
         request = urllib.request.Request(f"{self.config.api_url}/{path}?{query}", headers={
-            "API-Key": self.config.api_key, "SiteId": self.config.site_id, "Authorization": self.access_token,
+            "API-Key": self.config.api_key, "SiteId": self.config.site_id, "Authorization": f"Bearer {self.access_token}",
             "Accept": "application/json", "User-Agent": "ClassyPilates/2.0",
         })
         try:
@@ -342,7 +342,7 @@ class WriteClient(MindbodyClient):
             headers={
                 "API-Key": self.config.api_key,
                 "SiteId": self.config.site_id,
-                "Authorization": self.access_token,
+                "Authorization": f"Bearer {self.access_token}",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
                 "User-Agent": "ClassyPilates/2.0",

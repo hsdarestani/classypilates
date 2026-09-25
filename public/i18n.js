@@ -18,6 +18,25 @@
     'Create one session or repeat it automatically every week.':'Erstelle eine einzelne Einheit oder wiederhole sie automatisch jede Woche.','WEEKLY REPEAT':'WÖCHENTLICHE WIEDERHOLUNG','1 = once, 12 = every week for 12 weeks':'1 = einmalig, 12 = jede Woche für 12 Wochen','DESCRIPTION':'BESCHREIBUNG','What customers should know about this class':'Was Kunden über diesen Kurs wissen sollten','Save class series':'Kursserie speichern','Description':'Beschreibung',
     'Redeem a gift code':'Geschenkcode einlösen','Enter your Classy gift code to add all 10 credits to this account.':'Gib deinen Classy Geschenkcode ein, um diesem Konto alle 10 Guthaben hinzuzufügen.','GIFT CODE':'GESCHENKCODE','Redeem code':'Code einlösen','Each booking uses one credit. A timely cancellation returns it automatically.':'Jede Buchung verbraucht ein Guthaben. Bei rechtzeitiger Stornierung wird es automatisch zurückgebucht.','Enter your gift code':'Gib deinen Geschenkcode ein','This code has already been redeemed.':'Dieser Code wurde bereits eingelöst.','Gift code not found.':'Geschenkcode nicht gefunden.','Unable to redeem this code.':'Dieser Code konnte nicht eingelöst werden.','One class credit was used. You have':'Ein Kursguthaben wurde verwendet. Du hast noch','left.':'übrig.','The booking was saved. Payment can be completed with the studio.':'Die Buchung wurde gespeichert. Die Zahlung kann im Studio abgeschlossen werden.'
   });
+  Object.assign(DE,{
+    'Checkout':'Buchung abschließen',
+    'YOUR CLASS':'DEIN KURS',
+    'or 1 available Class Credit':'oder 1 verfügbares Kursguthaben',
+    'Ready to confirm.':'Bereit zum Abschließen.',
+    'If your Classy account has an available credit, it is used automatically. Otherwise we open the secure SumUp checkout. Your place stays linked to this booking while payment is completed.':'Wenn dein Classy Konto über verfügbares Guthaben verfügt, wird es automatisch verwendet. Andernfalls öffnen wir den sicheren SumUp Checkout. Dein Platz bleibt während des Zahlungsvorgangs dieser Buchung zugeordnet.',
+    'Secure checkout':'Sicher bezahlen',
+    'Pay securely with SumUp':'Sicher mit SumUp bezahlen',
+    'No payment is marked as successful until SumUp confirms it.':'Eine Zahlung gilt erst dann als erfolgreich, wenn SumUp sie bestätigt hat.',
+    'VOUCHER / GIFT CODE':'GUTSCHEIN / GESCHENKCODE',
+    'USE CODE':'CODE EINLÖSEN',
+    'The code will be validated securely when you confirm the booking.':'Der Code wird beim Bestätigen der Buchung sicher geprüft.',
+    'Continue to SumUp':'Weiter zu SumUp',
+    'Payment not completed':'Zahlung nicht abgeschlossen',
+    'We could not hold this place in Mindbody. No payment was taken. Please retry or choose another class.':'Der Platz konnte in Mindbody nicht reserviert werden. Es wurde keine Zahlung ausgeführt. Bitte versuche es erneut oder wähle einen anderen Kurs.',
+    'Live availability could not be confirmed with Mindbody. Please try again in a moment.':'Die Live Verfügbarkeit konnte mit Mindbody nicht bestätigt werden. Bitte versuche es gleich noch einmal.',
+    'SumUp is temporarily unavailable. Please try again.':'SumUp ist vorübergehend nicht verfügbar. Bitte versuche es erneut.',
+    'Secure payment could not be started.':'Die sichere Zahlung konnte nicht gestartet werden.'
+  });
   const PATTERNS=[
     [/^(\d+)[.)] (.+)$/, (n,value)=>`${n}. ${DE[value]||value}`],[/^(\d+) coach profiles\.$/,n=>`${n} Trainerprofile.`],[/^(\d+) profiles · photos are used across the schedule and booking flow\.$/,n=>`${n} Profile · Fotos werden im Stundenplan und Buchungsablauf verwendet.`],[/^(\d+) entries · customers, spots and payment status\.$/,n=>`${n} Einträge · Kunden, Plätze und Zahlungsstatus.`],[/^(\d+) sessions in the Control Center\.$/,n=>`${n} Einheiten in der Zentrale.`],[/^(\d+) historical bookings$/,n=>`${n} historische Buchungen`],[/^(\d+) Class Pack$/,n=>`${n} Kurspaket`],[/^(\d+) Class Packs$/,n=>`${n} Kurspakete`],[/^(\d+) Min\.$/,n=>`${n} Min.`],[/^(\d+) available$/,n=>`${n} verfügbar`],[/^(\d+) total$/,n=>`${n} gesamt`],[/^(\d+) classes saved$/,n=>`${n} Kurse gespeichert`],[/^(\d+) class saved$/,n=>`${n} Kurs gespeichert`],[/^(\d+) credits added$/,n=>`${n} Guthaben hinzugefügt`],[/^One class credit was used\. You have (\d+) left\.$/,n=>`Ein Kursguthaben wurde verwendet. Du hast noch ${n} übrig.`],[/^The customer now has (\d+) available credits\.$/,n=>`Der Kunde hat jetzt ${n} verfügbare Guthaben.`]
   ];
