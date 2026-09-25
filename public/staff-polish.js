@@ -195,7 +195,8 @@
   }
 
   function enhanceTables(){
-    $$('.table').forEach(table=>{
+    $('.table').forEach(table=>{
+      if(table.dataset.noCollection==='1'||table.classList.contains('schedule-managed-table')){labelTable(table);return;}
       labelTable(table);
       const panel=table.closest('.panel');
       const hasOwnSearch=Boolean(panel?.querySelector('.list-toolbar input[type="search"], .collection-tools'));
