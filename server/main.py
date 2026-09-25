@@ -1272,25 +1272,130 @@ def list_users(user: User = Depends(require("users.manage")), db: Session = Depe
 
 @app.get("/api/staff/customers")
 def list_customers(user: User = Depends(require("customers.view")), db: Session = Depends(db_session)):
-    customers = [u for u in db.scalars(select(User).order_by(User.created_at.desc())).all() if any(role.name == "Customer" for role in u.roles)]
-    rows = []
-    for customer in customers:
+    """Return one unified directory while preserving each profile's source."""
+    from mindbody_sync import cached_mindbody_customers
+
+    local_customers = [
+        u for u in db.scalars(select(User).order_by(User.created_at.desc())).all()
+        if any(role.name == "Customer" for role in u.roles)
+    ]
+    remote_customers = cached_mindbody_customers()
+
+    booking_rows = db.execute(
+        select(
+            Booking.email,
+            Booking.mindbody_client_id,
+            Booking.status,
+        )
+    ).all()
+    by_email: dict[str, dict[str, int]] = {}
+    by_remote: dict[str, dict[str, int]] = {}
+    for email, remote_id, status in booking_rows:
+        email_key = str(email or "").strip().casefold()
+        if email_key:
+            counter = by_email.setdefault(email_key, {"total": 0, "active": 0})
+            counter["total"] += 1
+            counter["active"] += int(status == "reserved")
+        remote_key = str(remote_id or "").strip()
+        if remote_key:
+            counter = by_remote.setdefault(remote_key, {"total": 0, "active": 0})
+            counter["total"] += 1
+            counter["active"] += int(status == "reserved")
+
+    remote_by_email = {
+        str(row.get("email") or "").strip().casefold(): row
+        for row in remote_customers
+        if str(row.get("email") or "").strip()
+    }
+    used_remote_ids: set[str] = set()
+    rows: list[dict[str, Any]] = []
+
+    for customer in local_customers:
         profile = get_customer_profile(customer, db)
-        booking_count = db.scalar(select(func.count(Booking.id)).where(func.lower(Booking.email) == customer.email.lower())) or 0
-        active_count = db.scalar(select(func.count(Booking.id)).where(func.lower(Booking.email) == customer.email.lower(), Booking.status == "reserved")) or 0
+        email_key = customer.email.strip().casefold()
+        remote = remote_by_email.get(email_key)
+        remote_id = str((remote or {}).get("remote_id") or "")
+        if remote_id:
+            used_remote_ids.add(remote_id)
+        counts = by_email.get(email_key, {"total": 0, "active": 0})
         rows.append({
             "id": customer.id,
-            "first_name": customer.first_name,
-            "last_name": customer.last_name,
+            "local_id": customer.id,
+            "mindbody_client_id": remote_id,
+            "first_name": customer.first_name or str((remote or {}).get("first_name") or ""),
+            "last_name": customer.last_name or str((remote or {}).get("last_name") or ""),
             "email": customer.email,
-            "phone": profile.phone,
-            "credits": profile.credits,
-            "booking_count": booking_count,
-            "active_bookings": active_count,
-            "is_active": customer.is_active,
+            "phone": profile.phone or str((remote or {}).get("phone") or ""),
+            "birth_date": profile.birth_date or str((remote or {}).get("birth_date") or ""),
+            "gender": str((remote or {}).get("gender") or ""),
+            "client_type": str((remote or {}).get("client_type") or ""),
+            "home_location": str((remote or {}).get("home_location") or ""),
+            "account_balance": str((remote or {}).get("account_balance") or ""),
+            "photo_url": str((remote or {}).get("photo_url") or ""),
+            "credits": int(profile.credits or 0),
+            "booking_count": int(counts["total"]),
+            "active_bookings": int(counts["active"]),
+            "is_active": bool(customer.is_active),
+            "provider_active": bool((remote or {}).get("active", True)),
+            "provider_status": str((remote or {}).get("status") or ""),
+            "source": "Classy + Mindbody" if remote else "Classy",
             "created_at": customer.created_at.isoformat(),
+            "synced_at": str((remote or {}).get("synced_at") or ""),
+            "has_login": True,
         })
-    return {"customers": rows}
+
+    for remote in remote_customers:
+        remote_id = str(remote.get("remote_id") or "")
+        if not remote_id or remote_id in used_remote_ids:
+            continue
+        email = str(remote.get("email") or "").strip().lower()
+        email_key = email.casefold()
+        # A duplicated Mindbody row with the same email should not create a second
+        # visible customer when that email already belongs to a Classy login.
+        if email_key and any(row["email"].casefold() == email_key for row in rows):
+            continue
+        counts = by_remote.get(remote_id) or by_email.get(email_key) or {"total": 0, "active": 0}
+        rows.append({
+            "id": f"mb:{remote_id}",
+            "local_id": None,
+            "mindbody_client_id": remote_id,
+            "first_name": str(remote.get("first_name") or ""),
+            "last_name": str(remote.get("last_name") or ""),
+            "email": email,
+            "phone": str(remote.get("phone") or ""),
+            "birth_date": str(remote.get("birth_date") or ""),
+            "gender": str(remote.get("gender") or ""),
+            "client_type": str(remote.get("client_type") or ""),
+            "home_location": str(remote.get("home_location") or ""),
+            "account_balance": str(remote.get("account_balance") or ""),
+            "photo_url": str(remote.get("photo_url") or ""),
+            "credits": 0,
+            "booking_count": int(counts["total"]),
+            "active_bookings": int(counts["active"]),
+            "is_active": bool(remote.get("active", True)),
+            "provider_active": bool(remote.get("active", True)),
+            "provider_status": str(remote.get("status") or ""),
+            "source": "Mindbody",
+            "created_at": str(remote.get("synced_at") or ""),
+            "synced_at": str(remote.get("synced_at") or ""),
+            "has_login": False,
+        })
+
+    rows.sort(key=lambda row: (
+        str(row.get("last_name") or "").casefold(),
+        str(row.get("first_name") or "").casefold(),
+        str(row.get("email") or "").casefold(),
+    ))
+    return {
+        "customers": rows,
+        "counts": {
+            "total": len(rows),
+            "classy": sum(1 for row in rows if row["source"] == "Classy"),
+            "mindbody": sum(1 for row in rows if row["source"] == "Mindbody"),
+            "both": sum(1 for row in rows if row["source"] == "Classy + Mindbody"),
+        },
+    }
+
 
 @app.patch("/api/staff/customers/{customer_id}")
 def update_customer(customer_id: int, data: CustomerAdminUpdate, user: User = Depends(require("customers.manage")), db: Session = Depends(db_session)):
