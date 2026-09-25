@@ -215,6 +215,7 @@
 
     const providerReady=Boolean(catalog&&Array.isArray(catalog.class_descriptions)&&catalog.class_descriptions.length);
     const mindbodySource=Boolean(mbStatus?.configured||providerReady||d.classes.some(c=>c.mindbody_managed));
+    const writeThroughReady=Boolean(mindbodySource&&providerReady);
     const coachSelect=coachRows.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join('');
     const descriptionOptions=providerReady
       ? catalog.class_descriptions.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
@@ -223,7 +224,7 @@
       ? 'Classes created here are written to Mindbody first and then mirrored back to Classy. Choose an existing Mindbody class type, studio, coach and schedule.'
       : 'Create one session or repeat it automatically every month.';
 
-    $('#view').innerHTML=`${has('classes.create')&&!mindbodySource?`<section class="panel provider-create-panel">
+    $('#view').innerHTML=`${has('classes.create')&&(!mindbodySource||writeThroughReady)?`<section class="panel provider-create-panel">
       <div class="panel-head"><div><p class="kicker">NEW SESSION</p><h2>Create class</h2><p>${createCopy}</p></div>${providerReady?'<span class="provider-chip mindbody">Mindbody write-through</span>':''}</div>
       ${providerReady?`<div class="provider-note"><b>Mindbody is the schedule source.</b><span>Creation and schedule changes are saved in Mindbody first. Class name and description come from the selected Mindbody Class Description.</span></div>`:''}
       <div class="form-grid">
@@ -241,8 +242,8 @@
         <div><button class="primary" id="createClass">${providerReady?'Create in Mindbody':'Save class series'}</button></div>
       </div>
     </section>`:''}
-    ${mindbodySource?`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY SCHEDULE</p><h2>Schedule managed in Mindbody</h2><p>Class creation, edits and cancellations are temporarily read only here. Mindbody remains the source of truth and changes continue to sync into Classy automatically.</p></div><span class="provider-chip mindbody">Mindbody source</span></div><div class="provider-note"><b>Management controls are hidden for now.</b><span>The Classy to Mindbody write through capability stays in the codebase so it can be enabled later without rebuilding the integration.</span></div></section>`:''}
-    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. ${mindbodySource?'Schedule data is mirrored from Mindbody and is read only here while the integration is active.':'Manage the local Classy schedule here.'}</p></div></div>${classTable(d.classes,mindbodySource)}</section>`;
+    ${mindbodySource?`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY SCHEDULE</p><h2>${writeThroughReady?'Two way schedule management':'Mindbody schedule connected'}</h2><p>${writeThroughReady?'Create and supported schedule changes are written to Mindbody first, then mirrored back into Classy.':'Mindbody remains the source of truth. The class catalog could not be loaded, so write controls are temporarily disabled rather than risking a local only change.'}</p></div><span class="provider-chip mindbody">${writeThroughReady?'Two way':'Read only'}</span></div>${writeThroughReady?'<div class="provider-note"><b>Provider first safety.</b><span>Studio, coach, time, duration and capacity write through to Mindbody. Class name, type and description use the existing Mindbody Class Description.</span></div>':'<div class="provider-note"><b>No local fallback.</b><span>Refresh later or check Mindbody connectivity. We do not create a local phantom class while the provider catalog is unavailable.</span></div>'}</section>`:''}
+    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. ${writeThroughReady?'Mindbody backed rows can be managed here with provider first writes.':mindbodySource?'Schedule data is mirrored from Mindbody and is temporarily read only here.':'Manage the local Classy schedule here.'}</p></div></div>${classTable(d.classes,mindbodySource&&!writeThroughReady)}</section>`;
 
     if($('#cStart')){
       const x=new Date(Date.now()+86400000);x.setMinutes(0,0,0);
