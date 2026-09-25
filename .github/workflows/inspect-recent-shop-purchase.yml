@@ -1,0 +1,56 @@
+name: Inspect Recent Shop Purchase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-recent-shop-purchase.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Inspect recent standalone SumUp orders
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from datetime import datetime, timedelta, timezone
+          from sqlalchemy import select
+          import main as core
+
+          cutoff = datetime.now(timezone.utc) - timedelta(hours=3)
+          with core.SessionLocal() as db:
+              rows = db.scalars(
+                  select(core.PaymentOrder)
+                  .where(
+                      core.PaymentOrder.booking_reference.is_(None),
+                      core.PaymentOrder.created_at >= cutoff,
+                  )
+                  .order_by(core.PaymentOrder.created_at.desc())
+                  .limit(20)
+              ).all()
+              for row in rows:
+                  email = str(row.email or "")
+                  local, _, domain = email.partition("@")
+                  masked = (local[:2] + "***@" + domain) if domain else "***"
+                  print({
+                      "reference": row.reference,
+                      "email": masked,
+                      "amount_cents": int(row.amount_cents or 0),
+                      "credits": int(row.credits or 0),
+                      "status": row.status,
+                      "credited": bool(row.credited),
+                      "created_at": row.created_at.isoformat() if row.created_at else None,
+                  })
+          PY
