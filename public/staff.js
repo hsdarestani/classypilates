@@ -232,7 +232,7 @@
     const cachedName=[cached?.first_name,cached?.last_name].filter(Boolean).join(' ')||cached?.email||`Mindbody ${clientId}`;
     wrap.innerHTML=`<div class="panel modal customer-detail-card"><div class="panel-head"><div><p class="kicker">MINDBODY CLIENT</p><h2>${esc(cachedName)}</h2><p>Loading complete provider profile…</p></div><button class="secondary" data-close>×</button></div><div class="empty">Loading…</div></div>`;
     document.body.appendChild(wrap);
-    const close=()=>wrap.remove();$$$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=e=>{if(e.target===wrap)close()};
+    const close=()=>wrap.remove();$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=e=>{if(e.target===wrap)close()};
     try{
       const payload=await api(`/api/staff/mindbody/customers/${encodeURIComponent(clientId)}`);
       const p=payload.Client||payload.client||payload;
@@ -257,7 +257,7 @@
         </div>
         <div class="customer-detail-summary"><span>${Array.isArray(memberships)?memberships.length:0} memberships</span><span>${Array.isArray(services)?services.length:0} services</span><span>${Array.isArray(visits)?visits.length:0} visits returned</span></div>
         <details class="provider-json"><summary>Provider details</summary><pre>${esc(JSON.stringify(payload,null,2))}</pre></details>`;
-      $$$('[data-close]',wrap).forEach(button=>button.onclick=close)
+      $('[data-close]',wrap).forEach(button=>button.onclick=close)
     }catch(error){
       const empty=wrap.querySelector('.empty');if(empty)empty.textContent=error.message||'Unable to load Mindbody profile.'
     }
@@ -274,8 +274,12 @@
 
     const providerReady=Boolean(catalog&&Array.isArray(catalog.class_descriptions)&&catalog.class_descriptions.length);
     const mindbodySource=Boolean(mbStatus?.configured||providerReady||d.classes.some(c=>c.mindbody_managed));
-    const writeThroughReady=false;
+    const writeThroughReady=Boolean(mbStatus?.configured||providerReady);
     const coachSelect=coachRows.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join('');
+    const scheduleStudios=[...new Map(d.classes.map(c=>[String(c.studio||''),c.studio_name||c.studio||'Studio']).filter(x=>x[0])).entries()];
+    const scheduleCoaches=[...new Map(d.classes.map(c=>[String(c.coach_id||''),c.coach||'Coach']).filter(x=>x[0])).entries()];
+    const studioFilterOptions=scheduleStudios.map(([id,name])=>`<option value="${esc(id)}">${esc(name)}</option>`).join('');
+    const coachFilterOptions=scheduleCoaches.map(([id,name])=>`<option value="${esc(id)}">${esc(name)}</option>`).join('');
     const descriptionOptions=providerReady
       ? catalog.class_descriptions.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
       : '';
@@ -283,7 +287,7 @@
       ? 'Classes created here are written to Mindbody first and then mirrored back to Classy. Choose an existing Mindbody class type, studio, coach and schedule.'
       : 'Create one session or repeat it automatically every month.';
 
-    $('#view').innerHTML=`${has('classes.create')&&(!mindbodySource||writeThroughReady)?`<section class="panel provider-create-panel">
+    $('#view').innerHTML=`${has('classes.create')&&(!mindbodySource||(writeThroughReady&&providerReady))?`<section class="panel provider-create-panel">
       <div class="panel-head"><div><p class="kicker">NEW SESSION</p><h2>Create class</h2><p>${createCopy}</p></div>${providerReady?'<span class="provider-chip mindbody">Mindbody write-through</span>':''}</div>
       ${providerReady?`<div class="provider-note"><b>Mindbody is the schedule source.</b><span>Creation and schedule changes are saved in Mindbody first. Class name and description come from the selected Mindbody Class Description.</span></div>`:''}
       <div class="form-grid">
@@ -302,12 +306,52 @@
       </div>
     </section>`:''}
     ${mindbodySource?`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY SCHEDULE</p><h2>${writeThroughReady?'Two way schedule management':'Mindbody schedule connected'}</h2><p>${writeThroughReady?'Create and supported schedule changes are written to Mindbody first, then mirrored back into Classy.':'Mindbody remains the source of truth. Class management is intentionally read only here while the integration is active.'}</p></div><span class="provider-chip mindbody">${writeThroughReady?'Two way':'Read only'}</span></div>${writeThroughReady?'<div class="provider-note"><b>Provider first safety.</b><span>Studio, coach, time, duration and capacity write through to Mindbody. Class name, type and description use the existing Mindbody Class Description.</span></div>':'<div class="provider-note"><b>No local fallback.</b><span>Create, edit and cancellation stay in Mindbody for now. The Classy write through capability remains in the backend so it can be enabled later.</span></div>'}</section>`:''}
-    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. ${writeThroughReady?'Mindbody backed rows can be managed here with provider first writes.':mindbodySource?'Schedule data is mirrored from Mindbody and is temporarily read only here.':'Manage the local Classy schedule here.'}</p></div></div>${classTable(d.classes,mindbodySource&&!writeThroughReady)}</section>`;
+    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. ${writeThroughReady?'Mindbody backed rows can be managed here with provider first writes. Use Edit to change trainer, studio, time, duration or capacity.':mindbodySource?'Schedule data is mirrored from Mindbody and is temporarily read only here.':'Manage the local Classy schedule here.'}</p></div></div>
+      <div class="schedule-week-toolbar">
+        <div class="schedule-week-nav"><button class="secondary" type="button" id="classWeekPrev">← Week</button><button class="secondary" type="button" id="classWeekToday">This week</button><button class="secondary" type="button" id="classWeekNext">Week →</button></div>
+        <strong id="classWeekLabel"></strong>
+        <select id="classStudioFilter" aria-label="Filter studio"><option value="">All studios</option>${studioFilterOptions}</select>
+        <select id="classCoachFilter" aria-label="Filter coach"><option value="">All trainers</option>${coachFilterOptions}</select>
+        <span id="classWeekCount"></span>
+      </div>
+      <div id="classScheduleTable">${classTable(d.classes,mindbodySource&&!writeThroughReady)}</div>
+      <div class="empty" id="classWeekEmpty" hidden>No classes in this week.</div>
+    </section>`;
 
     if($('#cStart')){
       const x=new Date(Date.now()+86400000);x.setMinutes(0,0,0);
       $('#cStart').value=new Date(x.getTime()-x.getTimezoneOffset()*60000).toISOString().slice(0,16)
     }
+
+    let classWeekOffset=0;
+    const mondayOfWeek=(offset=0)=>{
+      const now=new Date(),day=(now.getDay()+6)%7;
+      const start=new Date(now.getFullYear(),now.getMonth(),now.getDate()-day+(offset*7),0,0,0,0);
+      return start
+    };
+    const applyClassWeek=()=>{
+      const start=mondayOfWeek(classWeekOffset),end=new Date(start);end.setDate(end.getDate()+7);
+      const studio=$('#classStudioFilter')?.value||'',coach=$('#classCoachFilter')?.value||'';
+      let visible=0;
+      $('[data-class-row]').forEach(row=>{
+        const when=new Date(row.dataset.start||0);
+        const show=when>=start&&when<end&&(!studio||row.dataset.studio===studio)&&(!coach||row.dataset.coach===coach);
+        row.hidden=!show;if(show)visible++
+      });
+      const fmt=new Intl.DateTimeFormat(locale(),{day:'2-digit',month:'short'});
+      const fmtEnd=new Intl.DateTimeFormat(locale(),{day:'2-digit',month:'short',year:'numeric'});
+      const last=new Date(end);last.setDate(last.getDate()-1);
+      if($('#classWeekLabel'))$('#classWeekLabel').textContent=fmt.format(start)+' – '+fmtEnd.format(last);
+      if($('#classWeekCount'))$('#classWeekCount').textContent=visible+' '+(document.documentElement.lang==='de'?'Kurse':'classes');
+      if($('#classWeekEmpty'))$('#classWeekEmpty').hidden=visible>0;
+      if($('#classWeekToday'))$('#classWeekToday').disabled=classWeekOffset===0
+    };
+    $('#classWeekPrev')?.addEventListener('click',()=>{classWeekOffset--;applyClassWeek()});
+    $('#classWeekToday')?.addEventListener('click',()=>{classWeekOffset=0;applyClassWeek()});
+    $('#classWeekNext')?.addEventListener('click',()=>{classWeekOffset++;applyClassWeek()});
+    $('#classStudioFilter')?.addEventListener('change',applyClassWeek);
+    $('#classCoachFilter')?.addEventListener('change',applyClassWeek);
+    applyClassWeek();
 
     const syncDescriptionHint=()=>{
       if(!providerReady)return;
@@ -398,7 +442,7 @@
     }
   }
 
-  function classTable(rows,readOnly=false){return `<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>START</span><span>COACH</span><span>CAPACITY</span><span></span></div>${rows.map(c=>`<div class="trow"><div><b>${esc(c.name)}</b><small>${esc(c.type)}${c.mindbody_managed?' · Mindbody':''}${c.description?` · ${esc(c.description)}`:''}</small></div><div><b>${esc(c.studio_name)}</b><small>${esc(c.status)}</small></div><div><b>${dt(c.starts_at)}</b><small>${c.duration} Min.</small></div><div><b>${esc(c.coach)}</b></div><div><b>${c.reserved}/${c.capacity}</b><small>${c.spots} available</small></div><div class="actions">${!readOnly&&(has('classes.edit')||has('classes.edit_own'))&&c.status==='active'?`<button class="secondary" data-edit-class="${c.id}">Edit</button>`:''}${!readOnly&&has('classes.delete')&&c.status==='active'?`<button class="danger" data-delete-class="${c.id}">Cancel</button>`:''}</div></div>`).join('')}</div>`}
+  function classTable(rows,readOnly=false){return `<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>START</span><span>COACH</span><span>CAPACITY</span><span></span></div>${rows.map(c=>`<div class="trow" data-class-row data-start="${esc(c.starts_at)}" data-studio="${esc(c.studio||'')}" data-coach="${esc(c.coach_id||'')}"><div><b>${esc(c.name)}</b><small>${esc(c.type)}${c.mindbody_managed?' · Mindbody':''}${c.description?` · ${esc(c.description)}`:''}</small></div><div><b>${esc(c.studio_name)}</b><small>${esc(c.status)}</small></div><div><b>${dt(c.starts_at)}</b><small>${c.duration} Min.</small></div><div><b>${esc(c.coach)}</b></div><div><b>${c.reserved}/${c.capacity}</b><small>${c.spots} available</small></div><div class="actions">${!readOnly&&(has('classes.edit')||has('classes.edit_own'))&&c.status==='active'?`<button class="secondary" data-edit-class="${c.id}">Edit</button>`:''}${!readOnly&&has('classes.delete')&&c.status==='active'?`<button class="danger" data-delete-class="${c.id}">Cancel</button>`:''}</div></div>`).join('')}</div>`}
 
 
 
@@ -428,23 +472,23 @@
   }
 
   function coachAccountModal(coach){
-    const names=coach.display_name.trim().split(/\s+/),first=names.shift()||'',last=names.join(' '),wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop';wrap.innerHTML=`<div class="panel modal coach-edit-modal"><div class="panel-head"><div><p class="kicker">COACH LOGIN</p><h2>Create login</h2><p>${esc(coach.display_name)} will use this email and password at the main Login page.</p></div><button class="secondary" data-close>×</button></div><div class="form-stack"><label>EMAIL<input id="coachLoginEmail" type="email" autocomplete="off"></label><label>START PASSWORD<input id="coachLoginPassword" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label><label class="password-toggle"><input type="checkbox" data-password-toggle="#coachLoginPassword"> Show password</label><div class="form-grid"><label>FIRST NAME<input id="coachLoginFirst" value="${esc(first)}"></label><label>LAST NAME<input id="coachLoginLast" value="${esc(last)}"></label></div><p class="photo-editor-message" aria-live="polite"></p></div><div class="photo-editor-actions"><button class="secondary" data-close>Cancel</button><button class="primary" id="coachLoginSave">Create account</button></div></div>`;document.body.appendChild(wrap);const close=()=>wrap.remove();$$$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};$('#coachLoginSave',wrap).onclick=async()=>{const message=$('.photo-editor-message',wrap),button=$('#coachLoginSave',wrap);try{button.disabled=true;await api(`/api/staff/coaches/${coach.id}/account`,{method:'POST',body:JSON.stringify({email:$('#coachLoginEmail',wrap).value,password:$('#coachLoginPassword',wrap).value,first_name:$('#coachLoginFirst',wrap).value,last_name:$('#coachLoginLast',wrap).value})});close();toast('Coach login created');coachManager()}catch(error){message.textContent={email_exists:'This email already has an account.',password_too_short:'Password must be at least 8 characters.'}[error.message]||error.message;button.disabled=false}};
+    const names=coach.display_name.trim().split(/\s+/),first=names.shift()||'',last=names.join(' '),wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop';wrap.innerHTML=`<div class="panel modal coach-edit-modal"><div class="panel-head"><div><p class="kicker">COACH LOGIN</p><h2>Create login</h2><p>${esc(coach.display_name)} will use this email and password at the main Login page.</p></div><button class="secondary" data-close>×</button></div><div class="form-stack"><label>EMAIL<input id="coachLoginEmail" type="email" autocomplete="off"></label><label>START PASSWORD<input id="coachLoginPassword" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label><label class="password-toggle"><input type="checkbox" data-password-toggle="#coachLoginPassword"> Show password</label><div class="form-grid"><label>FIRST NAME<input id="coachLoginFirst" value="${esc(first)}"></label><label>LAST NAME<input id="coachLoginLast" value="${esc(last)}"></label></div><p class="photo-editor-message" aria-live="polite"></p></div><div class="photo-editor-actions"><button class="secondary" data-close>Cancel</button><button class="primary" id="coachLoginSave">Create account</button></div></div>`;document.body.appendChild(wrap);const close=()=>wrap.remove();$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};$('#coachLoginSave',wrap).onclick=async()=>{const message=$('.photo-editor-message',wrap),button=$('#coachLoginSave',wrap);try{button.disabled=true;await api(`/api/staff/coaches/${coach.id}/account`,{method:'POST',body:JSON.stringify({email:$('#coachLoginEmail',wrap).value,password:$('#coachLoginPassword',wrap).value,first_name:$('#coachLoginFirst',wrap).value,last_name:$('#coachLoginLast',wrap).value})});close();toast('Coach login created');coachManager()}catch(error){message.textContent={email_exists:'This email already has an account.',password_too_short:'Password must be at least 8 characters.'}[error.message]||error.message;button.disabled=false}};
   }
 
   function coachPasswordResetModal(coach){
-    const wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop';wrap.innerHTML=`<div class="panel modal coach-edit-modal"><div class="panel-head"><div><p class="kicker">SECURITY</p><h2>Reset password</h2><p>${esc(coach.display_name)} · ${esc(coach.email)}</p></div><button class="secondary" data-close>×</button></div><div class="form-stack"><label>NEW PASSWORD<input id="coachResetPassword" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label><label>CONFIRM PASSWORD<input id="coachResetConfirm" type="password" autocomplete="new-password"></label><label class="password-toggle"><input type="checkbox" data-password-toggle="#coachResetPassword,#coachResetConfirm"> Show passwords</label><p class="photo-editor-message" aria-live="polite"></p></div><div class="photo-editor-actions"><button class="secondary" data-close>Cancel</button><button class="primary" id="coachResetSave">Set new password</button></div></div>`;document.body.appendChild(wrap);const close=()=>wrap.remove();$$$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};$('#coachResetSave',wrap).onclick=async()=>{const password=$('#coachResetPassword',wrap).value,message=$('.photo-editor-message',wrap);if(password!==$('#coachResetConfirm',wrap).value){message.textContent='Passwords do not match.';return}try{await api(`/api/staff/coaches/${coach.id}/reset-password`,{method:'POST',body:JSON.stringify({new_password:password})});close();toast('Coach password reset')}catch(error){message.textContent=error.message==='password_too_short'?'Password must be at least 8 characters.':error.message}};
+    const wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop';wrap.innerHTML=`<div class="panel modal coach-edit-modal"><div class="panel-head"><div><p class="kicker">SECURITY</p><h2>Reset password</h2><p>${esc(coach.display_name)} · ${esc(coach.email)}</p></div><button class="secondary" data-close>×</button></div><div class="form-stack"><label>NEW PASSWORD<input id="coachResetPassword" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label><label>CONFIRM PASSWORD<input id="coachResetConfirm" type="password" autocomplete="new-password"></label><label class="password-toggle"><input type="checkbox" data-password-toggle="#coachResetPassword,#coachResetConfirm"> Show passwords</label><p class="photo-editor-message" aria-live="polite"></p></div><div class="photo-editor-actions"><button class="secondary" data-close>Cancel</button><button class="primary" id="coachResetSave">Set new password</button></div></div>`;document.body.appendChild(wrap);const close=()=>wrap.remove();$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};$('#coachResetSave',wrap).onclick=async()=>{const password=$('#coachResetPassword',wrap).value,message=$('.photo-editor-message',wrap);if(password!==$('#coachResetConfirm',wrap).value){message.textContent='Passwords do not match.';return}try{await api(`/api/staff/coaches/${coach.id}/reset-password`,{method:'POST',body:JSON.stringify({new_password:password})});close();toast('Coach password reset')}catch(error){message.textContent=error.message==='password_too_short'?'Password must be at least 8 characters.':error.message}};
   }
 
   function editCoachProfile(coach){
     const wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop';wrap.innerHTML=`<div class="panel modal coach-edit-modal"><div class="panel-head"><div><p class="kicker">COACH PROFILE</p><h2>Edit ${esc(coach.display_name)}</h2></div><button class="secondary" data-close>×</button></div><div class="form-stack"><label>DISPLAY NAME<input id="editCoachName" value="${esc(coach.display_name)}"></label><label>BIO<textarea id="editCoachBio" rows="6" maxlength="2000">${esc(coach.bio||'')}</textarea></label><label class="toggle-row"><input id="editCoachActive" type="checkbox" ${coach.active?'checked':''}> <span>Active public profile</span></label></div><div class="photo-editor-actions"><button class="secondary" data-close>Cancel</button><button class="primary" id="editCoachSave">Save profile</button></div></div>`;document.body.appendChild(wrap);
-    const close=()=>wrap.remove();$$$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.addEventListener('click',event=>{if(event.target===wrap)close()});
+    const close=()=>wrap.remove();$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.addEventListener('click',event=>{if(event.target===wrap)close()});
     $('#editCoachSave',wrap).onclick=async()=>{try{await api(`/api/staff/coaches/${coach.id}`,{method:'PATCH',body:JSON.stringify({display_name:$('#editCoachName',wrap).value,bio:$('#editCoachBio',wrap).value,active:$('#editCoachActive',wrap).checked})});close();toast('Coach profile saved');coachManager()}catch(error){toast(error.message)}};
   }
 
   function openPhotoEditor({coach,uploadPath,deletePath,onSaved}){
     const wrap=document.createElement('div');wrap.className='photo-editor-backdrop';wrap.innerHTML=`<section class="photo-editor" role="dialog" aria-modal="true" aria-label="Edit profile photo"><div class="photo-editor-head"><div><p class="kicker">PROFILE PHOTO</p><h2>${esc(coach.display_name)}</h2></div><button class="secondary" data-close aria-label="Close">×</button></div><div class="photo-editor-body"><aside class="photo-current"><span>Current photo</span>${coachAvatar(coach,true)}<p>Choose a new image, drag it to reposition, then use zoom for a clean square crop.</p></aside><div class="crop-workspace"><label class="photo-picker"><input id="photoFile" type="file" accept="image/jpeg,image/png,image/webp"><span>Choose JPG, PNG or WebP</span><small>Maximum file size: 5 MB</small></label><div class="crop-stage"><canvas id="cropCanvas" width="640" height="640" aria-label="Photo crop preview"></canvas><div class="crop-placeholder"><b>Photo preview</b><span>Select an image to start</span></div></div><label class="zoom-control">ZOOM<input id="photoZoom" type="range" min="1" max="3" value="1" step="0.01" disabled></label><p class="photo-editor-message" aria-live="polite"></p></div></div><div class="photo-editor-actions">${coach.photo_url?'<button class="danger" id="photoDelete">Remove current</button>':'<span></span>'}<div><button class="secondary" data-close>Cancel</button><button class="primary" id="photoSave" disabled>Save photo</button></div></div></section>`;document.body.appendChild(wrap);
     const canvas=$('#cropCanvas',wrap),ctx=canvas.getContext('2d'),fileInput=$('#photoFile',wrap),zoom=$('#photoZoom',wrap),save=$('#photoSave',wrap),message=$('.photo-editor-message',wrap),placeholder=$('.crop-placeholder',wrap);let image=null,objectUrl='',offsetX=0,offsetY=0,dragging=false,lastX=0,lastY=0;
-    const close=()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);wrap.remove()};$$$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};
+    const close=()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);wrap.remove()};$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=event=>{if(event.target===wrap)close()};
     const bounds=()=>{if(!image)return null;const scale=Math.max(canvas.width/image.naturalWidth,canvas.height/image.naturalHeight)*Number(zoom.value),width=image.naturalWidth*scale,height=image.naturalHeight*scale,maxX=Math.max(0,(width-canvas.width)/2),maxY=Math.max(0,(height-canvas.height)/2);offsetX=Math.max(-maxX,Math.min(maxX,offsetX));offsetY=Math.max(-maxY,Math.min(maxY,offsetY));return{scale,width,height}};
     const draw=()=>{const size=bounds();if(!size)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,(canvas.width-size.width)/2+offsetX,(canvas.height-size.height)/2+offsetY,size.width,size.height)};
     const errorText=error=>({unsupported_image:'Please select a JPG, PNG or WebP image.',image_too_large:'The image must be smaller than 5 MB.',empty_image:'The selected image is empty.'}[error]||error||'Could not save this image.');
