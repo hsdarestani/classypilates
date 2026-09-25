@@ -691,6 +691,295 @@ def _studio_matches(local_id: str, name: str) -> bool:
     return keys.get(local_id, local_id) in name
 
 
+def _class_description_id(row: dict[str, Any]) -> str:
+    return str(_value(row, "Id", "ID", "ClassDescriptionId", "classDescriptionId", default="") or "").strip()
+
+
+def _load_class_descriptions(client: WriteClient) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        payload = client.get_class_descriptions(limit=200, offset=offset)
+        batch = [
+            row for row in _extract_list(payload, ("ClassDescriptions", "classDescriptions", "Items"))
+            if isinstance(row, dict)
+        ]
+        rows.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+    return rows
+
+
+def _resolve_class_description(
+    client: WriteClient,
+    title: str,
+    class_description_id: int | str | None = None,
+) -> dict[str, Any]:
+    descriptions = _load_class_descriptions(client)
+    wanted_id = str(class_description_id or "").strip()
+    if wanted_id:
+        match = next((row for row in descriptions if _class_description_id(row) == wanted_id), None)
+        if match:
+            return match
+    key = " ".join(str(title or "").split()).casefold()
+    matches = [
+        row for row in descriptions
+        if " ".join(str(_value(row, "Name", "name", default="") or "").split()).casefold() == key
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    raise MindbodyError("mindbody_class_description_required")
+
+
+def _resolve_location(client: WriteClient, local_studio_id: str, class_title: str) -> dict[str, Any]:
+    from import_mindbody_schedule import studio_id as local_studio_from_remote
+
+    payload = client.get_locations()
+    locations = [
+        row for row in _extract_list(payload, ("Locations", "locations", "Items"))
+        if isinstance(row, dict)
+    ]
+    matches = []
+    for row in locations:
+        name = str(_value(row, "Name", "name", default="") or "").strip()
+        if local_studio_from_remote(name.casefold(), class_title) == local_studio_id:
+            matches.append(row)
+    if len(matches) != 1:
+        raise MindbodyError(
+            f"mindbody_location_mapping_failed:{local_studio_id}:{len(matches)}"
+        )
+    return matches[0]
+
+
+def _coach_remote_id(db: Session, coach_id: int | None) -> str:
+    if not coach_id:
+        raise MindbodyError("mindbody_coach_required")
+    state = _state_row(db, "coach", coach_id)
+    remote_id = str((state or {}).get("remote_id") or "").strip()
+    if not remote_id:
+        raise MindbodyError("mindbody_coach_not_synced")
+    return remote_id
+
+
+def _local_month_shift(value: datetime, months: int) -> datetime:
+    local = core.as_utc(value).astimezone(core.ZoneInfo("Europe/Berlin"))
+    index = local.month - 1 + months
+    year = local.year + index // 12
+    month = index % 12 + 1
+    day = min(local.day, calendar.monthrange(year, month)[1])
+    return local.replace(year=year, month=month, day=day)
+
+
+def _schedule_day_flags(value: datetime) -> dict[str, bool]:
+    names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    result = {f"Day{name}": False for name in names}
+    result[f"Day{names[value.weekday()]}"] = True
+    return result
+
+
+def mindbody_class_catalog() -> dict[str, Any]:
+    client = WriteClient.from_env(timeout=20.0)
+    descriptions = _load_class_descriptions(client)
+    locations_payload = client.get_locations()
+    locations = [
+        row for row in _extract_list(locations_payload, ("Locations", "locations", "Items"))
+        if isinstance(row, dict)
+    ]
+    with core.SessionLocal() as db:
+        coaches = list(db.scalars(select(core.Coach).where(core.Coach.active == True).order_by(core.Coach.display_name)).all())
+        coach_rows = []
+        for coach in coaches:
+            state = _state_row(db, "coach", coach.id)
+            coach_rows.append({
+                "id": coach.id,
+                "name": coach.display_name,
+                "mindbody_staff_id": str((state or {}).get("remote_id") or ""),
+                "ready": bool((state or {}).get("remote_id")),
+            })
+    return {
+        "class_descriptions": sorted([
+            {
+                "id": _class_description_id(row),
+                "name": str(_value(row, "Name", "name", default="") or "").strip(),
+                "description": str(_value(row, "Description", "description", default="") or "").strip(),
+            }
+            for row in descriptions
+            if _class_description_id(row) and str(_value(row, "Name", "name", default="") or "").strip()
+        ], key=lambda row: row["name"].casefold()),
+        "locations": [
+            {
+                "id": str(_value(row, "Id", "ID", "LocationId", default="") or ""),
+                "name": str(_value(row, "Name", "name", default="") or "").strip(),
+            }
+            for row in locations
+        ],
+        "coaches": coach_rows,
+    }
+
+
+def create_remote_class_series(
+    *,
+    studio_id: str,
+    title: str,
+    class_description_id: int | str | None,
+    coach_id: int | None,
+    starts_at: datetime,
+    duration: int,
+    capacity: int,
+    repeat_months: int = 1,
+) -> dict[str, Any]:
+    """Create provider-first class schedules, then mirror the instances back locally."""
+    # Make sure local coaches have a stable Mindbody Staff mapping before writing.
+    sync_staff_and_assignments()
+    client = WriteClient.from_env(timeout=25.0)
+    description = _resolve_class_description(client, title, class_description_id)
+    provider_title = str(_value(description, "Name", "name", default=title) or title).strip()
+    location = _resolve_location(client, studio_id, provider_title)
+    location_id = str(_value(location, "Id", "ID", "LocationId", default="") or "").strip()
+    if not location_id:
+        raise MindbodyError("mindbody_location_mapping_failed")
+
+    with core.SessionLocal() as db:
+        staff_id = _coach_remote_id(db, coach_id)
+
+    repeat_months = max(1, min(36, int(repeat_months or 1)))
+    duration = max(15, min(180, int(duration or 50)))
+    capacity = max(1, min(100, int(capacity or 1)))
+    remote_instance_ids: list[str] = []
+    remote_schedule_ids: list[str] = []
+
+    for month in range(repeat_months):
+        local_start = _local_month_shift(starts_at, month)
+        local_end = local_start + timedelta(minutes=duration)
+        payload = {
+            "ClassDescriptionId": int(_class_description_id(description)),
+            "LocationId": int(location_id),
+            "StartDate": local_start.isoformat(),
+            "StartTime": local_start.isoformat(),
+            "EndTime": local_end.isoformat(),
+            **_schedule_day_flags(local_start),
+            "StaffId": int(staff_id),
+            "StaffPayRate": 1,
+            "MaxCapacity": capacity,
+            "WebCapacity": capacity,
+            "WaitlistCapacity": capacity,
+            "BookingStatus": "BookAndPayLater",
+            "AllowOpenEnrollment": False,
+            "AllowDateForwardEnrollment": False,
+            "ShowToPublic": True,
+        }
+        result = client.add_class_schedule(payload)
+        schedule_id = str(_value(result, "ClassId", "classId", default="") or "")
+        if schedule_id:
+            remote_schedule_ids.append(schedule_id)
+        for instance_id in _extract_list(result, ("ClassInstanceIds", "classInstanceIds", "Items")):
+            if instance_id is not None:
+                remote_instance_ids.append(str(instance_id))
+
+    sync_schedule_availability_fast()
+    sync_staff_and_assignments()
+
+    created_local: list[dict[str, Any]] = []
+    with core.SessionLocal() as db:
+        if remote_instance_ids:
+            rows = list(db.scalars(
+                select(core.ClassSession)
+                .where(core.ClassSession.mindbody_class_id.in_(remote_instance_ids))
+                .order_by(core.ClassSession.starts_at)
+            ).all())
+            created_local = [core.class_dict(row, db) for row in rows]
+    return {
+        "provider_created": True,
+        "remote_schedule_ids": remote_schedule_ids,
+        "remote_instance_ids": remote_instance_ids,
+        "classes": created_local,
+        "created_count": len(remote_schedule_ids),
+    }
+
+
+def update_remote_class_schedule(
+    class_id: int,
+    *,
+    studio_id: str,
+    coach_id: int | None,
+    starts_at: datetime,
+    duration: int,
+    capacity: int,
+) -> dict[str, Any]:
+    """Push supported schedule fields to Mindbody before refreshing the local mirror."""
+    sync_staff_and_assignments()
+    client = WriteClient.from_env(timeout=25.0)
+    with core.SessionLocal() as db:
+        klass = db.get(core.ClassSession, class_id)
+        if not klass or not klass.mindbody_class_id:
+            raise MindbodyError("mindbody_class_not_linked")
+        remote_id = str(klass.mindbody_class_id)
+        title = klass.title
+        staff_id = _coach_remote_id(db, coach_id)
+        remote = _find_remote_class(client, klass)
+        if not remote:
+            raise MindbodyError("mindbody_class_not_found")
+
+    schedule = remote.get("ClassSchedule") or remote.get("classSchedule") or {}
+    schedule_id = str(_value(schedule, "Id", "ID", "ClassScheduleId", "classScheduleId", default="") or "").strip()
+    if not schedule_id:
+        raise MindbodyError("mindbody_class_schedule_id_missing")
+
+    location = _resolve_location(client, studio_id, title)
+    location_id = str(_value(location, "Id", "ID", "LocationId", default="") or "").strip()
+    local_start = core.as_utc(starts_at).astimezone(core.ZoneInfo("Europe/Berlin"))
+    local_end = local_start + timedelta(minutes=max(15, min(180, int(duration or 50))))
+
+    old_start = _parse_dt(_value(schedule, "StartDate", "startDate"))
+    old_end = _parse_dt(_value(schedule, "EndDate", "endDate"))
+    recurring = bool(old_start and old_end and old_start.date() != old_end.date())
+
+    payload: dict[str, Any] = {
+        "ClassId": int(schedule_id),
+        "LocationId": int(location_id),
+        "StartDate": (old_start.astimezone(core.ZoneInfo("Europe/Berlin")).isoformat() if recurring and old_start else local_start.isoformat()),
+        "EndDate": (old_end.astimezone(core.ZoneInfo("Europe/Berlin")).isoformat() if recurring and old_end else local_start.isoformat()),
+        "StartTime": local_start.isoformat(),
+        "EndTime": local_end.isoformat(),
+        "StaffId": int(staff_id),
+        "StaffPayRate": int(_value(schedule, "StaffPayRate", "staffPayRate", default=1) or 1),
+        "MaxCapacity": max(1, min(100, int(capacity or 1))),
+        "WebCapacity": max(1, min(100, int(capacity or 1))),
+        "WaitlistCapacity": int(_value(schedule, "WaitlistCapacity", "waitlistCapacity", default=max(1, min(100, int(capacity or 1)))) or 0),
+        "BookingStatus": str(_value(schedule, "BookingStatus", "bookingStatus", default="BookAndPayLater") or "BookAndPayLater"),
+        "AllowOpenEnrollment": bool(_value(schedule, "AllowOpenEnrollment", "allowOpenEnrollment", default=False)),
+        "AllowDateForwardEnrollment": bool(_value(schedule, "AllowDateForwardEnrollment", "allowDateForwardEnrollment", default=False)),
+        "RetainScheduleChanges": True,
+    }
+    if recurring:
+        for key in ("DaySunday", "DayMonday", "DayTuesday", "DayWednesday", "DayThursday", "DayFriday", "DaySaturday"):
+            payload[key] = bool(_value(schedule, key, key[:1].lower()+key[1:], default=False))
+    else:
+        payload.update(_schedule_day_flags(local_start))
+
+    result = client.update_class_schedule(payload)
+    sync_schedule_availability_fast()
+    sync_staff_and_assignments()
+
+    with core.SessionLocal() as db:
+        refreshed = db.scalar(
+            select(core.ClassSession)
+            .where(core.ClassSession.mindbody_class_id == remote_id)
+            .limit(1)
+        )
+        row = core.class_dict(refreshed, db) if refreshed else None
+    return {
+        "provider_updated": True,
+        "scope": "series" if recurring else "single_schedule",
+        "class": row,
+        "result": {
+            "class_id": str(_value(result, "ClassId", "classId", default="") or ""),
+            "instance_ids": [str(x) for x in _extract_list(result, ("ClassInstanceIds", "classInstanceIds", "Items"))],
+        },
+    }
+
+
 def _extract_class_visits(payload: Any) -> list[dict[str, Any]]:
     """Return visits from Mindbody GetClassVisits response.
 
