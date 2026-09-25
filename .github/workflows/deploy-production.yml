@@ -531,9 +531,6 @@ jobs:
           fi
           echo "Production sync integrity: OK"
 
-          echo "Running live Mindbody/Classy availability audit..."
-          docker compose exec -T api python mindbody_audit.py
-
           echo "Recent failed website Mindbody holds (diagnostic, no customer data):"
           docker compose exec -T db sh -lc 'psql -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
           SELECT
@@ -549,4 +546,8 @@ jobs:
           ORDER BY b.created_at DESC
           LIMIT 8;
           SQL
+
+          echo "Running live Mindbody/Classy availability audit..."
+          docker compose exec -T api python mindbody_audit.py
+
           REMOTE
