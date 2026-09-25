@@ -68,7 +68,7 @@
     const fourth=isCoach
       ? `<article class="metric"><span>PROFILE</span><b>${state.user?.coach?'Ready':'Setup'}</b><small>public coach profile</small></article>`
       : `<article class="metric"><span>${has('finance.view')?'REVENUE':'COACHES'}</span><b>${has('finance.view')?money(d.revenue_cents):d.coaches}</b><small>${has('finance.view')?'paid bookings':'active coaches'}</small></article>`;
-    $('#view').innerHTML=`${hero}<div class="cards"><article class="metric"><span>${isCoach?'MY ACTIVE BOOKINGS':'ACTIVE BOOKINGS'}</span><b>${d.active_bookings}</b><small>${d.imported_bookings} Mindbody · ${d.live_bookings} Website</small></article><article class="metric"><span>${isCoach?'MY UPCOMING CLASSES':'UPCOMING CLASSES'}</span><b>${d.upcoming_classes}</b><small>${isCoach?'assigned to you':'in the system'}</small></article><article class="metric"><span>NEW TODAY</span><b>${d.today_bookings}</b><small>${isCoach?'for your classes':'bookings today'}</small></article>${fourth}</div><section class="panel"><div class="panel-head"><div><p class="kicker">${isCoach?'YOUR CLASSES':'LIVE ACTIVITY'}</p><h2>${isCoach?'Recent attendees':'Recent bookings'}</h2><p>${isCoach?'Only bookings linked to your classes are shown here.':'New website bookings appear here with customer details. Imported Mindbody bookings contribute to occupancy and capacity metrics without exposing personal data.'}</p></div>${has('bookings.view')?'<button class="secondary" id="allBookings">View all</button>':''}</div>${recent.length?bookingTable(recent,false):`<div class="empty">${isCoach?'No attendees for your classes yet.':'No new website bookings yet.'}</div>`}</section>`;
+    $('#view').innerHTML=`${hero}<div class="cards"><article class="metric"><span>${isCoach?'MY ACTIVE BOOKINGS':'ACTIVE BOOKINGS'}</span><b>${d.active_bookings}</b><small>${d.imported_bookings} Mindbody · ${d.live_bookings} Website</small></article><article class="metric"><span>${isCoach?'MY UPCOMING CLASSES':'UPCOMING CLASSES'}</span><b>${d.upcoming_classes}</b><small>${isCoach?'assigned to you':'in the system'}</small></article><article class="metric"><span>NEW TODAY</span><b>${d.today_bookings}</b><small>${isCoach?'for your classes':'bookings today'}</small></article>${fourth}</div><section class="panel"><div class="panel-head"><div><p class="kicker">${isCoach?'YOUR CLASSES':'LIVE ACTIVITY'}</p><h2>${isCoach?'Recent attendees':'Recent bookings'}</h2><p>${isCoach?'Only bookings linked to your classes are shown here.':'New website bookings appear here with customer details. Imported Mindbody bookings are mirrored with customer details when Mindbody exposes them, while the original source stays visible.'}</p></div>${has('bookings.view')?'<button class="secondary" id="allBookings">View all</button>':''}</div>${recent.length?bookingTable(recent,false):`<div class="empty">${isCoach?'No attendees for your classes yet.':'No new website bookings yet.'}</div>`}</section>`;
     $('#allBookings')?.addEventListener('click',()=>switchView('bookings'));
     $('#heroSchedule')?.addEventListener('click',()=>switchView('classes'));
     $('#heroProfile')?.addEventListener('click',()=>switchView('profile'));
@@ -207,12 +207,14 @@
 
   async function classes(){
     const d=await api('/api/staff/classes');
-    let catalog=null;
+    let catalog=null,mbStatus=null;
     try{catalog=await api('/api/staff/mindbody/catalog')}catch(_){}
+    try{mbStatus=await api('/api/staff/mindbody/status')}catch(_){}
     let coachRows=[];
     if(has('coaches.view'))try{coachRows=(await api('/api/staff/coaches')).coaches}catch(_){}
 
     const providerReady=Boolean(catalog&&Array.isArray(catalog.class_descriptions)&&catalog.class_descriptions.length);
+    const mindbodySource=Boolean(mbStatus?.configured||providerReady||d.classes.some(c=>c.mindbody_managed));
     const coachSelect=coachRows.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join('');
     const descriptionOptions=providerReady
       ? catalog.class_descriptions.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
@@ -221,7 +223,7 @@
       ? 'Classes created here are written to Mindbody first and then mirrored back to Classy. Choose an existing Mindbody class type, studio, coach and schedule.'
       : 'Create one session or repeat it automatically every month.';
 
-    $('#view').innerHTML=`${has('classes.create')?`<section class="panel provider-create-panel">
+    $('#view').innerHTML=`${has('classes.create')&&!mindbodySource?`<section class="panel provider-create-panel">
       <div class="panel-head"><div><p class="kicker">NEW SESSION</p><h2>Create class</h2><p>${createCopy}</p></div>${providerReady?'<span class="provider-chip mindbody">Mindbody write-through</span>':''}</div>
       ${providerReady?`<div class="provider-note"><b>Mindbody is the schedule source.</b><span>Creation and schedule changes are saved in Mindbody first. Class name and description come from the selected Mindbody Class Description.</span></div>`:''}
       <div class="form-grid">
@@ -239,7 +241,8 @@
         <div><button class="primary" id="createClass">${providerReady?'Create in Mindbody':'Save class series'}</button></div>
       </div>
     </section>`:''}
-    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. Mindbody-backed rows write schedule changes back to Mindbody.</p></div></div>${classTable(d.classes)}</section>`;
+    ${mindbodySource?`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY SCHEDULE</p><h2>Schedule managed in Mindbody</h2><p>Class creation, edits and cancellations are temporarily read only here. Mindbody remains the source of truth and changes continue to sync into Classy automatically.</p></div><span class="provider-chip mindbody">Mindbody source</span></div><div class="provider-note"><b>Management controls are hidden for now.</b><span>The Classy to Mindbody write through capability stays in the codebase so it can be enabled later without rebuilding the integration.</span></div></section>`:''}
+    <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. ${mindbodySource?'Schedule data is mirrored from Mindbody and is read only here while the integration is active.':'Manage the local Classy schedule here.'}</p></div></div>${classTable(d.classes,mindbodySource)}</section>`;
 
     if($('#cStart')){
       const x=new Date(Date.now()+86400000);x.setMinutes(0,0,0);
@@ -335,7 +338,7 @@
     }
   }
 
-  function classTable(rows){return `<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>START</span><span>COACH</span><span>CAPACITY</span><span></span></div>${rows.map(c=>`<div class="trow"><div><b>${esc(c.name)}</b><small>${esc(c.type)}${c.mindbody_managed?' · Mindbody':''}${c.description?` · ${esc(c.description)}`:''}</small></div><div><b>${esc(c.studio_name)}</b><small>${esc(c.status)}</small></div><div><b>${dt(c.starts_at)}</b><small>${c.duration} Min.</small></div><div><b>${esc(c.coach)}</b></div><div><b>${c.reserved}/${c.capacity}</b><small>${c.spots} available</small></div><div class="actions">${(has('classes.edit')||has('classes.edit_own'))&&c.status==='active'?`<button class="secondary" data-edit-class="${c.id}">Edit</button>`:''}${has('classes.delete')&&c.status==='active'?`<button class="danger" data-delete-class="${c.id}">Cancel</button>`:''}</div></div>`).join('')}</div>`}
+  function classTable(rows,readOnly=false){return `<div class="table"><div class="trow head"><span>CLASS</span><span>STUDIO</span><span>START</span><span>COACH</span><span>CAPACITY</span><span></span></div>${rows.map(c=>`<div class="trow"><div><b>${esc(c.name)}</b><small>${esc(c.type)}${c.mindbody_managed?' · Mindbody':''}${c.description?` · ${esc(c.description)}`:''}</small></div><div><b>${esc(c.studio_name)}</b><small>${esc(c.status)}</small></div><div><b>${dt(c.starts_at)}</b><small>${c.duration} Min.</small></div><div><b>${esc(c.coach)}</b></div><div><b>${c.reserved}/${c.capacity}</b><small>${c.spots} available</small></div><div class="actions">${!readOnly&&(has('classes.edit')||has('classes.edit_own'))&&c.status==='active'?`<button class="secondary" data-edit-class="${c.id}">Edit</button>`:''}${!readOnly&&has('classes.delete')&&c.status==='active'?`<button class="danger" data-delete-class="${c.id}">Cancel</button>`:''}</div></div>`).join('')}</div>`}
 
 
 
