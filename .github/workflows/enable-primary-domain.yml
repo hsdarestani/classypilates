@@ -1,0 +1,89 @@
+name: Enable Classy Primary Domain
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classy-primary-domain-cutover
+  cancel-in-progress: false
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install DNS and SSH tools
+        run: sudo apt-get update && sudo apt-get install -y dnsutils sshpass curl
+
+      - name: Wait for apex and www DNS
+        env:
+          HOST: ${{ secrets.HOST }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST"
+          for i in $(seq 1 30); do
+            APEX="$(dig +short A classypilates.de | sort -u)"
+            WWW="$(dig +short A www.classypilates.de | sort -u)"
+            echo "classypilates.de: $APEX"
+            echo "www.classypilates.de: $WWW"
+            if printf '%s\n' "$APEX" | grep -Fxq "$HOST" && printf '%s\n' "$WWW" | grep -Fxq "$HOST"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Primary-domain DNS does not point to the production server yet." >&2
+          exit 2
+
+      - name: Issue TLS and activate primary domain
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          if ! command -v certbot >/dev/null 2>&1; then
+            apt-get update
+            apt-get install -y certbot python3-certbot-nginx
+          fi
+
+          test -f /etc/nginx/snippets/classy-routes.conf
+
+          cat > /etc/nginx/sites-available/classypilates-primary <<'NGINX'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name classypilates.de www.classypilates.de;
+              include /etc/nginx/snippets/classy-routes.conf;
+          }
+          NGINX
+
+          ln -sfn /etc/nginx/sites-available/classypilates-primary /etc/nginx/sites-enabled/classypilates-primary
+          nginx -t
+          systemctl reload nginx
+
+          certbot --nginx             -d classypilates.de             -d www.classypilates.de             --non-interactive             --agree-tos             --register-unsafely-without-email             --redirect             --keep-until-expiring
+
+          nginx -t
+          systemctl reload nginx
+
+          curl -fsSL --max-time 20 -o /tmp/classy-primary-home.html https://classypilates.de/
+          grep -qi 'Classy' /tmp/classy-primary-home.html
+          curl -fsSL --max-time 20 -o /tmp/classy-primary-health.json https://classypilates.de/api/health
+          grep -q '"ok":true' /tmp/classy-primary-health.json
+          REMOTE
+
+      - name: Verify public primary domain
+        run: |
+          set -euo pipefail
+          curl -fsSIL --max-time 30 https://classypilates.de/ >/dev/null
+          curl -fsSIL --max-time 30 https://www.classypilates.de/ >/dev/null
+          curl -fsSL --max-time 30 -o /tmp/health.json https://classypilates.de/api/health
+          grep -q '"ok":true' /tmp/health.json
+          echo "classypilates.de and www.classypilates.de are live on the new production server."
