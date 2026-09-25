@@ -137,21 +137,16 @@ jobs:
           curl -fsS http://127.0.0.1:8787/api/health
           curl -fsS http://127.0.0.1:8787/api/checkout/create | grep -q '"provider":"sumup"'
 
+          # Do not issue a second Mindbody staff token from a separate deploy
+          # process after the API has started. Mindbody can invalidate the token
+          # cached by the running API when another token is issued for the same
+          # staff credentials.
           docker compose exec -T api python - <<'PY'
-          from mindbody_sync import WriteClient
-          from mindbody_api import MindbodyError
-          probe = WriteClient.from_env(timeout=12.0)
-          try:
-              probe._write("client/addclient", {})
-          except MindbodyError as exc:
-              message = str(exc).casefold()
-              if "invalid user token" in message or "deniedaccess" in message:
-                  raise
-              if "required" not in message:
-                  raise
-              print("Mindbody authenticated write validation: OK")
-          else:
-              raise SystemExit("Unexpected success for empty AddClient probe")
+          from mindbody_sync import capability_status
+          status = capability_status()
+          if not status.get("configured"):
+              raise SystemExit("Mindbody credentials are not configured")
+          print("Mindbody configuration present: OK")
           PY
 
           # Production schedule is now sourced from live Mindbody. Do not import the

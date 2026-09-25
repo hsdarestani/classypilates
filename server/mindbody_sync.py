@@ -164,30 +164,59 @@ class WriteClient(MindbodyClient):
     def from_env(cls, timeout: float = 25.0):
         return cls(MindbodyConfig.from_env(), timeout)
 
+    def _invalidate_token(self) -> None:
+        self.access_token = ""
+        with self._token_guard:
+            self.__class__._token_cache = ""
+            self.__class__._token_expires_at = 0.0
+
     def _write(self, path: str, payload: dict[str, Any], *, authenticated: bool = True) -> dict[str, Any]:
         import json, urllib.error, urllib.request
-        if authenticated and not self.access_token:
-            self.issue_token()
-        headers = {
-            "API-Key": self.config.api_key, "SiteId": self.config.site_id,
-            "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "ClassyPilates/2.0",
-        }
-        if authenticated:
-            headers["Authorization"] = self.access_token
-        request = urllib.request.Request(
-            f"{self.config.api_url}/{path.lstrip('/')}", data=json.dumps(payload).encode(), headers=headers, method="POST"
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode() or "{}")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode(errors="replace")
+        for attempt in range(2):
+            if authenticated and not self.access_token:
+                self.issue_token()
+            headers = {
+                "API-Key": self.config.api_key,
+                "SiteId": self.config.site_id,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "ClassyPilates/2.0",
+            }
+            if authenticated:
+                # Public API V6 user tokens are passed directly, without a Bearer prefix.
+                headers["Authorization"] = self.access_token
+            request = urllib.request.Request(
+                f"{self.config.api_url}/{path.lstrip('/')}",
+                data=json.dumps(payload).encode(),
+                headers=headers,
+                method="POST",
+            )
             try:
-                error = json.loads(detail).get("Error", {})
-                detail = error.get("Message") or error.get("Code") or detail
-            except Exception:
-                pass
-            raise MindbodyError(str(detail)[:1000], status=exc.code) from exc
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode() or "{}")
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode(errors="replace")
+                code = ""
+                message = detail
+                try:
+                    error = json.loads(detail).get("Error", {})
+                    message = str(error.get("Message") or error.get("Code") or detail)
+                    code = str(error.get("Code") or "")
+                except Exception:
+                    pass
+                # Mindbody invalidates older staff tokens when another token is
+                # issued for the same credentials in some environments. Recover
+                # transparently instead of failing a customer's booking.
+                if (
+                    authenticated
+                    and attempt == 0
+                    and "invalid user token" in message.casefold()
+                ):
+                    self._invalidate_token()
+                    self.issue_token()
+                    continue
+                raise MindbodyError(str(message)[:1000], status=exc.code) from exc
+        raise MindbodyError("Mindbody authentication retry failed")
 
     def issue_token(self) -> str:
         now = time.time()
@@ -269,18 +298,37 @@ class WriteClient(MindbodyClient):
 
     def _authorized_get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         import json, urllib.error, urllib.parse, urllib.request
-        if not self.access_token: self.issue_token()
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
-        request = urllib.request.Request(f"{self.config.api_url}/{path}?{query}", headers={
-            "API-Key": self.config.api_key, "SiteId": self.config.site_id, "Authorization": f"Bearer {self.access_token}",
-            "Accept": "application/json", "User-Agent": "ClassyPilates/2.0",
-        })
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode() or "{}")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode(errors="replace")
-            raise MindbodyError(detail[:1000], status=exc.code) from exc
+        for attempt in range(2):
+            if not self.access_token:
+                self.issue_token()
+            request = urllib.request.Request(
+                f"{self.config.api_url}/{path}?{query}",
+                headers={
+                    "API-Key": self.config.api_key,
+                    "SiteId": self.config.site_id,
+                    "Authorization": self.access_token,
+                    "Accept": "application/json",
+                    "User-Agent": "ClassyPilates/2.0",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode() or "{}")
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode(errors="replace")
+                message = detail
+                try:
+                    error = json.loads(detail).get("Error", {})
+                    message = str(error.get("Message") or error.get("Code") or detail)
+                except Exception:
+                    pass
+                if attempt == 0 and "invalid user token" in message.casefold():
+                    self._invalidate_token()
+                    self.issue_token()
+                    continue
+                raise MindbodyError(str(message)[:1000], status=exc.code) from exc
+        raise MindbodyError("Mindbody authentication retry failed")
 
     def add_client_details(self, *, email: str, first_name: str, last_name: str, phone: str = "") -> str:
         result = self._write("client/addclient", {
