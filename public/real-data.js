@@ -68,8 +68,8 @@
 
   function coachCard(coach){
     const studios=(coach.studios||[]).join(' · ')||'Classy Pilates Frankfurt';
-    const local=localCoachPhoto(coach);
-    const remotePhoto=local?'':coachPhotoUrl(coach);
+    const remotePhoto=coachPhotoUrl(coach);
+    const local=remotePhoto?'':localCoachPhoto(coach);
 
     let avatar='';
     if(local){
