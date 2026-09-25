@@ -143,3 +143,110 @@ body.staff-menu-open .staff-nav-scrim{opacity:1;pointer-events:auto}
   .coach-card-title .status{margin-top:6px}
   .trow:not(.head)>*{grid-template-columns:78px minmax(0,1fr)}
 }
+
+
+/* 2026-09-25 portal redesign: admin and coach share one system, not one visual hierarchy. */
+.app{background:linear-gradient(180deg,#f6f2ea 0,#f2eee6 100%)}
+.sidebar{width:100%;padding:24px 14px 18px;background:
+  radial-gradient(circle at 20% 0,rgba(183,146,100,.16),transparent 34%),
+  linear-gradient(180deg,#171713 0,#11110f 100%);border-right:1px solid rgba(255,255,255,.04)}
+.side-brand{min-height:74px;padding:4px 10px 20px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:12px}
+.sidebar nav{gap:4px}
+.sidebar nav button{position:relative;min-height:46px;padding:0 12px;border-radius:11px;justify-content:flex-start;gap:11px;font-size:10px;font-weight:600;letter-spacing:.01em}
+.sidebar nav button svg{width:18px;height:18px;flex:0 0 18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.8}
+.sidebar nav button span:not(.pro){flex:1}
+.sidebar nav button.active{background:#f0e8da;color:#171713;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25),0 6px 18px rgba(0,0,0,.18)}
+.sidebar nav button.active svg{opacity:1}
+.sidebar nav button:not(.active):hover{background:rgba(255,255,255,.07);transform:translateX(2px)}
+.side-user{padding:16px 10px 3px;margin-left:2px;margin-right:2px;border-top-color:rgba(255,255,255,.11)}
+.side-user .avatar{width:38px;height:38px}
+.side-user button{width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,.06);display:grid;place-items:center}
+.side-user button:hover{background:rgba(255,255,255,.12)}
+
+.main{padding-top:22px}
+.main-top{position:sticky;top:0;z-index:28;min-height:76px;margin:0 -14px 22px;padding:10px 14px;background:rgba(246,242,234,.88);backdrop-filter:blur(16px);border-bottom:1px solid rgba(221,214,202,.72)}
+.main-top h1{font-size:38px;letter-spacing:-.035em}
+.top-right{gap:8px}
+.portal-mode,.live{display:inline-flex;align-items:center;min-height:32px;padding:0 10px;border-radius:999px;border:1px solid #ddd6ca;background:rgba(255,255,255,.75);font-size:8px;font-weight:800;letter-spacing:.1em}
+.portal-mode{color:#6d6458}
+.top-right a{min-height:32px;padding:0 11px;border:1px solid #ddd6ca;border-radius:999px;background:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:700}
+.top-right a svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.7}
+
+.portal-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;min-height:210px;margin-bottom:14px;padding:28px 30px;border-radius:18px}
+.portal-hero:after{content:'';position:absolute;right:-70px;top:-110px;width:280px;height:280px;border-radius:50%;border:1px solid currentColor;opacity:.08;box-shadow:0 0 0 45px currentColor,0 0 0 90px currentColor}
+.portal-hero>div{position:relative;z-index:1}
+.portal-hero h2{margin:7px 0 10px;font:500 clamp(34px,4vw,54px)/.96 var(--serif);letter-spacing:-.045em}
+.portal-hero p{max-width:760px;margin:0;font-size:11px;line-height:1.75}
+.admin-hero{background:linear-gradient(135deg,#181814,#2d2923);color:#fff}
+.admin-hero p{color:rgba(255,255,255,.62)}
+.admin-hero .kicker{color:#d5b483}
+.portal-hero-status{display:grid;gap:8px;justify-items:end}
+.portal-hero-status>span{display:inline-flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid rgba(255,255,255,.15);border-radius:999px;background:rgba(255,255,255,.07);font-size:8px;font-weight:800;letter-spacing:.1em}
+.portal-hero-status i{width:7px;height:7px;border-radius:50%;background:#70bd89;box-shadow:0 0 0 4px rgba(112,189,137,.11)}
+.portal-hero-status small{color:rgba(255,255,255,.48);font-size:9px}
+.coach-hero{background:linear-gradient(135deg,#e5dac8,#f2eadf);border:1px solid #d8ccbb;color:#171713}
+.coach-hero p{color:#6e675f}
+.coach-hero .kicker{color:#8c6d49}
+.portal-hero-actions{display:flex;gap:8px;align-items:center}
+.portal-hero-actions button{margin:0!important;white-space:nowrap}
+
+.cards{gap:10px}
+.metric{position:relative;overflow:hidden;min-height:138px;padding:19px 20px;border-radius:14px;background:rgba(255,255,255,.92);border-color:#e2dbd0;transition:transform .18s ease,box-shadow .18s ease}
+.metric:after{content:'';position:absolute;width:70px;height:70px;border-radius:50%;right:-32px;top:-32px;background:#b79264;opacity:.08}
+.metric:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(28,25,20,.07)}
+.metric b{font-size:38px;margin:15px 0 6px;letter-spacing:-.035em}
+.metric span{color:#8a8176;font-weight:800}
+.metric small{max-width:210px}
+
+.panel{border-radius:15px;border-color:#e1dbd1;background:rgba(255,255,255,.93);box-shadow:0 8px 24px rgba(25,22,18,.035)}
+.panel-head h2{font-size:29px;letter-spacing:-.025em}
+.panel-head .kicker{color:#a48158}
+.table{border:1px solid #ebe5dc;border-radius:12px}
+.trow{padding:13px 12px}
+.trow.head{position:sticky;top:0;z-index:2;border-radius:11px 11px 0 0;background:#f5f1ea}
+.trow:not(.head):last-child{border-bottom:0}
+.status{font-weight:700;letter-spacing:.025em}
+.form-grid input,.form-grid select,.form-grid textarea,.pass-sale-grid input,.pass-sale-grid select,.modal input,.modal select,.modal textarea,.studio-editor-fields input,.studio-editor-fields textarea{border-radius:10px!important;background:#fcfbf8!important;border-color:#ded7cc!important}
+.form-grid input:focus,.form-grid select:focus,.form-grid textarea:focus,.modal input:focus,.modal select:focus,.modal textarea:focus{border-color:#9d8b72!important;box-shadow:0 0 0 3px rgba(183,146,100,.11)!important}
+.primary,.secondary,.danger,.btn{border-radius:9px;transition:transform .12s ease,opacity .12s ease,background .12s ease}
+.primary:hover,.secondary:hover,.danger:hover,.btn:hover{transform:translateY(-1px)}
+.primary:active,.secondary:active,.danger:active,.btn:active{transform:none}
+
+.admin-portal .portal-mode{background:#171713;color:#fff;border-color:#171713}
+.coach-portal .portal-mode{background:#ede3d4;color:#6f5739;border-color:#ddcdb8}
+.coach-portal .sidebar{background:
+  radial-gradient(circle at 10% 0,rgba(183,146,100,.22),transparent 35%),
+  linear-gradient(180deg,#1a1915,#11110f)}
+.coach-portal .sidebar nav button.active{background:#dfd1bd}
+.coach-portal .metric:nth-child(1):after,.coach-portal .metric:nth-child(2):after{background:#8f704c}
+
+@media(max-width:980px){
+  .portal-hero{grid-template-columns:1fr;min-height:0;padding:24px}
+  .portal-hero-status{justify-items:start}
+  .portal-hero-actions{justify-content:flex-start}
+}
+@media(max-width:760px){
+  .main{padding-top:0}
+  .main-top{grid-template-columns:44px minmax(0,1fr) auto;display:grid;gap:9px;min-height:68px;padding:10px;margin-bottom:12px}
+  .main-top .mobile-nav{grid-column:1;margin:0}
+  .main-top>div:first-of-type{grid-column:2;min-width:0}
+  .main-top .top-right{grid-column:3}
+  .main-top h1{font-size:27px}
+  .portal-mode{display:none}
+  .portal-hero{margin-top:0;padding:20px 18px;border-radius:14px;gap:18px}
+  .portal-hero h2{font-size:35px}
+  .portal-hero p{font-size:10px}
+  .portal-hero-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .portal-hero-actions button{width:100%}
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metric{min-height:112px;padding:15px}
+  .metric b{font-size:31px;margin-top:11px}
+}
+@media(max-width:430px){
+  .cards{grid-template-columns:1fr 1fr}
+  .metric{min-height:102px}
+  .metric span{font-size:7px}
+  .metric b{font-size:29px}
+  .metric small{font-size:8px}
+  .portal-hero-actions{grid-template-columns:1fr}
+}
