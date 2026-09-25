@@ -84,6 +84,7 @@ class ClassInV2(BaseModel):
     title: str
     description: str = ""
     class_type: str = "Reformer"
+    mindbody_class_description_id: Optional[int] = None
     coach_id: Optional[int] = None
     starts_at: datetime
     duration: int = 50
@@ -724,9 +725,7 @@ def _queue_class_notifications(db: Session, c: core.ClassSession, event_type: st
 
 @app.post("/api/staff/classes")
 def create_class_v2(data: ClassInV2, user: core.User = Depends(core.require("classes.create")), db: Session = Depends(core.db_session)):
-    from mindbody_sync import capability_status
-    if capability_status()["configured"]:
-        raise HTTPException(409, "mindbody_managed_schedule_create_in_mindbody")
+    from mindbody_sync import MindbodyError, capability_status, create_remote_class_series
     coach_id = data.coach_id
     if user.coach and not core.can(user, "classes.edit"):
         coach_id = user.coach.id
@@ -736,10 +735,36 @@ def create_class_v2(data: ClassInV2, user: core.User = Depends(core.require("cla
     title = data.title.strip()
     if not 2 <= len(title) <= 180:
         raise HTTPException(400, "invalid_class_title")
-    description = data.description.strip()[:2000]
     repeat_months = min(36, max(1, int(data.repeat_months or 1)))
-    if data.repeat_weeks is not None and data.repeat_months == 1:
-        repeat_months = 1
+
+    if capability_status()["configured"]:
+        try:
+            result = create_remote_class_series(
+                studio_id=data.studio_id,
+                title=title,
+                class_description_id=data.mindbody_class_description_id,
+                coach_id=coach_id,
+                starts_at=data.starts_at,
+                duration=data.duration,
+                capacity=data.capacity,
+                repeat_months=repeat_months,
+            )
+        except MindbodyError as exc:
+            code = str(exc)
+            status = 409 if code.startswith("mindbody_") else 503
+            raise HTTPException(status, code) from exc
+        classes = result.get("classes") or []
+        return {
+            "class": classes[0] if classes else None,
+            "created_count": int(result.get("created_count", 0)),
+            "requested_count": repeat_months,
+            "recurrence": "monthly",
+            "mindbody": True,
+            "remote_schedule_ids": result.get("remote_schedule_ids", []),
+            "remote_instance_ids": result.get("remote_instance_ids", []),
+        }
+
+    description = data.description.strip()[:2000]
     created = []
     for month in range(repeat_months):
         starts_at = _plus_months(data.starts_at, month)
@@ -751,14 +776,12 @@ def create_class_v2(data: ClassInV2, user: core.User = Depends(core.require("cla
         ))
         if duplicate:
             continue
-        c = core.ClassSession(
+        row = core.ClassSession(
             studio_id=data.studio_id, title=title, description=description, class_type=data.class_type,
             coach_id=coach_id, starts_at=starts_at, duration=min(180, max(15, data.duration)),
             capacity=min(100, max(1, data.capacity)), created_by=user.id,
         )
-        db.add(c)
-        db.flush()
-        created.append(c)
+        db.add(row); db.flush(); created.append(row)
     if not created:
         raise HTTPException(409, "all_recurring_classes_exist")
     db.commit()
@@ -774,22 +797,54 @@ def edit_class_v2(class_id: int, data: ClassInV2, background_tasks: BackgroundTa
         if not (core.can(user, "classes.edit_own") and user.coach and c.coach_id == user.coach.id):
             raise HTTPException(403, "permission_denied")
     before = _session_snapshot(c)
+
     if c.mindbody_class_id:
-        requested_start = core.as_utc(data.starts_at)
-        current_start = core.as_utc(c.starts_at)
-        provider_field_changes = []
-        if data.studio_id != c.studio_id: provider_field_changes.append("studio")
-        if data.title.strip() != c.title: provider_field_changes.append("title")
-        if data.description.strip()[:2000] != (c.description or ""): provider_field_changes.append("description")
-        if data.class_type != c.class_type: provider_field_changes.append("type")
-        if abs((requested_start - current_start).total_seconds()) > 1: provider_field_changes.append("starts_at")
-        if min(180, max(15, data.duration)) != c.duration: provider_field_changes.append("duration")
-        if min(100, max(1, data.capacity)) != c.capacity: provider_field_changes.append("capacity")
-        if provider_field_changes:
+        # Mindbody Public API can update a class schedule, but it does not expose a
+        # write endpoint for arbitrary Class Description name/body edits. Keep those
+        # fields provider-owned while allowing schedule/location/capacity/coach edits.
+        unsupported = []
+        if data.title.strip() != c.title:
+            unsupported.append("title")
+        if data.description.strip()[:2000] != (c.description or ""):
+            unsupported.append("description")
+        if data.class_type != c.class_type:
+            unsupported.append("type")
+        if unsupported:
             raise HTTPException(409, detail={
-                "error": "mindbody_managed_schedule_fields",
-                "fields": provider_field_changes,
+                "error": "mindbody_class_description_managed",
+                "fields": unsupported,
             })
+
+        coach_id = data.coach_id if core.can(user, "classes.edit") else (user.coach.id if user.coach else c.coach_id)
+        from mindbody_sync import MindbodyError, update_remote_class_schedule
+        try:
+            provider = update_remote_class_schedule(
+                c.id,
+                studio_id=data.studio_id,
+                coach_id=coach_id,
+                starts_at=data.starts_at,
+                duration=data.duration,
+                capacity=data.capacity,
+            )
+        except MindbodyError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+        db.expire_all()
+        refreshed = db.get(core.ClassSession, class_id)
+        if not refreshed:
+            raise HTTPException(404, "not_found_after_mindbody_update")
+        after = _session_snapshot(refreshed)
+        changed = [k for k in ("title", "type", "starts_at", "studio", "coach", "duration", "capacity") if before[k] != after[k]]
+        queued = _queue_class_notifications(db, refreshed, "updated", before, after, changed, background_tasks) if changed else 0
+        db.commit()
+        return {
+            "class": core.class_dict(refreshed, db),
+            "notifications_queued": queued,
+            "changed": changed,
+            "mindbody": True,
+            "mindbody_scope": provider.get("scope"),
+        }
+
     studio = db.get(core.Studio, data.studio_id)
     if not studio:
         raise HTTPException(400, "invalid_studio")
@@ -812,9 +867,6 @@ def edit_class_v2(class_id: int, data: ClassInV2, background_tasks: BackgroundTa
     changed = [k for k in ("title", "type", "starts_at", "studio", "coach", "duration", "capacity") if before[k] != after[k]]
     queued = _queue_class_notifications(db, c, "updated", before, after, changed, background_tasks) if changed else 0
     db.commit()
-    if "coach" in changed:
-        from mindbody_sync import mark_local_change
-        mark_local_change("class", c.id)
     return {"class": core.class_dict(c, db), "notifications_queued": queued, "changed": changed}
 
 
