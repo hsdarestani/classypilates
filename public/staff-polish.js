@@ -135,31 +135,60 @@
     table.dataset.mobileLabels='1';
   }
 
-  function paginateCollection(root,items,{pageSizeDesktop=25,pageSizeMobile=12,searchPlaceholder='Search…'}={}){
+  function tableFilterValue(row,index,label){
+    const cell=row.children[index];if(!cell)return '';
+    if(label==='STATUS')return (cell.querySelector('.status')?.textContent||cell.firstElementChild?.textContent||cell.textContent).trim();
+    return (cell.querySelector('.source-badge,b')?.textContent||cell.firstElementChild?.textContent||cell.textContent).trim();
+  }
+
+  function inferredTableFilters(table,rows){
+    const headers=$$('.trow.head > *',table).map(node=>node.textContent.trim().toUpperCase());
+    const preferred=['SOURCE','STATUS','STUDIO','COACH','METHOD'];
+    return preferred.map(label=>{
+      const index=headers.findIndex(header=>header===label||header.startsWith(label+' ')||header.includes('/ '+label));
+      if(index<0)return null;
+      const values=[...new Set(rows.map(row=>tableFilterValue(row,index,label)).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+      if(values.length<2||values.length>30)return null;
+      return {label,values,valueFor:row=>tableFilterValue(row,index,label)};
+    }).filter(Boolean).slice(0,2);
+  }
+
+  function paginateCollection(root,items,{pageSizeDesktop=25,pageSizeMobile=12,searchPlaceholder='Search…',filters=[],minItems=8}={}){
     if(!root||root.dataset.paginated==='1')return;
-    const rows=[...items];if(rows.length<10)return;
+    const rows=[...items];if(rows.length<minItems)return;
     root.dataset.paginated='1';
     const panel=root.closest('.panel')||root.parentElement;
     const tools=document.createElement('div');tools.className='collection-tools';
     tools.innerHTML=`<input class="collection-search" type="search" autocomplete="off" placeholder="${esc(searchPlaceholder)}"><span class="collection-count"></span>`;
+    const count=tools.querySelector('.collection-count');
+    filters.forEach((filter,index)=>{
+      const select=document.createElement('select');select.className='collection-filter';select.dataset.filterIndex=String(index);
+      select.setAttribute('aria-label',`Filter by ${filter.label.toLowerCase()}`);
+      select.innerHTML=`<option value="">All ${esc(filter.label.toLowerCase())}</option>`+filter.values.map(value=>`<option value="${esc(value)}">${esc(value)}</option>`).join('');
+      tools.insertBefore(select,count);
+    });
     root.before(tools);
     const pager=document.createElement('div');pager.className='collection-pager';pager.innerHTML='<button type="button" data-prev aria-label="Previous page">←</button><span class="collection-page"></span><button type="button" data-next aria-label="Next page">→</button>';
     root.after(pager);
-    let page=0,query='';
+    let page=0,query='',filterValues=filters.map(()=>'');
     const render=()=>{
       const size=matchMedia('(max-width:760px)').matches?pageSizeMobile:pageSizeDesktop;
-      const filtered=rows.filter(row=>!query||row.textContent.toLowerCase().includes(query));
+      const filtered=rows.filter(row=>{
+        if(query&&!row.textContent.toLowerCase().includes(query))return false;
+        return filters.every((filter,index)=>!filterValues[index]||filter.valueFor(row)===filterValues[index]);
+      });
       const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
       const visible=new Set(filtered.slice(page*size,(page+1)*size));
       rows.forEach(row=>row.hidden=!visible.has(row));
-      tools.querySelector('.collection-count').textContent=`${filtered.length} item${filtered.length===1?'':'s'}`;
+      count.textContent=`${filtered.length} item${filtered.length===1?'':'s'}`;
       pager.querySelector('.collection-page').textContent=`${page+1} / ${pages}`;
       pager.querySelector('[data-prev]').disabled=page===0;
       pager.querySelector('[data-next]').disabled=page>=pages-1;
       pager.hidden=filtered.length<=size;
       if(panel)panel.dataset.visibleItems=String(visible.size);
     };
-    tools.querySelector('input').addEventListener('input',event=>{query=event.target.value.trim().toLowerCase();page=0;render()});
+    tools.querySelector('.collection-search').addEventListener('input',event=>{query=event.target.value.trim().toLowerCase();page=0;render()});
+    $$('.collection-filter',tools).forEach(select=>select.addEventListener('change',event=>{filterValues[Number(event.target.dataset.filterIndex)]=event.target.value;page=0;render()}));
     pager.querySelector('[data-prev]').addEventListener('click',()=>{if(page>0){page--;render();root.scrollIntoView({block:'start',behavior:'smooth'})}});
     pager.querySelector('[data-next]').addEventListener('click',()=>{page++;render();root.scrollIntoView({block:'start',behavior:'smooth'})});
     addEventListener('resize',()=>render(),{passive:true});render();
@@ -168,7 +197,11 @@
   function enhanceTables(){
     $$('.table').forEach(table=>{
       labelTable(table);
-      paginateCollection(table,$$('.trow:not(.head)',table),{pageSizeDesktop:30,pageSizeMobile:10,searchPlaceholder:'Search this list…'});
+      const panel=table.closest('.panel');
+      const hasOwnSearch=Boolean(panel?.querySelector('.list-toolbar input[type="search"], .collection-tools'));
+      if(hasOwnSearch)return;
+      const rows=$$('.trow:not(.head)',table);
+      paginateCollection(table,rows,{pageSizeDesktop:30,pageSizeMobile:10,searchPlaceholder:'Search this list…',filters:inferredTableFilters(table,rows),minItems:2});
     });
   }
 
@@ -181,7 +214,23 @@
       const image=document.createElement('img');image.src=src;image.alt=`Coach ${name}`;image.loading='lazy';image.decoding='async';
       holder.appendChild(image);
     });
-    paginateCollection(grid,$$('.coach-admin-card',grid),{pageSizeDesktop:12,pageSizeMobile:8,searchPlaceholder:'Search coaches…'});
+    const cards=$$('.coach-admin-card',grid);
+    const states=[...new Set(cards.map(card=>card.querySelector('.status')?.textContent.trim()).filter(Boolean))];
+    const filters=states.length>1?[{label:'STATUS',values:states,valueFor:card=>card.querySelector('.status')?.textContent.trim()||''}]:[];
+    paginateCollection(grid,cards,{pageSizeDesktop:12,pageSizeMobile:8,searchPlaceholder:'Search coaches…',filters,minItems:2});
+  }
+
+  function enhanceRoleLists(){
+    $$('.panel').forEach(panel=>{
+      const roleCards=$$('.role-card',panel);if(roleCards.length&&!panel.querySelector('.collection-tools')){
+        const wrap=document.createElement('div');wrap.className='role-list-filterable';roleCards[0].before(wrap);roleCards.forEach(card=>wrap.appendChild(card));
+        paginateCollection(wrap,roleCards,{pageSizeDesktop:20,pageSizeMobile:10,searchPlaceholder:'Search roles…',minItems:2});
+      }
+      const users=$$('.user-row',panel);if(users.length&&!panel.querySelector('.collection-tools')){
+        const wrap=document.createElement('div');wrap.className='user-list-filterable';users[0].before(wrap);users.forEach(row=>wrap.appendChild(row));
+        paginateCollection(wrap,users,{pageSizeDesktop:25,pageSizeMobile:10,searchPlaceholder:'Search team access…',minItems:2});
+      }
+    });
   }
 
   async function enhanceFinance(){
@@ -222,7 +271,7 @@
   const run=()=>{
     if(queued)return;queued=true;
     requestAnimationFrame(()=>{
-      queued=false;ensureStudioStyles();ensureStudioNav();ensureScrim();cleanupMembership();enhanceCoachRoster();enhanceTables();enhanceFinance();syncClassStudioSelects();
+      queued=false;ensureStudioStyles();ensureStudioNav();ensureScrim();cleanupMembership();enhanceCoachRoster();enhanceTables();enhanceRoleLists();enhanceFinance();syncClassStudioSelects();
       if(!studioAccessChecked&&!$('#app')?.hidden){studioAccessChecked=true;loadStudios().catch(()=>{})}
     });
   };
