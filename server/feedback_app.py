@@ -189,6 +189,31 @@ def _sumup_amount_cents(checkout: dict) -> int:
     return int(amount * 100)
 
 
+def _shop_purchase_email_data(order: core.PaymentOrder) -> tuple[str, str, str, list[str]]:
+    credits = max(0, int(order.credits or 0))
+    credit_label = "1 Class Credit" if credits == 1 else f"{credits} Class Credits"
+    amount = f"{int(order.amount_cents or 0) / 100:.2f}".replace(".", ",") + " €"
+    first_name = str(order.first_name or "").strip()
+    greeting = f"Hallo {first_name}," if first_name else "Hallo,"
+    availability = (
+        f"{credit_label} wurde deinem Kundenkonto gutgeschrieben."
+        if order.credited
+        else f"{credit_label} ist bezahlt und wird deinem Kundenkonto gutgeschrieben, sobald du dich mit dieser E Mail Adresse registrierst."
+    )
+    return (
+        order.email,
+        f"Kaufbestätigung · {credit_label}",
+        "Dein Class Pack ist bereit",
+        [
+            greeting,
+            f"deine Zahlung über {amount} wurde erfolgreich bestätigt.",
+            availability,
+            f"Bestellnummer: {order.reference}",
+            "Du kannst deinen Class Credit jetzt für deine nächste Buchung verwenden.",
+        ],
+    )
+
+
 def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[BackgroundTasks] = None) -> Optional[core.PaymentOrder]:
     checkout_id = str(checkout.get("id", "")).strip()
     if not checkout_id:
@@ -209,6 +234,8 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
 
     status = str(checkout.get("status", "")).upper()
     email_job = None
+    booking_id_to_sync = None
+    first_order_paid_transition = order.status != "paid"
     if status == "PAID":
         order.status = "paid"
         if order.booking_reference:
@@ -239,6 +266,7 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
             order.credited = True
             if first_paid_transition:
                 email_job = core.booking_email_data(booking)
+                booking_id_to_sync = booking.id
         elif not order.credited:
             user = db.scalar(select(core.User).where(func.lower(core.User.email) == order.email.lower()))
             if user:
@@ -249,6 +277,8 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                     db.flush()
                 profile.credits += order.credits
                 order.credited = True
+        if not order.booking_reference and first_order_paid_transition:
+            email_job = _shop_purchase_email_data(order)
     elif status in {"FAILED", "EXPIRED", "CANCELLED", "CANCELED"} and order.status != "paid":
         order.status = "failed" if status == "FAILED" else "cancelled"
         if order.booking_reference:
@@ -267,15 +297,16 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
             else:
                 cancel_local_booking(booking.id)
     if email_job:
-        booking_id = booking.id
         if background_tasks is not None:
             background_tasks.add_task(core.send_transactional_email, *email_job)
-            from mindbody_sync import sync_local_booking
-            background_tasks.add_task(sync_local_booking, booking_id)
+            if booking_id_to_sync is not None:
+                from mindbody_sync import sync_local_booking
+                background_tasks.add_task(sync_local_booking, booking_id_to_sync)
         else:
             core.send_transactional_email(*email_job)
-            from mindbody_sync import sync_local_booking
-            sync_local_booking(booking_id)
+            if booking_id_to_sync is not None:
+                from mindbody_sync import sync_local_booking
+                sync_local_booking(booking_id_to_sync)
     return order
 
 
