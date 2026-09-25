@@ -92,14 +92,17 @@ jobs:
 
           nginx -t
           systemctl reload nginx
-          curl -fsSL --max-time 30 -o /tmp/classy-primary-health.json https://classypilates.de/api/health
+          curl -kfsSL --resolve classypilates.de:443:127.0.0.1 --max-time 30 -o /tmp/classy-primary-health.json https://classypilates.de/api/health
           grep -q '"ok":true' /tmp/classy-primary-health.json
           REMOTE
 
       - name: Verify primary HTTPS
+        env:
+          HOST: ${{ secrets.HOST }}
         run: |
           set -euo pipefail
-          curl -fsSIL --max-time 30 https://classypilates.de/ >/dev/null
-          curl -fsSL --max-time 30 -o /tmp/health.json https://classypilates.de/api/health
+          test -n "$HOST"
+          curl -fsSIL --resolve classypilates.de:443:$HOST --max-time 30 https://classypilates.de/ >/dev/null
+          curl -fsSL --resolve classypilates.de:443:$HOST --max-time 30 -o /tmp/health.json https://classypilates.de/api/health
           grep -q '"ok":true' /tmp/health.json
-          echo "classypilates.de HTTPS is live."
+          echo "classypilates.de HTTPS is live on the production server."
