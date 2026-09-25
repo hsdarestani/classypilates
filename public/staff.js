@@ -48,12 +48,12 @@
     const dashboardLabel=$('#nav [data-view="dashboard"] span');if(dashboardLabel)dashboardLabel.textContent=isCoach?'Today':'Overview';
     const bookingLabel=$('#nav [data-view="bookings"] span');if(bookingLabel)bookingLabel.textContent=isCoach?'My attendees':'Bookings';
     const classesLabel=$('#nav [data-view="classes"] span');if(classesLabel)classesLabel.textContent=isCoach?'My schedule':'Classes & schedule';
-    $('#nav [data-perm]').forEach(b=>b.hidden=!has(b.dataset.perm));
-    $('#nav [data-coach-only]').forEach(b=>b.hidden=!state.user.coach);
-    $('#nav button').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
-    const firstVisible=$('#nav button').find(button=>!button.hidden);switchView(firstVisible?.dataset.view||'dashboard');
+    $$('#nav [data-perm]').forEach(b=>b.hidden=!has(b.dataset.perm));
+    $$('#nav [data-coach-only]').forEach(b=>b.hidden=!state.user.coach);
+    $$('#nav button').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
+    const firstVisible=$$('#nav button').find(button=>!button.hidden);switchView(firstVisible?.dataset.view||'dashboard');
   }
-  async function switchView(view){state.view=view;$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));$('.sidebar').classList.remove('open');const isCoach=state.user?.portal==='/coach';let [ey,title]=titles[view]||['',''];if(isCoach){const coachTitles={dashboard:['COACH SPACE','Today'],bookings:['ATTENDEES','My attendees'],classes:['SCHEDULE','My schedule'],profile:['PROFILE','My profile']};if(coachTitles[view])[ey,title]=coachTitles[view]}$('#pageEyebrow').textContent=ey;$('#pageTitle').textContent=title;$('#view').innerHTML='<div class="panel"><div class="empty">Loading…</div></div>';try{await render(view)}catch(e){$('#view').innerHTML=`<div class="panel"><div class="empty">${esc(e.message)}</div></div>`}}
+  async function switchView(view){state.view=view;$$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));$('.sidebar').classList.remove('open');const isCoach=state.user?.portal==='/coach';let [ey,title]=titles[view]||['',''];if(isCoach){const coachTitles={dashboard:['COACH SPACE','Today'],bookings:['ATTENDEES','My attendees'],classes:['SCHEDULE','My schedule'],profile:['PROFILE','My profile']};if(coachTitles[view])[ey,title]=coachTitles[view]}$('#pageEyebrow').textContent=ey;$('#pageTitle').textContent=title;$('#view').innerHTML='<div class="panel"><div class="empty">Loading…</div></div>';try{await render(view)}catch(e){$('#view').innerHTML=`<div class="panel"><div class="empty">${esc(e.message)}</div></div>`}}
   function updateSideAvatar(){const el=$('#sideAvatar'),coach=state.user?.coach;if(coach?.photo_url){el.classList.add('has-photo');el.innerHTML=`<img src="${esc(coach.photo_url)}" alt="${esc(coach.display_name)}">`}else{el.classList.remove('has-photo');el.textContent=(state.user?.first_name?.[0]||state.user?.email?.[0]||'C').toUpperCase()}}
   async function render(v){if(v==='dashboard')return dashboard();if(v==='bookings')return bookings();if(v==='customers')return customers();if(v==='classes')return classes();if(v==='coaches')return coachManager();if(v==='finance')return finance();if(v==='roles')return roles();if(v==='uploads')return uploads();if(v==='profile')return profile();return procenter()}
 
