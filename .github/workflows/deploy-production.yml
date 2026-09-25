@@ -533,4 +533,20 @@ jobs:
 
           echo "Running live Mindbody/Classy availability audit..."
           docker compose exec -T api python mindbody_audit.py
+
+          echo "Recent failed website Mindbody holds (diagnostic, no customer data):"
+          docker compose exec -T db sh -lc 'psql -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT
+            b.reference || '|' ||
+            c.id || '|' ||
+            regexp_replace(coalesce(b.mindbody_sync_error,''), E'[\\n\\r]+', ' ', 'g')
+          FROM bookings b
+          JOIN classes c ON c.id=b.class_id
+          WHERE b.source='website'
+            AND b.payment_status='failed'
+            AND coalesce(b.mindbody_sync_error,'') <> ''
+            AND b.created_at > now() - interval '24 hours'
+          ORDER BY b.created_at DESC
+          LIMIT 8;
+          SQL
           REMOTE

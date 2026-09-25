@@ -8,6 +8,7 @@
   const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch(_){return f}};
   const write=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(_){}};
   const safe=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const plainText=value=>{const el=document.createElement('div');el.innerHTML=String(value??'');return (el.textContent||el.innerText||'').replace(/\\s+/g,' ').trim()};
   const emailOK=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const phoneOK=v=>String(v||'').replace(/\D/g,'').length>=7;
   const payMethods=[
@@ -32,7 +33,7 @@
   function observeDynamicUi(){const list=$('#classList'),grid=$('#studioGrid');if(list){coachAvatars();new MutationObserver(()=>coachAvatars()).observe(list,{childList:true,subtree:true})}if(grid){studioActions();new MutationObserver(()=>studioActions()).observe(grid,{childList:true,subtree:true})}}
 
   function studioName(r){return studioById(r.studio)?.name||r.studio}
-  function classSummary(r){return `<div class="wizard-class-card"><img src="${photoFor(r.coach)}" alt="Coach ${safe(r.coach)}"><div><span>${safe(r.type)} · ${r.duration} MIN</span><h4>${safe(r.name)}</h4>${r.description?`<p>${safe(r.description)}</p>`:''}<p>${safe(formatFullDate(r.dateObj))} · ${r.time}<br>${safe(studioName(r))}</p></div><div class="coach-chip"><small>COACH</small><b>${safe(r.coach)}</b><em>Selected</em></div></div>`}
+  function classSummary(r){const description=plainText(r.description);return `<div class="wizard-class-card"><img src="${photoFor(r.coach)}" alt="Coach ${safe(r.coach)}"><div><span>${safe(r.type)} · ${r.duration} MIN</span><h4>${safe(r.name)}</h4>${description?`<p>${safe(description)}</p>`:''}<p>${safe(formatFullDate(r.dateObj))} · ${r.time}<br>${safe(studioName(r))}</p></div><div class="coach-chip"><small>COACH</small><b>${safe(r.coach)}</b><em>Selected</em></div></div>`}
   function setProgress(step){const labels=SPOT_SELECTION_ENABLED?['Class','Spot','Details','Payment','Done']:['Class','Details','Payment','Done'];const visibleStep=SPOT_SELECTION_ENABLED?step:step===1?1:step===3?2:step===4?3:4;const progress=labels.map((x,i)=>`<span class="${i+1<=visibleStep?'done':''} ${i+1===visibleStep?'active':''}"><i>${i+1<visibleStep?'✓':i+1}</i><b>${x}</b></span>`).join('');return `<div class="booking-progress-v2">${progress}</div>`}
   function setDrawer(title,html,step){
     $('#drawerTitle').textContent=title;

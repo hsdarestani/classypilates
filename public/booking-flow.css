@@ -71,3 +71,26 @@
     margin-bottom:18px!important;
   }
 }
+
+
+/* Mobile booking action layout 2026-09-25: actions must never cover dynamic fields. */
+@media(max-width:780px){
+  .booking-v2 .wizard-sticky-actions,
+  .booking-v2 .payment-panel .wizard-sticky-actions{
+    position:static!important;
+    inset:auto!important;
+    bottom:auto!important;
+    padding:0!important;
+    margin-top:18px!important;
+    background:none!important;
+    z-index:auto!important;
+  }
+  .booking-v2 .booking-language-select{
+    position:relative!important;
+    z-index:1!important;
+    margin:14px 0!important;
+  }
+  .booking-v2 .wizard-panel{
+    overflow:visible!important;
+  }
+}

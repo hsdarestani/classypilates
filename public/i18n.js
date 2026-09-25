@@ -35,7 +35,11 @@
     'We could not hold this place in Mindbody. No payment was taken. Please retry or choose another class.':'Der Platz konnte in Mindbody nicht reserviert werden. Es wurde keine Zahlung ausgeführt. Bitte versuche es erneut oder wähle einen anderen Kurs.',
     'Live availability could not be confirmed with Mindbody. Please try again in a moment.':'Die Live Verfügbarkeit konnte mit Mindbody nicht bestätigt werden. Bitte versuche es gleich noch einmal.',
     'SumUp is temporarily unavailable. Please try again.':'SumUp ist vorübergehend nicht verfügbar. Bitte versuche es erneut.',
-    'Secure payment could not be started.':'Die sichere Zahlung konnte nicht gestartet werden.'
+    'Secure payment could not be started.':'Die sichere Zahlung konnte nicht gestartet werden.',
+    'Use code':'Code einlösen',
+    'BOOKING LANGUAGE':'BUCHUNGSSPRACHE',
+    'Urgent class-change emails will use this language.':'Wichtige E-Mails zu Kursänderungen werden in dieser Sprache gesendet.',
+    'Preparing secure payment…':'Sichere Zahlung wird vorbereitet…'
   });
   const PATTERNS=[
     [/^(\d+)[.)] (.+)$/, (n,value)=>`${n}. ${DE[value]||value}`],[/^(\d+) coach profiles\.$/,n=>`${n} Trainerprofile.`],[/^(\d+) profiles · photos are used across the schedule and booking flow\.$/,n=>`${n} Profile · Fotos werden im Stundenplan und Buchungsablauf verwendet.`],[/^(\d+) entries · customers, spots and payment status\.$/,n=>`${n} Einträge · Kunden, Plätze und Zahlungsstatus.`],[/^(\d+) sessions in the Control Center\.$/,n=>`${n} Einheiten in der Zentrale.`],[/^(\d+) historical bookings$/,n=>`${n} historische Buchungen`],[/^(\d+) Class Pack$/,n=>`${n} Kurspaket`],[/^(\d+) Class Packs$/,n=>`${n} Kurspakete`],[/^(\d+) Min\.$/,n=>`${n} Min.`],[/^(\d+) available$/,n=>`${n} verfügbar`],[/^(\d+) total$/,n=>`${n} gesamt`],[/^(\d+) classes saved$/,n=>`${n} Kurse gespeichert`],[/^(\d+) class saved$/,n=>`${n} Kurs gespeichert`],[/^(\d+) credits added$/,n=>`${n} Guthaben hinzugefügt`],[/^One class credit was used\. You have (\d+) left\.$/,n=>`Ein Kursguthaben wurde verwendet. Du hast noch ${n} übrig.`],[/^The customer now has (\d+) available credits\.$/,n=>`Der Kunde hat jetzt ${n} verfügbare Guthaben.`]
