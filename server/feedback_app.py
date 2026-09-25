@@ -119,6 +119,7 @@ class PublicBookingInV2(BaseModel):
     sepaAccountHolder: str = ""
     sepaIbanLast4: str = ""
     sepaMandateAccepted: bool = False
+    useCredit: Optional[bool] = None
 
 
 class MembershipIn(BaseModel):
@@ -1098,9 +1099,12 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         last_name = last_name or (user.last_name or "").strip()
         if not booking_phone and profile:
             booking_phone = (profile.phone or "").strip()
-        if profile and profile.credits > 0:
+        credit_allowed = data.useCredit is not False
+        if profile and profile.credits > 0 and credit_allowed:
             profile.credits -= 1
             use_credit = True
+        elif data.useCredit is True:
+            raise HTTPException(409, "class_credit_unavailable")
 
     booking = core.Booking(
         reference=ref,
