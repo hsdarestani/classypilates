@@ -421,6 +421,7 @@
     $('#ecStudio',w).value=c.studio;$('#ecType',w).value=c.type;if($('#ecCoach',w))$('#ecCoach',w).value=c.coach_id||'';
     $('#ecClose',w).onclick=()=>w.remove();
     $('#ecSave',w).onclick=async()=>{
+      if(c.mindbody_managed&&!confirm('This change will be written to Mindbody and may affect the recurring schedule. Continue?'))return;
       const button=$('#ecSave',w),oldLabel=button.textContent;
       try{
         button.disabled=true;button.textContent=c.mindbody_managed?'Updating Mindbody…':'Saving…';
