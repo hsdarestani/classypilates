@@ -1,0 +1,174 @@
+name: Verify Booking Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify-booking-sync.yml"
+  workflow_dispatch:
+    inputs:
+      booking_ref:
+        description: Booking reference
+        required: true
+        default: "CP-78203763"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Verify website, payment and Mindbody
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+          BOOKING_REF: ${{ github.event.inputs.booking_ref || 'CP-78203763' }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS" && test -n "$BOOKING_REF"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" "BOOKING_REF='$BOOKING_REF' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+
+          cleanup() {
+            docker compose restart api >/dev/null 2>&1 || true
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8787/api/health >/dev/null 2>&1; then
+                break
+              fi
+              sleep 1
+            done
+          }
+          trap cleanup EXIT
+
+          docker compose exec -T -e BOOKING_REF api python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from sqlalchemy import select
+
+          import main as core
+          import mindbody_sync as mb
+
+          reference = os.environ["BOOKING_REF"].strip().upper()
+
+          def value(row, *names, default=None):
+              for name in names:
+                  if isinstance(row, dict) and name in row:
+                      return row[name]
+              return default
+
+          with core.SessionLocal() as db:
+              booking = db.scalar(
+                  select(core.Booking)
+                  .where(core.Booking.reference == reference)
+                  .limit(1)
+              )
+              if not booking:
+                  raise SystemExit(f"booking_not_found:{reference}")
+
+              local_class_id = booking.class_id
+              remote_class_id = str(booking.klass.mindbody_class_id or "")
+              local_visit_id = str(booking.mindbody_visit_id or "")
+              local_client_id = str(booking.mindbody_client_id or "")
+              starts_at = core.as_utc(booking.klass.starts_at).isoformat()
+              local_snapshot = {
+                  "reference": booking.reference,
+                  "booking_status": booking.status,
+                  "payment_status": booking.payment_status,
+                  "payment_method": booking.payment_method,
+                  "amount_cents": int(booking.amount_cents or 0),
+                  "mindbody_sync_status": booking.mindbody_sync_status,
+                  "mindbody_visit_linked": bool(local_visit_id),
+                  "mindbody_client_linked": bool(local_client_id),
+                  "local_class_id": local_class_id,
+                  "mindbody_class_id": remote_class_id,
+                  "class_title": booking.klass.title,
+                  "starts_at": starts_at,
+                  "studio": booking.klass.studio.name if booking.klass.studio else booking.klass.studio_id,
+              }
+              order = db.scalar(
+                  select(core.PaymentOrder)
+                  .where(core.PaymentOrder.booking_reference == reference)
+                  .order_by(core.PaymentOrder.created_at.desc())
+                  .limit(1)
+              )
+              local_snapshot["payment_order_status"] = order.status if order else None
+              local_snapshot["payment_order_linked"] = bool(order and order.provider_payment_id)
+
+          if not remote_class_id:
+              raise SystemExit("mindbody_class_not_linked")
+
+          refreshed = mb.refresh_class_availability_strict(local_class_id)
+
+          client = mb.WriteClient.from_env(timeout=12.0)
+          roster_payload = client.get_class_visits(remote_class_id)
+          visits = [row for row in mb._extract_class_visits(roster_payload) if isinstance(row, dict)]
+          roster_match = False
+          active_roster_count = 0
+          for visit in visits:
+              cancelled = bool(value(visit, "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled", default=False))
+              if str(value(visit, "Status", "status", default="")).strip().casefold() == "cancelled":
+                  cancelled = True
+              if not cancelled:
+                  active_roster_count += 1
+              visit_id = str(value(visit, "Id", "ID", "VisitId", "VisitID", default="") or "")
+              client_data = visit.get("Client") or visit.get("client") or {}
+              client_id = str(
+                  value(
+                      visit,
+                      "ClientId",
+                      "ClientID",
+                      default=value(client_data, "Id", "ID", default=""),
+                  )
+                  or ""
+              )
+              if not cancelled and (
+                  (local_visit_id and visit_id == local_visit_id)
+                  or (local_client_id and client_id == local_client_id)
+              ):
+                  roster_match = True
+
+          with urllib.request.urlopen("https://new.classypilates.de/api/schedule", timeout=15) as response:
+              schedule = json.loads(response.read().decode())
+          website_class = next(
+              (row for row in schedule.get("classes", []) if str(row.get("id")) == str(local_class_id)),
+              None,
+          )
+
+          result = {
+              "local": local_snapshot,
+              "mindbody": {
+                  "roster_match": roster_match,
+                  "active_roster_count": active_roster_count,
+                  "availability_spots": int(refreshed.get("spots", 0) or 0),
+              },
+              "website": {
+                  "class_visible": bool(website_class),
+                  "spots": int((website_class or {}).get("spots", -1)),
+                  "status": (website_class or {}).get("status"),
+              },
+          }
+
+          checks = {
+              "booking_reserved": local_snapshot["booking_status"] == "reserved",
+              "payment_paid": local_snapshot["payment_status"] == "paid",
+              "sumup_method": local_snapshot["payment_method"] == "sumup",
+              "payment_order_paid": local_snapshot["payment_order_status"] == "paid",
+              "mindbody_synced": local_snapshot["mindbody_sync_status"] == "synced",
+              "mindbody_roster_match": roster_match,
+              "website_class_visible": bool(website_class),
+              "website_spots_match_mindbody": bool(website_class) and int(website_class.get("spots", -1)) == int(refreshed.get("spots", 0) or 0),
+          }
+          result["checks"] = checks
+          result["ok"] = all(checks.values())
+          print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+          if not result["ok"]:
+              raise SystemExit(2)
+          PY
+          REMOTE
