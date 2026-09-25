@@ -333,7 +333,7 @@
       const start=mondayOfWeek(classWeekOffset),end=new Date(start);end.setDate(end.getDate()+7);
       const studio=$('#classStudioFilter')?.value||'',coach=$('#classCoachFilter')?.value||'';
       let visible=0;
-      $('[data-class-row]').forEach(row=>{
+      $$('[data-class-row]').forEach(row=>{
         const when=new Date(row.dataset.start||0);
         const show=when>=start&&when<end&&(!studio||row.dataset.studio===studio)&&(!coach||row.dataset.coach===coach);
         row.hidden=!show;if(show)visible++
