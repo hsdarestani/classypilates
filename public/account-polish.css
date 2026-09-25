@@ -16,3 +16,23 @@ html,body{max-width:100%;overflow-x:hidden}body.account-menu-open{overflow:hidde
 @media(max-width:480px){
   .account-cards{grid-template-columns:1fr}.account-card{min-height:92px}.account-top h1{font-size:25px}.booking-meta{grid-template-columns:1fr!important}.sumup-payment-row{grid-template-columns:1fr}.sumup-payment-row>div:first-child,.sumup-payment-row>.sumup-badge{grid-column:auto}.credit-balance b{font-size:62px}
 }
+
+
+/* Booking history hierarchy and mobile account header refresh */
+.booking-tabs{display:flex;gap:8px;margin:0 0 14px;padding:5px;background:#f1ede6;border:1px solid #e0d9cf;border-radius:12px}
+.booking-tabs button{flex:1;min-height:42px;border:0;border-radius:9px;background:transparent;color:#746d64;font:700 9px Manrope,Arial,sans-serif;letter-spacing:.04em;cursor:pointer}
+.booking-tabs button span{display:inline-grid;min-width:20px;height:20px;padding:0 6px;margin-left:5px;place-items:center;border-radius:999px;background:rgba(23,23,19,.07);font-size:8px}
+.booking-tabs button.active{background:#171713;color:#fff;box-shadow:0 3px 12px rgba(23,23,19,.12)}
+.booking-tabs button.active span{background:rgba(255,255,255,.16)}
+.booking-item.is-cancelling{opacity:.62;pointer-events:none}
+@media(max-width:760px){
+  .account-top{display:grid!important;grid-template-columns:minmax(112px,1fr) 44px auto!important;grid-template-rows:auto auto!important;gap:9px!important;align-items:center!important;padding:10px 12px 13px!important;margin:0 -10px 14px!important;min-height:0!important}
+  .account-top .classy-language-toggle{position:static!important;grid-column:1!important;grid-row:1!important;width:min(150px,100%)!important;max-width:150px!important;margin:0!important;justify-self:start!important}
+  .account-top .account-menu{grid-column:2!important;grid-row:1!important;margin:0!important}
+  .account-top>a{grid-column:3!important;grid-row:1!important;justify-self:end!important}
+  .account-top>div{grid-column:1/-1!important;grid-row:2!important;min-width:0!important;padding:2px 2px 0!important}
+  .account-top p{margin-bottom:4px!important}
+  .account-top h1{font-size:32px!important;line-height:1.02!important;white-space:normal!important;overflow:visible!important;text-overflow:clip!important;max-width:none!important}
+  .bookings-head{margin-bottom:12px!important}
+  .booking-tabs{position:sticky;top:114px;z-index:12;background:rgba(241,237,230,.96);backdrop-filter:blur(12px)}
+}
