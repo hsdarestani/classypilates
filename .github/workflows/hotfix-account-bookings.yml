@@ -1,0 +1,27 @@
+name: Hotfix Account Bookings
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/hotfix-account-bookings.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Upload fixed account script
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e scp -o StrictHostKeyChecking=no public/account.js root@"$HOST":/opt/classypilates/public/account.js
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "grep -Fq '\$\$(\"[data-cancel]\")' /opt/classypilates/public/account.js || grep -Fq '\$\$(\x27[data-cancel]\x27)' /opt/classypilates/public/account.js"
