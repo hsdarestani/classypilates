@@ -94,6 +94,13 @@ jobs:
           if '"scope": "coach" if coach_scope else "admin"' not in main:
               raise SystemExit("Role-scoped dashboard guard missing")
 
+          if "$('[data-close]',wrap).forEach" in staff:
+              raise SystemExit("Modal collection selector regression: use $() for data-close handlers")
+          if "$('[data-class-row]').forEach" in staff:
+              raise SystemExit("Schedule row selector regression: use $() for class-row collections")
+          if "$('[data-close]',wrap).forEach" not in staff:
+              raise SystemExit("Expected modal close collection wiring is missing")
+
           print("Admin and coach portal source contracts: OK")
           PY
 
