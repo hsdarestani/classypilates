@@ -1271,126 +1271,118 @@ def list_users(user: User = Depends(require("users.manage")), db: Session = Depe
     return {"users": [user_dict(u) for u in users if not any(role.name == "Customer" for role in u.roles)]}
 
 
-_CUSTOMER_DIRECTORY_CTE = """
-WITH customer_role_users AS (
-    SELECT
-        u.id AS local_id,
-        u.email,
-        u.first_name,
-        u.last_name,
-        u.is_active,
-        CAST(u.created_at AS TEXT) AS created_at,
-        COALESCE(cp.phone, '') AS local_phone,
-        COALESCE(cp.birth_date, '') AS local_birth_date,
-        COALESCE(cp.credits, 0) AS credits
-    FROM users u
-    JOIN user_roles ur ON ur.user_id = u.id
-    JOIN roles ro ON ro.id = ur.role_id AND ro.name = 'Customer'
-    LEFT JOIN customer_profiles cp ON cp.user_id = u.id
-),
-remote_email_choice AS (
-    SELECT lower(email) AS email_key, MIN(remote_id) AS remote_id
-    FROM mindbody_customers
-    WHERE COALESCE(email, '') <> ''
-    GROUP BY lower(email)
-),
-local_unified AS (
-    SELECT
-        lc.local_id,
-        COALESCE(mb.remote_id, '') AS remote_id,
-        CASE WHEN COALESCE(lc.first_name, '') <> '' THEN lc.first_name ELSE COALESCE(mb.first_name, '') END AS first_name,
-        CASE WHEN COALESCE(lc.last_name, '') <> '' THEN lc.last_name ELSE COALESCE(mb.last_name, '') END AS last_name,
-        lc.email,
-        CASE WHEN COALESCE(lc.local_phone, '') <> '' THEN lc.local_phone ELSE COALESCE(mb.phone, '') END AS phone,
-        CASE WHEN COALESCE(lc.local_birth_date, '') <> '' THEN lc.local_birth_date ELSE COALESCE(mb.birth_date, '') END AS birth_date,
-        COALESCE(mb.gender, '') AS gender,
-        COALESCE(mb.client_type, '') AS client_type,
-        COALESCE(mb.home_location, '') AS home_location,
-        COALESCE(mb.account_balance, '') AS account_balance,
-        COALESCE(mb.photo_url, '') AS photo_url,
-        lc.credits AS credits,
-        lc.is_active AS is_active,
-        COALESCE(mb.active, lc.is_active) AS provider_active,
-        COALESCE(mb.status, '') AS provider_status,
-        CASE WHEN mb.remote_id IS NULL THEN 'Classy' ELSE 'Classy + Mindbody' END AS source,
-        lc.created_at AS created_at,
-        COALESCE(mb.synced_at, '') AS synced_at,
-        1 AS has_login
-    FROM customer_role_users lc
-    LEFT JOIN remote_email_choice rec ON rec.email_key = lower(lc.email)
-    LEFT JOIN mindbody_customers mb ON mb.remote_id = rec.remote_id
-),
-remote_unified AS (
-    SELECT
-        NULL AS local_id,
-        mb.remote_id AS remote_id,
-        COALESCE(mb.first_name, '') AS first_name,
-        COALESCE(mb.last_name, '') AS last_name,
-        COALESCE(mb.email, '') AS email,
-        COALESCE(mb.phone, '') AS phone,
-        COALESCE(mb.birth_date, '') AS birth_date,
-        COALESCE(mb.gender, '') AS gender,
-        COALESCE(mb.client_type, '') AS client_type,
-        COALESCE(mb.home_location, '') AS home_location,
-        COALESCE(mb.account_balance, '') AS account_balance,
-        COALESCE(mb.photo_url, '') AS photo_url,
-        0 AS credits,
-        mb.active AS is_active,
-        mb.active AS provider_active,
-        COALESCE(mb.status, '') AS provider_status,
-        'Mindbody' AS source,
-        COALESCE(mb.synced_at, '') AS created_at,
-        COALESCE(mb.synced_at, '') AS synced_at,
-        0 AS has_login
-    FROM mindbody_customers mb
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM customer_role_users lc
-        WHERE COALESCE(mb.email, '') <> ''
-          AND lower(lc.email) = lower(mb.email)
-    )
-),
-unified AS (
-    SELECT * FROM local_unified
-    UNION ALL
-    SELECT * FROM remote_unified
-),
-booking_by_email AS (
-    SELECT
-        lower(COALESCE(email, '')) AS email_key,
-        COUNT(*) AS total,
-        SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS active
-    FROM bookings
-    WHERE COALESCE(email, '') <> ''
-    GROUP BY lower(COALESCE(email, ''))
-),
-booking_by_remote AS (
-    SELECT
-        mindbody_client_id AS remote_id,
-        COUNT(*) AS total,
-        SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS active
-    FROM bookings
-    WHERE mindbody_client_id IS NOT NULL AND mindbody_client_id <> ''
-    GROUP BY mindbody_client_id
-)
-"""
+def _staff_remote_customer_row(remote: dict[str, Any]) -> dict[str, Any]:
+    remote_id = str(remote.get("remote_id") or "")
+    return {
+        "id": f"mb:{remote_id}",
+        "local_id": None,
+        "mindbody_client_id": remote_id,
+        "first_name": str(remote.get("first_name") or ""),
+        "last_name": str(remote.get("last_name") or ""),
+        "email": str(remote.get("email") or "").strip().lower(),
+        "phone": str(remote.get("phone") or ""),
+        "birth_date": str(remote.get("birth_date") or ""),
+        "gender": str(remote.get("gender") or ""),
+        "client_type": str(remote.get("client_type") or ""),
+        "home_location": str(remote.get("home_location") or ""),
+        "account_balance": str(remote.get("account_balance") or ""),
+        "photo_url": str(remote.get("photo_url") or ""),
+        "credits": 0,
+        "booking_count": 0,
+        "active_bookings": 0,
+        "is_active": bool(remote.get("active", True)),
+        "provider_active": bool(remote.get("active", True)),
+        "provider_status": str(remote.get("status") or ""),
+        "source": "Mindbody",
+        "created_at": str(remote.get("synced_at") or ""),
+        "synced_at": str(remote.get("synced_at") or ""),
+        "has_login": False,
+    }
 
 
-def _directory_row(row: Any) -> dict[str, Any]:
-    data = dict(row)
-    local_id = data.get("local_id")
-    remote_id = str(data.get("remote_id") or "")
-    data["id"] = int(local_id) if local_id is not None else f"mb:{remote_id}"
-    data["local_id"] = int(local_id) if local_id is not None else None
-    data["mindbody_client_id"] = remote_id
-    data.pop("remote_id", None)
-    data["credits"] = int(data.get("credits") or 0)
-    data["booking_count"] = int(data.get("booking_count") or 0)
-    data["active_bookings"] = int(data.get("active_bookings") or 0)
-    data["is_active"] = bool(data.get("is_active"))
-    data["provider_active"] = bool(data.get("provider_active"))
-    data["has_login"] = bool(data.get("has_login"))
-    return data
+def _staff_local_customer_row(
+    customer: User,
+    profile: Optional[CustomerProfile],
+    remote: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    remote = remote or {}
+    remote_id = str(remote.get("remote_id") or "")
+    return {
+        "id": customer.id,
+        "local_id": customer.id,
+        "mindbody_client_id": remote_id,
+        "first_name": customer.first_name or str(remote.get("first_name") or ""),
+        "last_name": customer.last_name or str(remote.get("last_name") or ""),
+        "email": customer.email,
+        "phone": (profile.phone if profile else "") or str(remote.get("phone") or ""),
+        "birth_date": (profile.birth_date if profile else "") or str(remote.get("birth_date") or ""),
+        "gender": str(remote.get("gender") or ""),
+        "client_type": str(remote.get("client_type") or ""),
+        "home_location": str(remote.get("home_location") or ""),
+        "account_balance": str(remote.get("account_balance") or ""),
+        "photo_url": str(remote.get("photo_url") or ""),
+        "credits": int(profile.credits if profile else 0),
+        "booking_count": 0,
+        "active_bookings": 0,
+        "is_active": bool(customer.is_active),
+        "provider_active": bool(remote.get("active", customer.is_active)),
+        "provider_status": str(remote.get("status") or ""),
+        "source": "Classy + Mindbody" if remote_id else "Classy",
+        "created_at": customer.created_at.isoformat(),
+        "synced_at": str(remote.get("synced_at") or ""),
+        "has_login": True,
+    }
+
+
+def _staff_customer_matches(row: dict[str, Any], q: str, status: str, source: str = "") -> bool:
+    if source and row.get("source") != source:
+        return False
+    if status:
+        active = bool(row.get("provider_active")) if row.get("source") == "Mindbody" else bool(row.get("is_active"))
+        if (status == "active") != active:
+            return False
+    if not q:
+        return True
+    haystack = " ".join(str(row.get(key) or "") for key in (
+        "first_name", "last_name", "email", "phone", "mindbody_client_id", "client_type", "home_location",
+    )).casefold()
+    return q in haystack
+
+
+def _staff_attach_booking_counts(rows: list[dict[str, Any]], db: Session) -> None:
+    if not rows:
+        return
+    emails = sorted({str(row.get("email") or "").strip().casefold() for row in rows if str(row.get("email") or "").strip()})
+    remote_ids = sorted({str(row.get("mindbody_client_id") or "").strip() for row in rows if str(row.get("mindbody_client_id") or "").strip()})
+    condition = None
+    if emails:
+        condition = func.lower(Booking.email).in_(emails)
+    if remote_ids:
+        remote_condition = Booking.mindbody_client_id.in_(remote_ids)
+        condition = remote_condition if condition is None else (condition | remote_condition)
+    if condition is None:
+        return
+    booking_rows = db.execute(select(Booking.email, Booking.mindbody_client_id, Booking.status).where(condition)).all()
+    by_email: dict[str, dict[str, int]] = {}
+    by_remote: dict[str, dict[str, int]] = {}
+    for email, remote_id, booking_status in booking_rows:
+        email_key = str(email or "").strip().casefold()
+        if email_key:
+            counter = by_email.setdefault(email_key, {"total": 0, "active": 0})
+            counter["total"] += 1
+            counter["active"] += int(booking_status == "reserved")
+        remote_key = str(remote_id or "").strip()
+        if remote_key:
+            counter = by_remote.setdefault(remote_key, {"total": 0, "active": 0})
+            counter["total"] += 1
+            counter["active"] += int(booking_status == "reserved")
+    for row in rows:
+        email_key = str(row.get("email") or "").strip().casefold()
+        remote_key = str(row.get("mindbody_client_id") or "").strip()
+        counts = by_remote.get(remote_key) if row.get("local_id") is None and remote_key in by_remote else by_email.get(email_key)
+        counts = counts or {"total": 0, "active": 0}
+        row["booking_count"] = int(counts["total"])
+        row["active_bookings"] = int(counts["active"])
 
 
 @app.get("/api/staff/customers")
@@ -1405,106 +1397,124 @@ def list_customers(
     db: Session = Depends(db_session),
 ):
     """Fast server-side unified customer directory with search, filters and pagination."""
-    from mindbody_sync import _ensure_client_store
-    _ensure_client_store()
+    from mindbody_sync import cached_mindbody_customers_for_emails, cached_mindbody_customers_page
 
     source = source if source in {"", "Classy", "Mindbody", "Classy + Mindbody"} else ""
     status = status if status in {"", "active", "inactive"} else ""
     q = " ".join((q or "").strip().split()).casefold()
-    pattern = f"%{q}%"
-    params = {
-        "q": q,
-        "pattern": pattern,
-        "source": source,
-        "status": status,
-        "limit": limit,
-        "offset": offset,
+    active_filter = True if status == "active" else False if status == "inactive" else None
+
+    local_customers = db.scalars(
+        select(User)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .where(Role.name == "Customer")
+        .order_by(func.lower(User.last_name), func.lower(User.first_name), func.lower(User.email))
+    ).all()
+    local_ids = [customer.id for customer in local_customers]
+    profiles = {
+        profile.user_id: profile
+        for profile in (db.scalars(select(CustomerProfile).where(CustomerProfile.user_id.in_(local_ids))).all() if local_ids else [])
+    }
+    local_emails = {customer.email.strip().casefold() for customer in local_customers if customer.email.strip()}
+    matched_remote_all = cached_mindbody_customers_for_emails(local_emails)
+    remote_by_email: dict[str, dict[str, Any]] = {}
+    for remote in matched_remote_all:
+        key = str(remote.get("email") or "").strip().casefold()
+        if key and key not in remote_by_email:
+            remote_by_email[key] = remote
+
+    local_rows = [
+        _staff_local_customer_row(customer, profiles.get(customer.id), remote_by_email.get(customer.email.strip().casefold()))
+        for customer in local_customers
+    ]
+    local_filtered = [row for row in local_rows if _staff_customer_matches(row, q, status, source)]
+
+    def remote_cache_matches(remote: dict[str, Any]) -> bool:
+        row = _staff_remote_customer_row(remote)
+        return _staff_customer_matches(row, q, status, "Mindbody")
+
+    matched_remote_filtered_count = sum(1 for remote in matched_remote_all if remote_cache_matches(remote))
+    remote_all = cached_mindbody_customers_page(query="", active=None, limit=1, offset=0)
+    remote_total_all = int(remote_all.get("total") or 0)
+
+    remote_filtered_total = 0
+    remote_rows: list[dict[str, Any]] = []
+    if source not in {"Classy", "Classy + Mindbody"}:
+        fetch_limit = min(25000, offset + limit + len(local_customers) + matched_remote_filtered_count + 25)
+        remote_page = cached_mindbody_customers_page(
+            query=q,
+            active=active_filter,
+            limit=max(limit, fetch_limit),
+            offset=0,
+        )
+        remote_filtered_total = int(remote_page.get("total") or 0)
+        for remote in remote_page.get("customers") or []:
+            email_key = str(remote.get("email") or "").strip().casefold()
+            if email_key and email_key in local_emails:
+                continue
+            remote_rows.append(_staff_remote_customer_row(remote))
+    elif source == "Classy":
+        remote_filtered_total = 0
+    elif source == "Classy + Mindbody":
+        remote_filtered_total = 0
+
+    if source == "Classy":
+        filtered_total = len(local_filtered)
+        combined = local_filtered
+    elif source == "Classy + Mindbody":
+        filtered_total = len(local_filtered)
+        combined = local_filtered
+    elif source == "Mindbody":
+        filtered_total = max(0, remote_filtered_total - matched_remote_filtered_count)
+        combined = remote_rows
+    else:
+        remote_page_for_count = cached_mindbody_customers_page(query=q, active=active_filter, limit=1, offset=0)
+        remote_filtered_total = int(remote_page_for_count.get("total") or 0)
+        filtered_total = len(local_filtered) + max(0, remote_filtered_total - matched_remote_filtered_count)
+        if not remote_rows:
+            fetch_limit = min(25000, offset + limit + len(local_customers) + matched_remote_filtered_count + 25)
+            remote_page = cached_mindbody_customers_page(query=q, active=active_filter, limit=max(limit, fetch_limit), offset=0)
+            for remote in remote_page.get("customers") or []:
+                email_key = str(remote.get("email") or "").strip().casefold()
+                if email_key and email_key in local_emails:
+                    continue
+                remote_rows.append(_staff_remote_customer_row(remote))
+        combined = local_filtered + remote_rows
+
+    combined.sort(key=lambda row: (
+        str(row.get("last_name") or "").casefold(),
+        str(row.get("first_name") or "").casefold(),
+        str(row.get("email") or "").casefold(),
+        str(row.get("mindbody_client_id") or ""),
+    ))
+    rows = combined[offset:offset + limit]
+    _staff_attach_booking_counts(rows, db)
+
+    matched_remote_rows_count = len(matched_remote_all)
+    both_local_count = sum(1 for row in local_rows if row["source"] == "Classy + Mindbody")
+    counts = {
+        "total": len(local_rows) + max(0, remote_total_all - matched_remote_rows_count),
+        "classy": len(local_rows) - both_local_count,
+        "mindbody": max(0, remote_total_all - matched_remote_rows_count),
+        "both": both_local_count,
+        "classy_logins": len(local_rows),
+        "bookings": int(db.scalar(select(func.count(Booking.id))) or 0),
     }
 
-    filter_sql = """
-      (:source = '' OR u.source = :source)
-      AND (
-        :status = ''
-        OR (:status = 'active' AND CASE WHEN u.source = 'Mindbody' THEN u.provider_active ELSE u.is_active END = TRUE)
-        OR (:status = 'inactive' AND CASE WHEN u.source = 'Mindbody' THEN u.provider_active ELSE u.is_active END = FALSE)
-      )
-      AND (
-        :q = ''
-        OR lower(
-            COALESCE(u.first_name, '') || ' ' ||
-            COALESCE(u.last_name, '') || ' ' ||
-            COALESCE(u.email, '') || ' ' ||
-            COALESCE(u.phone, '') || ' ' ||
-            COALESCE(u.remote_id, '') || ' ' ||
-            COALESCE(u.client_type, '') || ' ' ||
-            COALESCE(u.home_location, '')
-        ) LIKE :pattern
-      )
-    """
-
-    page_sql = _CUSTOMER_DIRECTORY_CTE + f"""
-    SELECT
-        u.*,
-        COALESCE(
-            CASE
-                WHEN u.local_id IS NULL AND br.total IS NOT NULL THEN br.total
-                ELSE be.total
-            END,
-            0
-        ) AS booking_count,
-        COALESCE(
-            CASE
-                WHEN u.local_id IS NULL AND br.active IS NOT NULL THEN br.active
-                ELSE be.active
-            END,
-            0
-        ) AS active_bookings,
-        COUNT(*) OVER() AS filtered_total
-    FROM unified u
-    LEFT JOIN booking_by_email be ON be.email_key = lower(COALESCE(u.email, ''))
-    LEFT JOIN booking_by_remote br ON br.remote_id = u.remote_id
-    WHERE {filter_sql}
-    ORDER BY lower(COALESCE(u.last_name, '')), lower(COALESCE(u.first_name, '')), lower(COALESCE(u.email, '')), u.remote_id
-    LIMIT :limit OFFSET :offset
-    """
-    raw_rows = db.execute(text(page_sql), params).mappings().all()
-    rows = [_directory_row(row) for row in raw_rows]
-    filtered_total = int(raw_rows[0].get("filtered_total") or 0) if raw_rows else 0
-    for row in rows:
-        row.pop("filtered_total", None)
-
-    counts_sql = _CUSTOMER_DIRECTORY_CTE + """
-    SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN source = 'Classy' THEN 1 ELSE 0 END) AS classy,
-        SUM(CASE WHEN source = 'Mindbody' THEN 1 ELSE 0 END) AS mindbody,
-        SUM(CASE WHEN source = 'Classy + Mindbody' THEN 1 ELSE 0 END) AS both,
-        SUM(CASE WHEN has_login = 1 THEN 1 ELSE 0 END) AS classy_logins,
-        (SELECT COUNT(*) FROM bookings) AS bookings
-    FROM unified
-    """
-    counts_row = db.execute(text(counts_sql)).mappings().one()
-    counts = {key: int(counts_row.get(key) or 0) for key in ("total", "classy", "mindbody", "both", "classy_logins", "bookings")}
-
-    local_accounts: list[dict[str, Any]] = []
+    local_accounts = []
     if include_accounts:
-        account_rows = db.execute(text("""
-            SELECT u.id, u.first_name, u.last_name, u.email
-            FROM users u
-            WHERE EXISTS (
-                SELECT 1
-                FROM user_roles ur
-                JOIN roles ro ON ro.id = ur.role_id
-                WHERE ur.user_id = u.id AND ro.name = 'Customer'
-            )
-            ORDER BY lower(COALESCE(u.last_name, '')), lower(COALESCE(u.first_name, '')), lower(u.email)
-        """)).mappings().all()
-        local_accounts = [dict(row) for row in account_rows]
+        local_accounts = [{
+            "id": customer.id,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "email": customer.email,
+        } for customer in local_customers]
 
     return {
         "customers": rows,
         "counts": counts,
-        "filtered_total": filtered_total,
+        "filtered_total": int(filtered_total),
         "limit": limit,
         "offset": offset,
         "local_accounts": local_accounts,
@@ -1520,63 +1530,51 @@ def staff_customer_profile(
     db: Session = Depends(db_session),
 ):
     """Return one unified cached profile plus recent booking history."""
-    from mindbody_sync import _ensure_client_store
-    _ensure_client_store()
+    from mindbody_sync import cached_mindbody_customers_for_emails, cached_mindbody_customers_page
 
     email = (email or "").strip().lower()
     mindbody_client_id = (mindbody_client_id or "").strip()
     if not email and not mindbody_client_id and local_id is None:
         raise HTTPException(400, "customer_identifier_required")
 
-    profile_sql = _CUSTOMER_DIRECTORY_CTE + """
-    SELECT
-        u.*,
-        COALESCE(
-            CASE
-                WHEN u.local_id IS NULL AND br.total IS NOT NULL THEN br.total
-                ELSE be.total
-            END,
-            0
-        ) AS booking_count,
-        COALESCE(
-            CASE
-                WHEN u.local_id IS NULL AND br.active IS NOT NULL THEN br.active
-                ELSE be.active
-            END,
-            0
-        ) AS active_bookings
-    FROM unified u
-    LEFT JOIN booking_by_email be ON be.email_key = lower(COALESCE(u.email, ''))
-    LEFT JOIN booking_by_remote br ON br.remote_id = u.remote_id
-    WHERE
-        (:local_id IS NOT NULL AND u.local_id = :local_id)
-        OR (:remote_id <> '' AND u.remote_id = :remote_id)
-        OR (:email <> '' AND lower(COALESCE(u.email, '')) = :email)
-    ORDER BY CASE WHEN u.local_id IS NOT NULL THEN 0 ELSE 1 END
-    LIMIT 1
-    """
-    profile_row = db.execute(text(profile_sql), {
-        "local_id": local_id,
-        "remote_id": mindbody_client_id,
-        "email": email,
-    }).mappings().first()
-    if not profile_row:
-        raise HTTPException(404, "customer_not_found")
-    customer = _directory_row(profile_row)
+    customer = db.get(User, local_id) if local_id else None
+    if customer is None and email:
+        customer = db.scalar(select(User).where(func.lower(User.email) == email))
+        if customer and not any(role.name == "Customer" for role in customer.roles):
+            customer = None
 
-    booking_query = select(Booking).order_by(Booking.created_at.desc()).limit(50)
-    remote_id = customer.get("mindbody_client_id") or ""
-    customer_email = str(customer.get("email") or "").strip().lower()
-    if remote_id and customer_email:
-        booking_query = booking_query.where(
-            (Booking.mindbody_client_id == remote_id) | (func.lower(Booking.email) == customer_email)
-        )
-    elif remote_id:
-        booking_query = booking_query.where(Booking.mindbody_client_id == remote_id)
+    remote: Optional[dict[str, Any]] = None
+    if mindbody_client_id:
+        candidates = cached_mindbody_customers_page(query=mindbody_client_id, limit=25, offset=0).get("customers") or []
+        remote = next((row for row in candidates if str(row.get("remote_id") or "") == mindbody_client_id), None)
+    if remote is None and email:
+        matches = cached_mindbody_customers_for_emails({email})
+        remote = matches[0] if matches else None
+    if customer is not None and remote is None:
+        matches = cached_mindbody_customers_for_emails({customer.email})
+        remote = matches[0] if matches else None
+
+    if customer is not None:
+        profile = db.get(CustomerProfile, customer.id)
+        unified = _staff_local_customer_row(customer, profile, remote)
+    elif remote is not None:
+        unified = _staff_remote_customer_row(remote)
     else:
-        booking_query = booking_query.where(func.lower(Booking.email) == customer_email)
+        raise HTTPException(404, "customer_not_found")
 
-    bookings = db.scalars(booking_query).all()
+    _staff_attach_booking_counts([unified], db)
+    remote_id = str(unified.get("mindbody_client_id") or "")
+    customer_email = str(unified.get("email") or "").strip().casefold()
+    condition = None
+    if customer_email:
+        condition = func.lower(Booking.email) == customer_email
+    if remote_id:
+        remote_condition = Booking.mindbody_client_id == remote_id
+        condition = remote_condition if condition is None else (condition | remote_condition)
+    bookings = db.scalars(
+        select(Booking).where(condition).order_by(Booking.created_at.desc()).limit(50)
+    ).all() if condition is not None else []
+
     history = [{
         "id": b.id,
         "reference": b.reference,
@@ -1589,8 +1587,7 @@ def staff_customer_profile(
         "amount_cents": b.amount_cents,
         "source": b.source,
     } for b in bookings]
-
-    return {"customer": customer, "bookings": history}
+    return {"customer": unified, "bookings": history}
 
 
 @app.patch("/api/staff/customers/{customer_id}")
