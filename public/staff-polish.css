@@ -307,3 +307,55 @@ body.staff-menu-open .staff-nav-scrim{opacity:1;pointer-events:auto}
 .customer-profile-actions{display:flex;justify-content:flex-end;margin:0 0 14px}
 .customer-profile-history{margin-top:18px}.customer-profile-history .panel-head.compact{margin-bottom:10px}.customer-profile-history h3{margin:3px 0 0;font:500 22px/1.1 var(--serif)}
 @media(max-width:760px){.customer-directory-pager{justify-content:space-between}.customer-directory-pager button{min-width:0;flex:1}.customer-directory-pager span{min-width:80px}.customer-profile-actions .secondary{width:100%}}
+
+
+/* Keep the Pro Center hero visually distinct after the global panel polish. */
+.panel.pro-hero{
+  min-height:210px;
+  padding:34px;
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:28px;
+  overflow:hidden;
+  position:relative;
+  color:#fff;
+  border:0;
+  background:
+    radial-gradient(circle at 88% 20%,rgba(183,146,100,.18),transparent 30%),
+    linear-gradient(125deg,#171713 0%,#25221d 58%,#332e27 100%);
+  box-shadow:0 14px 36px rgba(22,22,19,.13);
+}
+.panel.pro-hero::after{
+  content:"";
+  position:absolute;
+  inset:auto -80px -130px auto;
+  width:360px;
+  height:360px;
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:50%;
+  pointer-events:none;
+}
+.panel.pro-hero>div,
+.panel.pro-hero>.pro{position:relative;z-index:1}
+.panel.pro-hero .kicker{color:#c5a578}
+.panel.pro-hero h2{color:#fff}
+.panel.pro-hero p:not(.kicker){color:rgba(255,255,255,.64)}
+.panel.pro-hero>.pro{
+  flex:0 0 auto;
+  padding:7px 10px;
+  background:#b79264;
+  color:#171713;
+  font-size:7px;
+  font-weight:800;
+  letter-spacing:.12em;
+}
+@media(max-width:760px){
+  .panel.pro-hero{
+    min-height:0;
+    padding:25px 20px;
+    align-items:flex-start;
+    flex-direction:column;
+    gap:18px;
+  }
+}
