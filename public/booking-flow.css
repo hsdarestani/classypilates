@@ -112,3 +112,30 @@ html:has(#bookingDrawer.open),body:has(#bookingDrawer.open){overflow:hidden!impo
   body:has(#bookingDrawer.open) #header,body:has(#bookingDrawer.open) .classy-quick-dock{visibility:hidden!important}
 }
 @media(max-width:520px){.signed-in-switch>div{grid-template-columns:1fr}}
+
+
+/* Keep booking validation / error toasts above the booking drawer. */
+body:has(#bookingDrawer.open) #toast{
+  z-index:10020!important;
+  left:auto!important;
+  right:24px!important;
+  top:92px!important;
+  bottom:auto!important;
+  width:min(390px,calc(100vw - 48px));
+  min-width:0!important;
+  transform:translateY(-18px)!important;
+  opacity:0;
+  pointer-events:none;
+}
+body:has(#bookingDrawer.open) #toast.show{
+  transform:translateY(0)!important;
+  opacity:1;
+}
+@media(max-width:900px){
+  body:has(#bookingDrawer.open) #toast{
+    left:16px!important;
+    right:16px!important;
+    top:84px!important;
+    width:auto!important;
+  }
+}
