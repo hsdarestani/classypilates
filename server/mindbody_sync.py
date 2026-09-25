@@ -643,7 +643,59 @@ def sync_client_directory(*, max_clients: int = 5000) -> dict[str, int]:
         if len(batch) < 200:
             break
         offset += len(batch)
-    return {"seen": seen, "written": written}
+    # Enrich existing Mindbody roster mirrors after the directory refresh. This
+    # replaces privacy placeholders only when the provider actually exposes a value.
+    enriched = 0
+    with core.SessionLocal() as db:
+        mirrored = list(db.scalars(
+            select(core.Booking).where(
+                core.Booking.source == "mindbody",
+                core.Booking.mindbody_client_id.is_not(None),
+            )
+        ).all())
+        if mirrored:
+            ids = sorted({
+                str(row.mindbody_client_id or "").strip()
+                for row in mirrored
+                if str(row.mindbody_client_id or "").strip()
+            })
+            provider_rows = db.execute(
+                text("""
+                    SELECT remote_id, first_name, last_name, email, phone
+                    FROM mindbody_customers
+                    WHERE remote_id = ANY(:ids)
+                """) if core.engine.dialect.name == "postgresql" else
+                text("""
+                    SELECT remote_id, first_name, last_name, email, phone
+                    FROM mindbody_customers
+                """),
+                {"ids": ids} if core.engine.dialect.name == "postgresql" else {},
+            ).mappings().all()
+            provider_by_id = {str(row["remote_id"]): row for row in provider_rows}
+            for booking in mirrored:
+                provider = provider_by_id.get(str(booking.mindbody_client_id or ""))
+                if not provider:
+                    continue
+                changed = False
+                full_name = " ".join(filter(None, [
+                    str(provider.get("first_name") or "").strip(),
+                    str(provider.get("last_name") or "").strip(),
+                ])).strip()
+                provider_email = str(provider.get("email") or "").strip().lower()
+                provider_phone = str(provider.get("phone") or "").strip()
+                if full_name and (not booking.customer_name or booking.customer_name == "Mindbody client"):
+                    booking.customer_name = full_name
+                    changed = True
+                if provider_email and (not booking.email or booking.email.endswith("@private.invalid")):
+                    booking.email = provider_email
+                    changed = True
+                if provider_phone and not booking.phone:
+                    booking.phone = provider_phone
+                    changed = True
+                enriched += int(changed)
+            db.commit()
+
+    return {"seen": seen, "written": written, "bookings_enriched": enriched}
 
 
 def cached_mindbody_customers() -> list[dict[str, Any]]:
