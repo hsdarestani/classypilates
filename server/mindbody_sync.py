@@ -3464,7 +3464,7 @@ def _loop():
 
 @core.app.on_event("startup")
 def start_worker():
-    global _worker_started
+    global _worker_started, _client_worker_started
     if not SYNC_ENABLED or not capability_status()["configured"]:
         return
     with _worker_guard:
@@ -3509,7 +3509,6 @@ def start_worker():
         _worker_started = True
         threading.Thread(target=_loop, name="mindbody-mirror", daemon=True).start()
 
-        global _client_worker_started
         with _client_worker_guard:
             if not _client_worker_started:
                 _client_worker_started = True
