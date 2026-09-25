@@ -36,3 +36,147 @@ html,body{max-width:100%;overflow-x:hidden}body.account-menu-open{overflow:hidde
   .bookings-head{margin-bottom:12px!important}
   .booking-tabs{position:sticky;top:114px;z-index:12;background:rgba(241,237,230,.96);backdrop-filter:blur(12px)}
 }
+
+
+/* 2026-09-25 premium customer account refresh */
+:root{--account-radius:18px;--account-shadow:0 12px 32px rgba(34,29,22,.055)}
+body{background:
+  radial-gradient(circle at 92% 0,rgba(183,146,100,.08),transparent 24rem),
+  linear-gradient(180deg,#f5f1e9 0,#f1ede5 100%)}
+.account-main{max-width:1440px}
+.account-top{position:sticky;top:0;z-index:30;margin:0 -16px 24px;padding:12px 16px;background:rgba(245,241,233,.88);backdrop-filter:blur(18px);border-bottom:1px solid rgba(222,215,204,.7)}
+.account-top h1{letter-spacing:-.05em}
+.account-top>a{min-height:40px;display:inline-flex;align-items:center;justify-content:center;padding:0 16px;border-color:#d9d1c5;box-shadow:0 3px 12px rgba(35,29,22,.025)}
+.account-panel,.account-card{border-color:#e1dbd1;box-shadow:var(--account-shadow)}
+.account-panel{border-radius:var(--account-radius)}
+.account-card{border-radius:15px}
+
+/* Overview */
+.overview-hero{display:grid;grid-template-columns:minmax(300px,.9fr) minmax(0,1.45fr);gap:12px;margin-bottom:12px}
+.overview-credit{position:relative;overflow:hidden;min-height:218px;padding:25px;border-radius:20px;background:linear-gradient(145deg,#171713,#302c26);color:#fff;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 16px 38px rgba(24,22,18,.14)}
+.overview-credit:after{content:'';position:absolute;width:210px;height:210px;border:1px solid rgba(255,255,255,.09);border-radius:50%;right:-80px;top:-95px;box-shadow:0 0 0 36px rgba(255,255,255,.025),0 0 0 72px rgba(255,255,255,.018)}
+.overview-credit-copy{position:relative;z-index:1;display:grid}
+.overview-credit span{font-size:8px;letter-spacing:.16em;font-weight:800;color:#cba875}
+.overview-credit strong{font:500 78px/.9 var(--serif);letter-spacing:-.06em;margin:20px 0 8px}
+.overview-credit small{font-size:10px;color:rgba(255,255,255,.55)}
+.overview-credit>a{position:relative;z-index:1;width:max-content;min-height:40px;padding:0 14px;border-radius:9px;background:#fff;color:#171713;text-decoration:none;display:inline-flex;align-items:center;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.overview-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.overview-stats article{position:relative;overflow:hidden;min-height:218px;padding:20px;border:1px solid #e1dbd1;border-radius:18px;background:rgba(255,255,255,.94);box-shadow:var(--account-shadow);display:flex;flex-direction:column}
+.overview-stats article:after{content:'';position:absolute;right:-28px;bottom:-28px;width:84px;height:84px;border-radius:50%;background:#b79264;opacity:.07}
+.overview-stats span{font-size:8px;font-weight:800;letter-spacing:.14em;color:#8b8277}
+.overview-stats b{font:500 46px/1 var(--serif);letter-spacing:-.04em;margin:auto 0 7px}
+.overview-stats small{font-size:9px;color:#817a70}
+.overview-next{position:relative;overflow:hidden;min-height:245px;border-radius:20px!important;padding:26px!important;margin-top:0!important;background:linear-gradient(100deg,rgba(12,12,11,.9),rgba(12,12,11,.48)),url('https://classypilates.de/wp-content/uploads/2026/05/Oval_01-scaled.jpg') center/cover;color:#fff;display:flex;align-items:flex-end;justify-content:space-between;gap:22px}
+.overview-next h2{font:500 clamp(34px,4vw,52px)/.95 var(--serif);letter-spacing:-.045em;margin:8px 0 12px}
+.overview-next p{font-size:10px;line-height:1.65;color:rgba(255,255,255,.68)}
+.next-class-action{min-height:42px;padding:0 15px;border:1px solid rgba(255,255,255,.55);border-radius:9px;background:rgba(255,255,255,.1);backdrop-filter:blur(8px);color:#fff;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+.overview-empty-next{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px 24px;margin-bottom:12px;border:1px solid #ded7cc;border-radius:18px;background:linear-gradient(135deg,#ece4d7,#f7f3ec)}
+.overview-empty-next span{font-size:8px;font-weight:800;letter-spacing:.16em;color:#94734d}
+.overview-empty-next h2{margin:6px 0 4px;font:500 28px/1 var(--serif)}
+.overview-empty-next p{margin:0;font-size:10px;color:#766f66}
+.overview-empty-next>a{min-height:42px;padding:0 15px;border-radius:9px;background:#171713;color:#fff;text-decoration:none;display:inline-flex;align-items:center;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.overview-activity{margin-top:0!important}
+.overview-empty-inline{padding:28px 20px;border:1px dashed #d9d1c5;border-radius:13px;background:#faf8f4;text-align:center}
+.overview-empty-inline span{font:500 23px/1 var(--serif)}
+.overview-empty-inline p{margin:7px 0 0;font-size:9px;color:#817a70}
+.overview-booking-list .booking-item{background:#fbfaf7}
+
+/* Profile and security */
+.profile-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(330px,.8fr);gap:12px;align-items:start}
+.profile-layout>.account-panel{margin-top:0}
+.profile-card,.security-card{padding:24px}
+.profile-grid-clean{gap:14px 12px}
+.profile-grid-clean label,.security-fields label{font-size:8px;font-weight:800;letter-spacing:.1em;color:#837b70}
+.profile-grid-clean input,.security-fields input{width:100%;height:54px;border:1px solid #ddd6ca;border-radius:11px;background:#fbfaf7;padding:0 15px;color:#171713;font:500 13px/1 var(--sans);outline:none;transition:border .15s ease,box-shadow .15s ease,background .15s ease}
+.profile-grid-clean input:focus,.security-fields input:focus{border-color:#a68a67;box-shadow:0 0 0 3px rgba(183,146,100,.1);background:#fff}
+.profile-grid-clean input:disabled{background:#f1eee8;color:#8b847a}
+.setting-row{position:relative;display:flex!important;align-items:center;justify-content:space-between;gap:18px;margin-top:18px;padding:15px 16px;border:1px solid #e3ddd3;border-radius:12px;background:#f8f6f1;cursor:pointer}
+.setting-row>span{min-width:0}
+.setting-row b,.setting-row small{display:block}
+.setting-row b{font-size:10px;color:#28251f}
+.setting-row small{margin-top:4px;font-size:8px;line-height:1.45;color:#817a70}
+.setting-row>input{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important;pointer-events:none!important}
+.setting-row>i{position:relative;flex:0 0 44px;width:44px;height:26px;border-radius:999px;background:#d9d3ca;box-shadow:inset 0 0 0 1px rgba(23,23,19,.08);transition:.2s}
+.setting-row>i:after{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.16);transition:.2s}
+.setting-row>input:checked+i{background:#171713}
+.setting-row>input:checked+i:after{transform:translateX(18px)}
+.setting-row>input:focus-visible+i{box-shadow:0 0 0 3px rgba(183,146,100,.18),inset 0 0 0 1px rgba(23,23,19,.08)}
+.profile-actions{display:flex;justify-content:flex-end;margin-top:17px}
+.profile-actions .account-button{min-width:145px}
+.security-card{background:linear-gradient(180deg,#fff,#fbfaf7)}
+.security-fields{display:grid;gap:13px}
+.security-fields label{display:grid;gap:7px}
+.password-setting{margin-top:15px}
+.security-card .profile-actions{justify-content:stretch}
+.security-card .profile-actions .account-button{width:100%}
+
+/* Booking cards are lighter and more scannable. */
+.booking-item{background:#fff;box-shadow:0 4px 14px rgba(34,29,22,.025)}
+.booking-meta>div{border:1px solid #eee8df;background:#f8f5ef!important}
+.booking-tabs{border-radius:999px;padding:4px}
+.booking-tabs button{border-radius:999px}
+
+/* Mobile first refinement */
+@media(max-width:900px){
+  .overview-hero{grid-template-columns:1fr}
+  .overview-credit{min-height:188px}
+  .overview-stats article{min-height:138px}
+  .profile-layout{grid-template-columns:1fr}
+}
+@media(max-width:760px){
+  .account-main{padding:0 10px calc(54px + env(safe-area-inset-bottom))}
+  .account-top{margin:0 -10px 12px!important;padding:calc(8px + env(safe-area-inset-top)) 10px 11px!important;background:rgba(245,241,233,.96)!important;box-shadow:0 5px 18px rgba(40,34,26,.035)}
+  .account-top .classy-language-toggle{height:42px!important;border-radius:999px!important;background:#fff!important;border:1px solid #ded7cc!important;padding:4px!important;box-shadow:0 2px 8px rgba(35,29,22,.025)}
+  .account-top .account-menu{border-radius:12px!important;box-shadow:0 2px 8px rgba(35,29,22,.025)}
+  .account-top>a{border-radius:999px!important;background:#fff!important;box-shadow:0 2px 8px rgba(35,29,22,.025)}
+  .account-top>div{padding:5px 2px 1px!important}
+  .account-top p{font-size:7px!important;letter-spacing:.16em!important}
+  .account-top h1{font-size:31px!important;letter-spacing:-.055em!important}
+  #accountView{padding-bottom:18px}
+  .overview-hero{gap:9px;margin-bottom:9px}
+  .overview-credit{min-height:170px;padding:19px;border-radius:17px}
+  .overview-credit strong{font-size:62px;margin:14px 0 7px}
+  .overview-credit>a{min-height:38px}
+  .overview-stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+  .overview-stats article{min-height:110px;padding:12px;border-radius:14px}
+  .overview-stats span{font-size:6.5px;letter-spacing:.1em}
+  .overview-stats b{font-size:31px;margin:auto 0 4px}
+  .overview-stats small{font-size:7.5px;line-height:1.25}
+  .overview-next{min-height:210px;padding:19px!important;border-radius:17px!important;display:flex!important}
+  .overview-next h2{font-size:35px}
+  .overview-next .next-class-action{align-self:flex-end}
+  .overview-empty-next{padding:18px;border-radius:15px}
+  .overview-empty-next h2{font-size:25px}
+  .overview-activity{padding:15px!important}
+  .overview-activity .account-panel-head{display:grid;grid-template-columns:1fr auto;align-items:end}
+  .overview-activity .account-panel-head>.account-button{width:auto!important}
+  .overview-activity .account-panel-head small{max-width:520px}
+  .overview-booking-list .booking-meta{display:none!important}
+  .profile-layout{gap:9px}
+  .profile-card,.security-card{padding:16px!important;border-radius:15px!important}
+  .profile-grid-clean{grid-template-columns:1fr!important;gap:11px}
+  .profile-grid-clean label.full{grid-column:auto}
+  .profile-grid-clean input,.security-fields input{height:52px;font-size:13px;border-radius:10px}
+  .setting-row{margin-top:14px;padding:13px 14px}
+  .setting-row b{font-size:9px}
+  .setting-row small{font-size:7.5px}
+  .profile-actions{justify-content:stretch}
+  .profile-actions .account-button{width:100%;min-height:46px}
+  .bookings-panel{padding:14px!important}
+}
+@media(max-width:480px){
+  .account-cards{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .overview-credit{min-height:164px}
+  .overview-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .overview-stats article{min-width:0;padding:11px 8px}
+  .overview-stats span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .overview-stats b{font-size:29px}
+  .overview-next{display:grid!important;gap:14px}
+  .next-class-action{width:100%}
+  .overview-empty-next{display:grid;gap:14px}
+  .overview-empty-next>a{width:100%;justify-content:center}
+  .overview-activity .account-panel-head{grid-template-columns:1fr!important}
+  .overview-activity .account-panel-head>.account-button{width:100%!important}
+  .booking-tabs{position:static!important}
+  .booking-meta{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
