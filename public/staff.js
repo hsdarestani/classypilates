@@ -24,7 +24,15 @@
     showApp();
   }
   async function logout(){state.token='';state.user=null;localStorage.removeItem('cpStaffToken');localStorage.removeItem('cpAuthToken');try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'})}catch(_){}location.href='/login'}
-  $('#showPassword').onchange=()=>{$('#loginPassword').type=$('#showPassword').checked?'text':'password'};
+  document.addEventListener('change',event=>{
+    const toggle=event.target.closest?.('[data-password-toggle]');
+    if(!toggle)return;
+    const type=toggle.checked?'text':'password';
+    String(toggle.dataset.passwordToggle||'').split(',').map(value=>value.trim()).filter(Boolean).forEach(selector=>{
+      const field=$(selector);
+      if(field)field.setAttribute('type',type);
+    });
+  });
   $('#loginBox').onsubmit=async e=>{e.preventDefault();const button=$('#loginBtn');try{button.disabled=true;button.textContent='Checking…';$('#loginMsg').textContent='';const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:$('#loginEmail').value.trim(),password:$('#loginPassword').value})});state.token=d.token;state.user=d.user;localStorage.setItem('cpStaffToken',d.token);history.replaceState({},'',location.pathname.startsWith('/coach')?'/coach':'/admin');showApp()}catch(e){const messages={invalid_credentials:'Email or password is incorrect.',inactive_user:'This account has been disabled.',server_unreachable:'The login server is unavailable. Please try again.',request_failed:'Login failed. Please try again.'};$('#loginMsg').textContent=messages[e.message]||e.message}finally{button.disabled=false;button.textContent='Sign in'}};
   $('#setupBtn').onclick=async()=>{try{$('#setupMsg').textContent='';const d=await api('/api/auth/bootstrap',{method:'POST',body:JSON.stringify({email:$('#setupEmail').value,password:$('#setupPassword').value,first_name:$('#setupFirst').value})});state.token=d.token;state.user=d.user;localStorage.setItem('cpStaffToken',d.token);showApp();toast('Administrator created')}catch(e){$('#setupMsg').textContent=e.message==='password_too_short'?'Password must be at least 10 characters.':e.message}};
   $('#logout').onclick=logout;$('#mobileNav').onclick=()=>$('.sidebar').classList.toggle('open');
