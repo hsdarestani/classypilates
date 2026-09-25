@@ -523,61 +523,34 @@ def refresh_class_availability_strict(class_id: int) -> dict[str, int | bool]:
 
 
 def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None:
-    """Create/confirm the provider reservation before Classy reports success."""
-    with core.SessionLocal() as db:
-        booking = db.scalar(
-            select(core.Booking)
-            .where(core.Booking.id == booking_id)
-            .with_for_update()
-        )
-        if not booking or booking.source != "website" or booking.status != "reserved":
-            return
-        allowed_payment = booking.payment_status == "paid" or (allow_pending and booking.payment_status == "pending")
-        if not allowed_payment:
-            return
-        if booking.mindbody_sync_status == "synced" and booking.mindbody_visit_id:
-            return
-        booking.mindbody_sync_status = "syncing"
-        booking.mindbody_sync_error = ""
-        db.commit()
-        try:
-            if not booking.klass.mindbody_class_id:
-                sync_from_mindbody()
-                db.refresh(booking.klass)
-            if not booking.klass.mindbody_class_id:
-                raise MindbodyError("No matching Mindbody class ID for this session")
-
-            client = WriteClient.from_env(timeout=15.0)
-            remote = None
-            synced_at = booking.klass.mindbody_synced_at
-            recently_checked = bool(
-                synced_at
-                and (datetime.now(timezone.utc) - core.as_utc(synced_at)).total_seconds() < 30
+    """Create/confirm the provider reservation without holding a DB connection during provider I/O."""
+    try:
+        with core.SessionLocal() as db:
+            booking = db.scalar(
+                select(core.Booking)
+                .where(core.Booking.id == booking_id)
+                .with_for_update()
             )
-            if not recently_checked:
-                remote = _find_remote_class(client, booking.klass)
-            else:
-                remote = {"IsAvailable": True}
-            if not remote:
-                raise MindbodyError("Mindbody class is not available")
-            if bool(_value(remote, "IsCanceled", "IsCancelled", "Cancelled", "isCanceled", default=False)):
-                raise MindbodyError("Mindbody class is cancelled")
+            if not booking or booking.source != "website" or booking.status != "reserved":
+                return
+            allowed_payment = booking.payment_status == "paid" or (allow_pending and booking.payment_status == "pending")
+            if not allowed_payment:
+                return
+            if booking.mindbody_sync_status == "synced" and booking.mindbody_visit_id:
+                return
+            if booking.mindbody_sync_status == "syncing":
+                return
 
-            cap = _value(remote, "MaxCapacity", "Capacity", default=None)
-            booked = _value(remote, "TotalBooked", "TotalClients", default=None)
-            web_cap = _value(remote, "WebCapacity", default=None)
-            web_booked = _value(remote, "TotalWebBooked", "WebBooked", default=None)
-            is_available = _value(remote, "IsAvailable", "isAvailable", default=True)
-            if is_available is False:
-                raise MindbodyError("Mindbody class is not available for booking")
-            if cap is not None and booked is not None and int(booked) >= int(cap):
-                raise MindbodyError("Mindbody class is full")
-            if web_cap is not None and web_booked is not None and int(web_booked) >= int(web_cap):
-                raise MindbodyError("Mindbody online booking capacity is full")
+            klass = booking.klass
+            if not klass.mindbody_class_id:
+                booking.mindbody_sync_status = "failed"
+                booking.mindbody_sync_error = "No matching Mindbody class ID for this session"
+                db.commit()
+                return
 
-            client_id = str(booking.mindbody_client_id or "")
-            if not client_id:
-                previous_client_id = db.scalar(
+            previous_client_id = ""
+            if not booking.mindbody_client_id:
+                previous_client_id = str(db.scalar(
                     select(core.Booking.mindbody_client_id)
                     .where(
                         func.lower(core.Booking.email) == booking.email.lower(),
@@ -586,44 +559,105 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
                     )
                     .order_by(core.Booking.created_at.desc())
                     .limit(1)
-                )
-                client_id = str(previous_client_id or "")
-            if not client_id:
-                candidates = client.find_clients(booking.email)
-                match = next(
-                    (
-                        x for x in candidates
-                        if str(x.get("Email", "")).casefold() == booking.email.casefold()
-                    ),
-                    None,
-                )
-                client_id = str(_value(match or {}, "Id", "ID", default="")) or client.add_client(booking)
+                ) or "")
 
-                # Persist the provider client identity before creating the class visit.
-                # If the roster worker observes the new visit immediately, it can now
-                # link it back to this website booking instead of creating a second row.
-                booking.mindbody_client_id = client_id
-                booking.mindbody_sync_status = "syncing"
-                db.commit()
-
-            result = client.add_to_class(client_id, booking.klass.mindbody_class_id)
-            visit = _extract_visit(result)
-            booking.mindbody_client_id = client_id
-            booking.mindbody_visit_id = str(_value(visit, "Id", "ID", "VisitId", default="")) or f"client:{client_id}:class:{booking.klass.mindbody_class_id}"
-
-            # AddClientToClass is the authoritative write. The class was checked
-            # immediately before the hold and local row locking already protects the
-            # last Classy-visible spot. Avoid a second provider round trip here so
-            # checkout is not delayed by another full classes request.
-
-            booking.mindbody_sync_status = "synced"
+            snapshot = {
+                "email": booking.email,
+                "customer_name": booking.customer_name or "",
+                "phone": booking.phone or "",
+                "client_id": str(booking.mindbody_client_id or previous_client_id or ""),
+                "class_id": str(klass.mindbody_class_id),
+                "klass": klass,
+                "synced_at": klass.mindbody_synced_at,
+            }
+            booking.mindbody_sync_status = "syncing"
             booking.mindbody_sync_error = ""
-            booking.mindbody_synced_at = datetime.now(timezone.utc)
-        except Exception as exc:
-            booking.mindbody_sync_status = "failed"
-            booking.mindbody_sync_error = str(exc)[:1500]
-        db.commit()
+            db.commit()
 
+        # Important: no SQLAlchemy Session is kept open across these network calls.
+        # A slow Mindbody response must never consume the app's DB connection pool.
+        client = WriteClient.from_env(timeout=10.0)
+        remote = None
+        synced_at = snapshot["synced_at"]
+        recently_checked = bool(
+            synced_at
+            and (datetime.now(timezone.utc) - core.as_utc(synced_at)).total_seconds() < 45
+        )
+        if not recently_checked:
+            remote = _find_remote_class(client, snapshot["klass"])
+        else:
+            remote = {"IsAvailable": True}
+
+        if not remote:
+            raise MindbodyError("Mindbody class is not available")
+        if bool(_value(remote, "IsCanceled", "IsCancelled", "Cancelled", "isCanceled", default=False)):
+            raise MindbodyError("Mindbody class is cancelled")
+
+        cap = _value(remote, "MaxCapacity", "Capacity", default=None)
+        booked = _value(remote, "TotalBooked", "TotalClients", default=None)
+        web_cap = _value(remote, "WebCapacity", default=None)
+        web_booked = _value(remote, "TotalWebBooked", "WebBooked", default=None)
+        is_available = _value(remote, "IsAvailable", "isAvailable", default=True)
+        if is_available is False:
+            raise MindbodyError("Mindbody class is not available for booking")
+        if cap is not None and booked is not None and int(booked) >= int(cap):
+            raise MindbodyError("Mindbody class is full")
+        if web_cap is not None and web_booked is not None and int(web_booked) >= int(web_cap):
+            raise MindbodyError("Mindbody online booking capacity is full")
+
+        client_id = snapshot["client_id"]
+        if not client_id:
+            candidates = client.find_clients(snapshot["email"])
+            match = next(
+                (
+                    x for x in candidates
+                    if str(x.get("Email", "")).casefold() == snapshot["email"].casefold()
+                ),
+                None,
+            )
+            client_id = str(_value(match or {}, "Id", "ID", default="") or "")
+            if not client_id:
+                parts = snapshot["customer_name"].strip().split(None, 1)
+                client_id = client.add_client_details(
+                    email=snapshot["email"],
+                    first_name=parts[0] if parts else "Classy",
+                    last_name=parts[1] if len(parts) > 1 else "Client",
+                    phone=snapshot["phone"],
+                )
+
+        with core.SessionLocal() as db:
+            current = db.get(core.Booking, booking_id)
+            if not current or current.status != "reserved":
+                return
+            current.mindbody_client_id = client_id
+            current.mindbody_sync_status = "syncing"
+            db.commit()
+
+        result = client.add_to_class(client_id, snapshot["class_id"])
+        visit = _extract_visit(result)
+        visit_id = str(_value(visit, "Id", "ID", "VisitId", default="")) or f"client:{client_id}:class:{snapshot['class_id']}"
+
+        with core.SessionLocal() as db:
+            current = db.scalar(
+                select(core.Booking)
+                .where(core.Booking.id == booking_id)
+                .with_for_update()
+            )
+            if not current:
+                return
+            current.mindbody_client_id = client_id
+            current.mindbody_visit_id = visit_id
+            current.mindbody_sync_status = "synced"
+            current.mindbody_sync_error = ""
+            current.mindbody_synced_at = datetime.now(timezone.utc)
+            db.commit()
+    except Exception as exc:
+        with core.SessionLocal() as db:
+            current = db.get(core.Booking, booking_id)
+            if current and current.mindbody_sync_status != "synced":
+                current.mindbody_sync_status = "failed"
+                current.mindbody_sync_error = str(exc)[:1500]
+                db.commit()
 
 def hold_local_booking(booking_id: int) -> None:
     _sync_or_hold_local_booking(booking_id, allow_pending=True)

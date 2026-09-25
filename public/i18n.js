@@ -43,7 +43,10 @@
     'Mindbody could not authorize the reservation. No payment was taken. Please try again in a moment.':'Mindbody konnte die Reservierung nicht autorisieren. Es wurde keine Zahlung ausgeführt. Bitte versuche es gleich noch einmal.',
     'Your Classy profile is missing information required by Mindbody. Please update your mobile number and try again.':'In deinem Classy Profil fehlen Angaben, die Mindbody benötigt. Bitte ergänze deine Mobilnummer und versuche es erneut.',
     'Mindbody rejected the reservation permission. No payment was taken.':'Mindbody hat die Berechtigung für die Reservierung abgelehnt. Es wurde keine Zahlung ausgeführt.',
-    'The booking request timed out before it could be confirmed. No payment was taken. Tap continue again to safely resume.':'Die Buchungsanfrage hat zu lange gebraucht. Es wurde keine Zahlung ausgeführt. Tippe erneut auf Weiter, um die Buchung sicher fortzusetzen.',
+    'The request took too long. No payment was taken. Please try again.':'Die Anfrage hat zu lange gedauert. Es wurde keine Zahlung ausgeführt. Bitte versuche es erneut.',
+    'Sign in took too long. No payment was taken. Please try again.':'Die Anmeldung hat zu lange gedauert. Es wurde keine Zahlung ausgeführt. Bitte versuche es erneut.',
+    'The booking server was busy for too long. No payment was taken. Please tap continue again.':'Der Buchungsserver war zu lange ausgelastet. Es wurde keine Zahlung ausgeführt. Bitte tippe erneut auf Weiter.',
+    'SumUp took too long to start the secure checkout. No payment was taken. Please tap continue again.':'SumUp hat zu lange gebraucht, um den sicheren Checkout zu starten. Es wurde keine Zahlung ausgeführt. Bitte tippe erneut auf Weiter.',
     'Reserving your place…':'Dein Platz wird reserviert…',
     'Opening secure payment…':'Sichere Zahlung wird geöffnet…',
     'Mindbody is taking longer than expected to confirm the reservation. No payment was taken. Tap continue again to resume the same booking.':'Mindbody benötigt länger als erwartet, um die Reservierung zu bestätigen. Es wurde keine Zahlung ausgeführt. Tippe erneut auf Weiter, um dieselbe Buchung fortzusetzen.'

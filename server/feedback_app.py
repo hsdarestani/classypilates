@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, select
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -24,7 +24,7 @@ import main as core
 app = core.app
 BERLIN = ZoneInfo("Europe/Berlin")
 BOOKING_HOLD_EXECUTOR = ThreadPoolExecutor(
-    max_workers=max(2, int(os.getenv("MINDBODY_BOOKING_HOLD_WORKERS", "8"))),
+    max_workers=max(1, int(os.getenv("MINDBODY_BOOKING_HOLD_WORKERS", "2"))),
     thread_name_prefix="mindbody-booking-hold",
 )
 ALLOWED_PACKS = {1, 5, 10, 20, 30, 50}
@@ -159,7 +159,7 @@ def _sumup_request(path: str, *, method: str = "GET", payload: Optional[dict] = 
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
     )
     try:
-        with urlopen(request, timeout=20) as response:
+        with urlopen(request, timeout=9) as response:
             return json.loads(response.read().decode())
     except HTTPError as exc:
         try:
@@ -1015,15 +1015,18 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
             }
         raise HTTPException(409, "duplicate_booking")
 
-    # Keep the request itself local and fast. Mindbody remains authoritative, but
-    # the provider hold runs after this response and checkout cannot start until the
-    # client observes sync_status=syncing/synced through the status endpoint.
-    c = db.scalar(
-        select(core.ClassSession)
-        .where(core.ClassSession.id == c.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    # Serialize Classy booking attempts without taking a row lock that can be
+    # blocked by the Mindbody mirror while it refreshes class metadata.
+    if core.engine.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 810000000 + int(c.id)})
+        c = db.get(core.ClassSession, c.id, populate_existing=True)
+    else:
+        c = db.scalar(
+            select(core.ClassSession)
+            .where(core.ClassSession.id == c.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
     if not c or c.status != "active":
         raise HTTPException(409, "class_unavailable")
     live_reserved = db.scalar(
