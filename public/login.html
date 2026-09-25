@@ -26,7 +26,7 @@
           <p class="kicker">SECURE ACCESS</p><h2>Your login</h2><p class="muted">For customers, coaches and administrators.</p>
           <label>EMAIL<input id="loginEmail" type="email" autocomplete="username" required placeholder="name@email.de"></label>
           <label>PASSWORD<input id="loginPassword" type="password" autocomplete="current-password" required></label>
-          <label class="check"><input id="showPassword" type="checkbox"><span>Show password</span></label>
+          <label class="check"><input id="showPassword" type="checkbox" data-password-toggle data-password-targets="#loginPassword"><span>Show password</span></label>
           <p style="margin:12px 0 0;text-align:right;font-size:10px"><a href="/reset-password.html" style="color:#171713">Forgot password?</a></p>
           <button class="submit" id="loginSubmit" type="submit">Sign in</button>
           <div class="message" id="loginMessage" aria-live="polite"></div>
@@ -36,7 +36,7 @@
           <div class="form-grid"><label>FIRST NAME<input id="registerFirst" autocomplete="given-name" required></label><label>LAST NAME<input id="registerLast" autocomplete="family-name" required></label></div>
           <label>EMAIL<input id="registerEmail" type="email" autocomplete="email" required placeholder="name@email.de"></label>
           <label>PASSWORD<input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
-          <label class="check"><input id="showRegisterPassword" type="checkbox"><span>Show password</span></label>
+          <label class="check"><input id="showRegisterPassword" type="checkbox" data-password-toggle data-password-targets="#registerPassword"><span>Show password</span></label>
           <label>MOBILE NUMBER <small>OPTIONAL</small><input id="registerPhone" type="tel" autocomplete="tel"></label>
           <label class="check"><input id="registerTerms" type="checkbox" required><span>I accept the <a href="/terms-conditions">Terms &amp; Conditions</a>, <a href="/data-privacy">Privacy Policy</a> and <a href="/studio-rules">Studio Rules</a>.</span></label>
           <label class="check optional"><input id="registerMarketing" type="checkbox"><span>I would like to receive Classy news and studio updates.</span></label>
@@ -46,6 +46,7 @@
       </div>
     </section>
   </main>
-  <script src="/login.js?v=20260925-passwordtoggle1"></script>
+  <script src="/password-visibility.js?v=20260925-2"></script>
+  <script src="/login.js?v=20260925-passwordtoggle2"></script>
 </body>
 </html>
