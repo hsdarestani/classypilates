@@ -45,7 +45,13 @@ SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "false").lower() in {"1", "true", "ye
 CREDIT_VALUE_BY_PRICE = {2800: 1, 11900: 5, 21900: 10, 39900: 20}
 
 
-def send_transactional_email(to_email: str, subject: str, heading: str, paragraphs: list[str]) -> None:
+def send_transactional_email(
+    to_email: str,
+    subject: str,
+    heading: str,
+    paragraphs: list[str],
+    cta: Optional[tuple[str, str]] = None,
+) -> None:
     """Send one transactional email. Delivery failures never roll back business state."""
     if not all((SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_FROM, to_email)):
         return
@@ -57,19 +63,36 @@ def send_transactional_email(to_email: str, subject: str, heading: str, paragrap
     msg["Message-ID"] = make_msgid(domain="classypilates.de")
     if SMTP_USER:
         msg["Reply-To"] = SMTP_USER
-    text = heading + "\n\n" + "\n\n".join(paragraphs) + "\n\nClassy Pilates Frankfurt"
+    text = heading + "\n\n" + "\n\n".join(paragraphs)
+    if cta:
+        text += f"\n\n{cta[0]}: {cta[1]}"
+    text += "\n\nClassy Pilates Frankfurt"
     msg.set_content(text)
     safe_heading = html.escape(heading)
-    body = "".join(f'<p style="margin:0 0 14px;line-height:1.65">{html.escape(str(p))}</p>' for p in paragraphs)
+    body = "".join(
+        f'<p style="margin:0 0 14px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word">{html.escape(str(p))}</p>'
+        for p in paragraphs
+    )
+    cta_html = ""
+    if cta:
+        cta_label, cta_url = cta
+        cta_html = (
+            '<table role="presentation" cellspacing="0" cellpadding="0" style="margin:24px 0 28px">'
+            '<tr><td style="border-radius:999px;background:#171715">'
+            f'<a href="{html.escape(str(cta_url), quote=True)}" '
+            'style="display:inline-block;padding:14px 22px;color:#ffffff;text-decoration:none;'
+            'font-weight:700;font-size:15px;line-height:1.2">'
+            f'{html.escape(str(cta_label))}</a></td></tr></table>'
+        )
     msg.add_alternative(
         f"""<!doctype html><html><head><meta name="viewport" content="width=device-width"></head>
         <body style="margin:0;background:#eee9e1;font-family:Arial,Helvetica,sans-serif;color:#1c1b19">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eee9e1"><tr><td style="padding:28px 12px">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;margin:auto;background:#fff;border-radius:24px;overflow:hidden">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:#eee9e1;table-layout:fixed"><tr><td style="padding:28px 12px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;max-width:620px;margin:auto;background:#fff;border-radius:24px;overflow:hidden;table-layout:fixed">
         <tr><td style="background:#171715;color:#fff;padding:24px 32px;font-size:18px;letter-spacing:2px;font-weight:700">CLASSY PILATES <span style="color:#cabda9">FRANKFURT</span></td></tr>
         <tr><td style="padding:38px 32px"><div style="width:44px;height:4px;background:#b9a88f;margin-bottom:24px"></div>
-        <h1 style="font-family:Georgia,serif;font-size:30px;line-height:1.15;margin:0 0 24px;font-weight:500">{safe_heading}</h1>{body}
-        <div style="margin-top:28px;padding-top:22px;border-top:1px solid #e8e2d9;font-size:13px;color:#706b64;line-height:1.6">Classy Pilates Frankfurt<br><a href="https://classypilates.de" style="color:#706b64">classypilates.de</a></div>
+        <h1 style="font-family:Georgia,serif;font-size:30px;line-height:1.15;margin:0 0 24px;font-weight:500;overflow-wrap:anywhere">{safe_heading}</h1>{body}{cta_html}
+        <div style="margin-top:28px;padding-top:22px;border-top:1px solid #e8e2d9;font-size:13px;color:#706b64;line-height:1.6;overflow-wrap:anywhere">Classy Pilates Frankfurt<br><a href="https://classypilates.de" style="color:#706b64">classypilates.de</a></div>
         </td></tr></table><div style="max-width:620px;margin:14px auto 0;text-align:center;color:#89837a;font-size:11px">This is an automatic service email.</div>
         </td></tr></table></body></html>""",
         subtype="html",
