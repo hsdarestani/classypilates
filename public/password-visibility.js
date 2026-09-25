@@ -10,17 +10,33 @@
     return [...scope.querySelectorAll('input[type="password"],input[data-password-visibility]')].filter(input=>input!==toggle);
   }
 
+  function setFieldVisibility(input,visible){
+    if(!(input instanceof HTMLInputElement)) return;
+    input.dataset.passwordVisibility='1';
+    const start=input.selectionStart,end=input.selectionEnd;
+    const type=visible?'text':'password';
+    try{input.type=type}catch(_){}
+    input.setAttribute('type',type);
+    input.classList.toggle('password-visible',visible);
+    input.classList.toggle('password-hidden',!visible);
+    try{input.style.webkitTextSecurity=visible?'none':''}catch(_){}
+    // Safari/iOS can keep the previous secure rendering for one frame after
+    // changing input.type. Reapply on the next paint without replacing the
+    // element, so autofill, listeners and the current value stay intact.
+    requestAnimationFrame(()=>{
+      try{
+        input.type=type;
+        input.setAttribute('type',type);
+        input.style.webkitTextSecurity=visible?'none':'';
+        void input.offsetWidth;
+        if(document.activeElement===input&&start!==null&&end!==null)input.setSelectionRange(start,end);
+      }catch(_){}
+    });
+  }
+
   function apply(toggle){
     const visible=Boolean(toggle.checked);
-    for(const input of targetsFor(toggle)){
-      if(!(input instanceof HTMLInputElement)) continue;
-      input.dataset.passwordVisibility='1';
-      const start=input.selectionStart,end=input.selectionEnd;
-      try{input.type=visible?'text':'password'}catch(_){input.setAttribute('type',visible?'text':'password')}
-      input.setAttribute('type',visible?'text':'password');
-      if(input.style && 'webkitTextSecurity' in input.style) input.style.webkitTextSecurity=visible?'none':'';
-      try{if(document.activeElement===input&&start!==null&&end!==null)input.setSelectionRange(start,end)}catch(_){}
-    }
+    for(const input of targetsFor(toggle)) setFieldVisibility(input,visible);
   }
 
   function handleToggleEvent(event){
@@ -45,8 +61,14 @@
   }
 
   function boot(){
+    if(!document.getElementById('classy-password-visibility-style')){
+      const style=document.createElement('style');
+      style.id='classy-password-visibility-style';
+      style.textContent='input.password-visible{-webkit-text-security:none!important}';
+      document.head.appendChild(style);
+    }
     upgradeLegacy();
-    document.querySelectorAll('[data-password-toggle]').forEach(toggle=>{if(toggle.checked)apply(toggle)});
+    document.querySelectorAll('[data-password-toggle]').forEach(toggle=>apply(toggle));
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);
   else boot();
