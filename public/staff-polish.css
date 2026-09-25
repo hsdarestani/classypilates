@@ -359,3 +359,51 @@ body.staff-menu-open .staff-nav-scrim{opacity:1;pointer-events:auto}
     gap:18px;
   }
 }
+
+
+/* Weekly schedule controls for Mindbody backed class management. */
+.schedule-week-toolbar{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:4px 0 16px;
+  padding:12px;
+  border:1px solid #e3ddd4;
+  border-radius:12px;
+  background:#faf8f4;
+}
+.schedule-week-nav{display:flex;gap:7px;flex-wrap:wrap}
+.schedule-week-toolbar .secondary{margin:0;min-height:38px}
+.schedule-week-toolbar strong{
+  min-width:150px;
+  font:600 11px var(--sans);
+  letter-spacing:.01em;
+}
+.schedule-week-toolbar select{
+  min-width:150px;
+  height:38px;
+  padding:0 32px 0 11px;
+  border:1px solid #ded8cf;
+  border-radius:9px;
+  background:#fff;
+  color:var(--ink);
+  font:600 10px var(--sans);
+}
+#classWeekCount{
+  margin-left:auto;
+  color:var(--muted);
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+#classScheduleTable [data-class-row][hidden]{display:none!important}
+@media(max-width:760px){
+  .schedule-week-toolbar{align-items:stretch}
+  .schedule-week-nav{width:100%}
+  .schedule-week-nav .secondary{flex:1 1 0}
+  .schedule-week-toolbar strong{width:100%}
+  .schedule-week-toolbar select{width:100%}
+  #classWeekCount{margin-left:0}
+}
