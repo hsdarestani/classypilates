@@ -1,0 +1,90 @@
+name: Activate Local Media
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/activate-local-media.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH helper
+        run: sudo apt-get update && sudo apt-get install -y sshpass curl
+
+      - name: Switch live Nginx from legacy proxy to local files
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          FILE=/etc/nginx/snippets/classy-routes.conf
+          test -f "$FILE"
+          test -f /opt/classypilates/public/wp-content/uploads/2026/05/Ladies_02-scaled.jpg
+          test -f /opt/classypilates/public/wp-content/uploads/2026/05/Oval_01-scaled.jpg
+          test -f /opt/classypilates/public/wp-content/uploads/2026/06/IMG_2751-scaled.jpeg
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/etc/nginx/snippets/classy-routes.conf')
+          s=p.read_text()
+          start=s.find('              # Temporary compatibility bridge for media that still lives on the')
+          if start != -1:
+              end=s.find('              location = /admin', start)
+              if end == -1:
+                  raise SystemExit('Could not find end of legacy media proxy block')
+              block='''              # WordPress-era media is stored locally on the new production server.
+              location ^~ /wp-content/ {
+                  try_files $uri =404;
+                  expires 30d;
+                  add_header Cache-Control "public, max-age=2592000, immutable";
+              }
+
+'''
+              s=s[:start]+block+s[end:]
+          elif 'location ^~ /wp-content/' not in s:
+              marker='              location = /admin'
+              pos=s.find(marker)
+              if pos == -1:
+                  raise SystemExit('Could not find insertion point')
+              block='''              # WordPress-era media is stored locally on the new production server.
+              location ^~ /wp-content/ {
+                  try_files $uri =404;
+                  expires 30d;
+                  add_header Cache-Control "public, max-age=2592000, immutable";
+              }
+
+'''
+              s=s[:pos]+block+s[pos:]
+          else:
+              # Replace any remaining proxy-style wp-content block conservatively.
+              import re
+              s=re.sub(
+                  r'\s*# Temporary compatibility bridge[^\n]*\n\s*# legacy WordPress host[^\n]*\n\s*location \^~ /wp-content/ \{.*?\n\s*\}\n',
+                  '\n              # WordPress-era media is stored locally on the new production server.\n              location ^~ /wp-content/ {\n                  try_files $uri =404;\n                  expires 30d;\n                  add_header Cache-Control "public, max-age=2592000, immutable";\n              }\n',
+                  s, flags=re.S
+              )
+          p.write_text(s)
+          PY
+
+          nginx -t
+          systemctl reload nginx
+
+          curl -kfsS --resolve classypilates.de:443:127.0.0.1             -o /tmp/local-media-test.jpg             https://classypilates.de/wp-content/uploads/2026/05/Ladies_02-scaled.jpg
+          test "$(stat -c%s /tmp/local-media-test.jpg)" -gt 10000
+
+          if grep -A12 'location \^~ /wp-content/' "$FILE" | grep -q '81.88.34.82'; then
+            echo "Legacy host dependency still present in live Nginx." >&2
+            exit 1
+          fi
+          echo "Local media is active and legacy host dependency is removed."
+          REMOTE
