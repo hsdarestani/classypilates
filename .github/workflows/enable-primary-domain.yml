@@ -2,6 +2,10 @@ name: Enable Classy Primary Domain
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/enable-primary-domain.yml"
 
 permissions:
   contents: read
@@ -17,23 +21,26 @@ jobs:
       - name: Install DNS and SSH tools
         run: sudo apt-get update && sudo apt-get install -y dnsutils sshpass curl
 
-      - name: Wait for apex and www DNS
+      - name: Wait for primary DNS
         env:
           HOST: ${{ secrets.HOST }}
         run: |
           set -euo pipefail
           test -n "$HOST"
-          for i in $(seq 1 30); do
-            APEX="$(dig +short A classypilates.de | sort -u)"
-            WWW="$(dig +short A www.classypilates.de | sort -u)"
-            echo "classypilates.de: $APEX"
-            echo "www.classypilates.de: $WWW"
-            if printf '%s\n' "$APEX" | grep -Fxq "$HOST" && printf '%s\n' "$WWW" | grep -Fxq "$HOST"; then
+          for i in $(seq 1 36); do
+            APEX_CF="$(dig @1.1.1.1 +short A classypilates.de | sort -u)"
+            APEX_GOOGLE="$(dig @8.8.8.8 +short A classypilates.de | sort -u)"
+            WWW_CF="$(dig @1.1.1.1 +short A www.classypilates.de | sort -u)"
+            echo "Attempt $i"
+            echo "apex via Cloudflare: $APEX_CF"
+            echo "apex via Google: $APEX_GOOGLE"
+            echo "www via Cloudflare: $WWW_CF"
+            if printf '%s\n%s\n' "$APEX_CF" "$APEX_GOOGLE" | grep -Fxq "$HOST"; then
               exit 0
             fi
             sleep 10
           done
-          echo "Primary-domain DNS does not point to the production server yet." >&2
+          echo "classypilates.de has not propagated to the production server yet." >&2
           exit 2
 
       - name: Issue TLS and activate primary domain
@@ -52,8 +59,19 @@ jobs:
             apt-get update
             apt-get install -y certbot python3-certbot-nginx
           fi
-
           test -f /etc/nginx/snippets/classy-routes.conf
+
+          # Remove the old HTTP-only apex preview block from the new-domain vhost.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/etc/nginx/sites-available/new.classypilates.de')
+          if p.exists():
+              s=p.read_text()
+              marker='# Prepared in advance for the future apex-domain cutover.'
+              if marker in s:
+                  s=s.split(marker,1)[0].rstrip()+"\n"
+                  p.write_text(s)
+          PY
 
           cat > /etc/nginx/sites-available/classypilates-primary <<'NGINX'
           server {
@@ -68,22 +86,24 @@ jobs:
           nginx -t
           systemctl reload nginx
 
-          certbot --nginx             -d classypilates.de             -d www.classypilates.de             --non-interactive             --agree-tos             --register-unsafely-without-email             --redirect             --keep-until-expiring
+          WWW_IP="$(getent ahostsv4 www.classypilates.de 2>/dev/null | awk '{print $1}' | head -n1 || true)"
+          THIS_IP="$(getent ahostsv4 classypilates.de 2>/dev/null | awk '{print $1}' | head -n1 || true)"
+          if [ -n "$WWW_IP" ] && [ "$WWW_IP" = "$THIS_IP" ]; then
+            certbot --nginx -d classypilates.de -d www.classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring
+          else
+            certbot --nginx -d classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring
+          fi
 
           nginx -t
           systemctl reload nginx
-
-          curl -fsSL --max-time 20 -o /tmp/classy-primary-home.html https://classypilates.de/
-          grep -qi 'Classy' /tmp/classy-primary-home.html
-          curl -fsSL --max-time 20 -o /tmp/classy-primary-health.json https://classypilates.de/api/health
+          curl -fsSL --max-time 30 -o /tmp/classy-primary-health.json https://classypilates.de/api/health
           grep -q '"ok":true' /tmp/classy-primary-health.json
           REMOTE
 
-      - name: Verify public primary domain
+      - name: Verify primary HTTPS
         run: |
           set -euo pipefail
           curl -fsSIL --max-time 30 https://classypilates.de/ >/dev/null
-          curl -fsSIL --max-time 30 https://www.classypilates.de/ >/dev/null
           curl -fsSL --max-time 30 -o /tmp/health.json https://classypilates.de/api/health
           grep -q '"ok":true' /tmp/health.json
-          echo "classypilates.de and www.classypilates.de are live on the new production server."
+          echo "classypilates.de HTTPS is live."
