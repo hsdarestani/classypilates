@@ -654,23 +654,10 @@ def sync_client_directory(*, max_clients: int = 5000) -> dict[str, int]:
             )
         ).all())
         if mirrored:
-            ids = sorted({
-                str(row.mindbody_client_id or "").strip()
-                for row in mirrored
-                if str(row.mindbody_client_id or "").strip()
-            })
-            provider_rows = db.execute(
-                text("""
-                    SELECT remote_id, first_name, last_name, email, phone
-                    FROM mindbody_customers
-                    WHERE remote_id = ANY(:ids)
-                """) if core.engine.dialect.name == "postgresql" else
-                text("""
-                    SELECT remote_id, first_name, last_name, email, phone
-                    FROM mindbody_customers
-                """),
-                {"ids": ids} if core.engine.dialect.name == "postgresql" else {},
-            ).mappings().all()
+            provider_rows = db.execute(text("""
+                SELECT remote_id, first_name, last_name, email, phone
+                FROM mindbody_customers
+            """)).mappings().all()
             provider_by_id = {str(row["remote_id"]): row for row in provider_rows}
             for booking in mirrored:
                 provider = provider_by_id.get(str(booking.mindbody_client_id or ""))
