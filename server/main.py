@@ -1812,10 +1812,40 @@ def delete_coach_photo(coach_id: int, user: User = Depends(require("coaches.mana
 
 @app.get("/api/staff/classes")
 def staff_classes(user: User = Depends(require("classes.view")), db: Session = Depends(db_session)):
-    q = select(ClassSession).order_by(ClassSession.starts_at.desc()).limit(300)
+    # Admin schedule navigation is week-based, so returning the newest rows first can
+    # hide the current/next weeks whenever Mindbody has many future recurring sessions.
+    # Keep a practical rolling window around "now" and sort chronologically.
+    now_berlin = datetime.now(ZoneInfo("Europe/Berlin"))
+    week_start = (now_berlin - timedelta(days=now_berlin.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    window_start = week_start - timedelta(days=7)
+    window_end = week_start + timedelta(days=120)
+    q = (
+        select(ClassSession)
+        .where(
+            ClassSession.starts_at >= window_start.astimezone(timezone.utc),
+            ClassSession.starts_at < window_end.astimezone(timezone.utc),
+        )
+        .order_by(ClassSession.starts_at.asc())
+        .limit(2500)
+    )
     rows = db.scalars(q).all()
     if user.coach and not can(user, "classes.edit"):
         rows = [r for r in rows if r.coach_id == user.coach.id]
+
+    # Avoid one COUNT query per class when loading a larger date window.
+    row_ids = [r.id for r in rows]
+    live_counts = {}
+    if row_ids:
+        live_counts = dict(db.execute(
+            select(Booking.class_id, func.count(Booking.id))
+            .where(Booking.class_id.in_(row_ids), Booking.status == "reserved")
+            .group_by(Booking.class_id)
+        ).all())
+    for row in rows:
+        row._live_reserved = int(live_counts.get(row.id, 0))
+
     return {"classes": [class_dict(c, db) for c in rows]}
 
 # Legacy implementation intentionally not registered; canonical route lives in feedback_app.py.
