@@ -11,7 +11,7 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import jwt
