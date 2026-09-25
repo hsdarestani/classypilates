@@ -1270,131 +1270,327 @@ def list_users(user: User = Depends(require("users.manage")), db: Session = Depe
     users = db.scalars(select(User).order_by(User.created_at.desc())).all()
     return {"users": [user_dict(u) for u in users if not any(role.name == "Customer" for role in u.roles)]}
 
+
+_CUSTOMER_DIRECTORY_CTE = """
+WITH customer_role_users AS (
+    SELECT
+        u.id AS local_id,
+        u.email,
+        u.first_name,
+        u.last_name,
+        u.is_active,
+        CAST(u.created_at AS TEXT) AS created_at,
+        COALESCE(cp.phone, '') AS local_phone,
+        COALESCE(cp.birth_date, '') AS local_birth_date,
+        COALESCE(cp.credits, 0) AS credits
+    FROM users u
+    JOIN user_roles ur ON ur.user_id = u.id
+    JOIN roles ro ON ro.id = ur.role_id AND ro.name = 'Customer'
+    LEFT JOIN customer_profiles cp ON cp.user_id = u.id
+),
+remote_email_choice AS (
+    SELECT lower(email) AS email_key, MIN(remote_id) AS remote_id
+    FROM mindbody_customers
+    WHERE COALESCE(email, '') <> ''
+    GROUP BY lower(email)
+),
+local_unified AS (
+    SELECT
+        lc.local_id,
+        COALESCE(mb.remote_id, '') AS remote_id,
+        CASE WHEN COALESCE(lc.first_name, '') <> '' THEN lc.first_name ELSE COALESCE(mb.first_name, '') END AS first_name,
+        CASE WHEN COALESCE(lc.last_name, '') <> '' THEN lc.last_name ELSE COALESCE(mb.last_name, '') END AS last_name,
+        lc.email,
+        CASE WHEN COALESCE(lc.local_phone, '') <> '' THEN lc.local_phone ELSE COALESCE(mb.phone, '') END AS phone,
+        CASE WHEN COALESCE(lc.local_birth_date, '') <> '' THEN lc.local_birth_date ELSE COALESCE(mb.birth_date, '') END AS birth_date,
+        COALESCE(mb.gender, '') AS gender,
+        COALESCE(mb.client_type, '') AS client_type,
+        COALESCE(mb.home_location, '') AS home_location,
+        COALESCE(mb.account_balance, '') AS account_balance,
+        COALESCE(mb.photo_url, '') AS photo_url,
+        lc.credits AS credits,
+        lc.is_active AS is_active,
+        COALESCE(mb.active, lc.is_active) AS provider_active,
+        COALESCE(mb.status, '') AS provider_status,
+        CASE WHEN mb.remote_id IS NULL THEN 'Classy' ELSE 'Classy + Mindbody' END AS source,
+        lc.created_at AS created_at,
+        COALESCE(mb.synced_at, '') AS synced_at,
+        1 AS has_login
+    FROM customer_role_users lc
+    LEFT JOIN remote_email_choice rec ON rec.email_key = lower(lc.email)
+    LEFT JOIN mindbody_customers mb ON mb.remote_id = rec.remote_id
+),
+remote_unified AS (
+    SELECT
+        NULL AS local_id,
+        mb.remote_id AS remote_id,
+        COALESCE(mb.first_name, '') AS first_name,
+        COALESCE(mb.last_name, '') AS last_name,
+        COALESCE(mb.email, '') AS email,
+        COALESCE(mb.phone, '') AS phone,
+        COALESCE(mb.birth_date, '') AS birth_date,
+        COALESCE(mb.gender, '') AS gender,
+        COALESCE(mb.client_type, '') AS client_type,
+        COALESCE(mb.home_location, '') AS home_location,
+        COALESCE(mb.account_balance, '') AS account_balance,
+        COALESCE(mb.photo_url, '') AS photo_url,
+        0 AS credits,
+        mb.active AS is_active,
+        mb.active AS provider_active,
+        COALESCE(mb.status, '') AS provider_status,
+        'Mindbody' AS source,
+        COALESCE(mb.synced_at, '') AS created_at,
+        COALESCE(mb.synced_at, '') AS synced_at,
+        0 AS has_login
+    FROM mindbody_customers mb
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM customer_role_users lc
+        WHERE COALESCE(mb.email, '') <> ''
+          AND lower(lc.email) = lower(mb.email)
+    )
+),
+unified AS (
+    SELECT * FROM local_unified
+    UNION ALL
+    SELECT * FROM remote_unified
+),
+booking_by_email AS (
+    SELECT
+        lower(COALESCE(email, '')) AS email_key,
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS active
+    FROM bookings
+    WHERE COALESCE(email, '') <> ''
+    GROUP BY lower(COALESCE(email, ''))
+),
+booking_by_remote AS (
+    SELECT
+        mindbody_client_id AS remote_id,
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS active
+    FROM bookings
+    WHERE mindbody_client_id IS NOT NULL AND mindbody_client_id <> ''
+    GROUP BY mindbody_client_id
+)
+"""
+
+
+def _directory_row(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    local_id = data.get("local_id")
+    remote_id = str(data.get("remote_id") or "")
+    data["id"] = int(local_id) if local_id is not None else f"mb:{remote_id}"
+    data["local_id"] = int(local_id) if local_id is not None else None
+    data["mindbody_client_id"] = remote_id
+    data.pop("remote_id", None)
+    data["credits"] = int(data.get("credits") or 0)
+    data["booking_count"] = int(data.get("booking_count") or 0)
+    data["active_bookings"] = int(data.get("active_bookings") or 0)
+    data["is_active"] = bool(data.get("is_active"))
+    data["provider_active"] = bool(data.get("provider_active"))
+    data["has_login"] = bool(data.get("has_login"))
+    return data
+
+
 @app.get("/api/staff/customers")
-def list_customers(user: User = Depends(require("customers.view")), db: Session = Depends(db_session)):
-    """Return one unified directory while preserving each profile's source."""
-    from mindbody_sync import cached_mindbody_customers
+def list_customers(
+    q: str = Query("", max_length=160),
+    source: str = Query("", max_length=40),
+    status: str = Query("", max_length=20),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    include_accounts: bool = Query(False),
+    user: User = Depends(require("customers.view")),
+    db: Session = Depends(db_session),
+):
+    """Fast server-side unified customer directory with search, filters and pagination."""
+    from mindbody_sync import _ensure_client_store
+    _ensure_client_store()
 
-    local_customers = [
-        u for u in db.scalars(select(User).order_by(User.created_at.desc())).all()
-        if any(role.name == "Customer" for role in u.roles)
-    ]
-    remote_customers = cached_mindbody_customers()
-
-    booking_rows = db.execute(
-        select(
-            Booking.email,
-            Booking.mindbody_client_id,
-            Booking.status,
-        )
-    ).all()
-    by_email: dict[str, dict[str, int]] = {}
-    by_remote: dict[str, dict[str, int]] = {}
-    for email, remote_id, status in booking_rows:
-        email_key = str(email or "").strip().casefold()
-        if email_key:
-            counter = by_email.setdefault(email_key, {"total": 0, "active": 0})
-            counter["total"] += 1
-            counter["active"] += int(status == "reserved")
-        remote_key = str(remote_id or "").strip()
-        if remote_key:
-            counter = by_remote.setdefault(remote_key, {"total": 0, "active": 0})
-            counter["total"] += 1
-            counter["active"] += int(status == "reserved")
-
-    remote_by_email = {
-        str(row.get("email") or "").strip().casefold(): row
-        for row in remote_customers
-        if str(row.get("email") or "").strip()
+    source = source if source in {"", "Classy", "Mindbody", "Classy + Mindbody"} else ""
+    status = status if status in {"", "active", "inactive"} else ""
+    q = " ".join((q or "").strip().split()).casefold()
+    pattern = f"%{q}%"
+    params = {
+        "q": q,
+        "pattern": pattern,
+        "source": source,
+        "status": status,
+        "limit": limit,
+        "offset": offset,
     }
-    used_remote_ids: set[str] = set()
-    rows: list[dict[str, Any]] = []
 
-    for customer in local_customers:
-        profile = get_customer_profile(customer, db)
-        email_key = customer.email.strip().casefold()
-        remote = remote_by_email.get(email_key)
-        remote_id = str((remote or {}).get("remote_id") or "")
-        if remote_id:
-            used_remote_ids.add(remote_id)
-        counts = by_email.get(email_key, {"total": 0, "active": 0})
-        rows.append({
-            "id": customer.id,
-            "local_id": customer.id,
-            "mindbody_client_id": remote_id,
-            "first_name": customer.first_name or str((remote or {}).get("first_name") or ""),
-            "last_name": customer.last_name or str((remote or {}).get("last_name") or ""),
-            "email": customer.email,
-            "phone": profile.phone or str((remote or {}).get("phone") or ""),
-            "birth_date": profile.birth_date or str((remote or {}).get("birth_date") or ""),
-            "gender": str((remote or {}).get("gender") or ""),
-            "client_type": str((remote or {}).get("client_type") or ""),
-            "home_location": str((remote or {}).get("home_location") or ""),
-            "account_balance": str((remote or {}).get("account_balance") or ""),
-            "photo_url": str((remote or {}).get("photo_url") or ""),
-            "credits": int(profile.credits or 0),
-            "booking_count": int(counts["total"]),
-            "active_bookings": int(counts["active"]),
-            "is_active": bool(customer.is_active),
-            "provider_active": bool((remote or {}).get("active", True)),
-            "provider_status": str((remote or {}).get("status") or ""),
-            "source": "Classy + Mindbody" if remote else "Classy",
-            "created_at": customer.created_at.isoformat(),
-            "synced_at": str((remote or {}).get("synced_at") or ""),
-            "has_login": True,
-        })
+    filter_sql = """
+      (:source = '' OR u.source = :source)
+      AND (
+        :status = ''
+        OR (:status = 'active' AND CASE WHEN u.source = 'Mindbody' THEN u.provider_active ELSE u.is_active END = TRUE)
+        OR (:status = 'inactive' AND CASE WHEN u.source = 'Mindbody' THEN u.provider_active ELSE u.is_active END = FALSE)
+      )
+      AND (
+        :q = ''
+        OR lower(
+            COALESCE(u.first_name, '') || ' ' ||
+            COALESCE(u.last_name, '') || ' ' ||
+            COALESCE(u.email, '') || ' ' ||
+            COALESCE(u.phone, '') || ' ' ||
+            COALESCE(u.remote_id, '') || ' ' ||
+            COALESCE(u.client_type, '') || ' ' ||
+            COALESCE(u.home_location, '')
+        ) LIKE :pattern
+      )
+    """
 
-    for remote in remote_customers:
-        remote_id = str(remote.get("remote_id") or "")
-        if not remote_id or remote_id in used_remote_ids:
-            continue
-        email = str(remote.get("email") or "").strip().lower()
-        email_key = email.casefold()
-        # A duplicated Mindbody row with the same email should not create a second
-        # visible customer when that email already belongs to a Classy login.
-        if email_key and any(row["email"].casefold() == email_key for row in rows):
-            continue
-        counts = by_remote.get(remote_id) or by_email.get(email_key) or {"total": 0, "active": 0}
-        rows.append({
-            "id": f"mb:{remote_id}",
-            "local_id": None,
-            "mindbody_client_id": remote_id,
-            "first_name": str(remote.get("first_name") or ""),
-            "last_name": str(remote.get("last_name") or ""),
-            "email": email,
-            "phone": str(remote.get("phone") or ""),
-            "birth_date": str(remote.get("birth_date") or ""),
-            "gender": str(remote.get("gender") or ""),
-            "client_type": str(remote.get("client_type") or ""),
-            "home_location": str(remote.get("home_location") or ""),
-            "account_balance": str(remote.get("account_balance") or ""),
-            "photo_url": str(remote.get("photo_url") or ""),
-            "credits": 0,
-            "booking_count": int(counts["total"]),
-            "active_bookings": int(counts["active"]),
-            "is_active": bool(remote.get("active", True)),
-            "provider_active": bool(remote.get("active", True)),
-            "provider_status": str(remote.get("status") or ""),
-            "source": "Mindbody",
-            "created_at": str(remote.get("synced_at") or ""),
-            "synced_at": str(remote.get("synced_at") or ""),
-            "has_login": False,
-        })
+    page_sql = _CUSTOMER_DIRECTORY_CTE + f"""
+    SELECT
+        u.*,
+        COALESCE(
+            CASE
+                WHEN u.local_id IS NULL AND br.total IS NOT NULL THEN br.total
+                ELSE be.total
+            END,
+            0
+        ) AS booking_count,
+        COALESCE(
+            CASE
+                WHEN u.local_id IS NULL AND br.active IS NOT NULL THEN br.active
+                ELSE be.active
+            END,
+            0
+        ) AS active_bookings,
+        COUNT(*) OVER() AS filtered_total
+    FROM unified u
+    LEFT JOIN booking_by_email be ON be.email_key = lower(COALESCE(u.email, ''))
+    LEFT JOIN booking_by_remote br ON br.remote_id = u.remote_id
+    WHERE {filter_sql}
+    ORDER BY lower(COALESCE(u.last_name, '')), lower(COALESCE(u.first_name, '')), lower(COALESCE(u.email, '')), u.remote_id
+    LIMIT :limit OFFSET :offset
+    """
+    raw_rows = db.execute(text(page_sql), params).mappings().all()
+    rows = [_directory_row(row) for row in raw_rows]
+    filtered_total = int(raw_rows[0].get("filtered_total") or 0) if raw_rows else 0
+    for row in rows:
+        row.pop("filtered_total", None)
 
-    rows.sort(key=lambda row: (
-        str(row.get("last_name") or "").casefold(),
-        str(row.get("first_name") or "").casefold(),
-        str(row.get("email") or "").casefold(),
-    ))
+    counts_sql = _CUSTOMER_DIRECTORY_CTE + """
+    SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN source = 'Classy' THEN 1 ELSE 0 END) AS classy,
+        SUM(CASE WHEN source = 'Mindbody' THEN 1 ELSE 0 END) AS mindbody,
+        SUM(CASE WHEN source = 'Classy + Mindbody' THEN 1 ELSE 0 END) AS both,
+        SUM(CASE WHEN has_login = 1 THEN 1 ELSE 0 END) AS classy_logins,
+        (SELECT COUNT(*) FROM bookings) AS bookings
+    FROM unified
+    """
+    counts_row = db.execute(text(counts_sql)).mappings().one()
+    counts = {key: int(counts_row.get(key) or 0) for key in ("total", "classy", "mindbody", "both", "classy_logins", "bookings")}
+
+    local_accounts: list[dict[str, Any]] = []
+    if include_accounts:
+        account_rows = db.execute(text("""
+            SELECT u.id, u.first_name, u.last_name, u.email
+            FROM users u
+            WHERE EXISTS (
+                SELECT 1
+                FROM user_roles ur
+                JOIN roles ro ON ro.id = ur.role_id
+                WHERE ur.user_id = u.id AND ro.name = 'Customer'
+            )
+            ORDER BY lower(COALESCE(u.last_name, '')), lower(COALESCE(u.first_name, '')), lower(u.email)
+        """)).mappings().all()
+        local_accounts = [dict(row) for row in account_rows]
+
     return {
         "customers": rows,
-        "counts": {
-            "total": len(rows),
-            "classy": sum(1 for row in rows if row["source"] == "Classy"),
-            "mindbody": sum(1 for row in rows if row["source"] == "Mindbody"),
-            "both": sum(1 for row in rows if row["source"] == "Classy + Mindbody"),
-        },
+        "counts": counts,
+        "filtered_total": filtered_total,
+        "limit": limit,
+        "offset": offset,
+        "local_accounts": local_accounts,
     }
+
+
+@app.get("/api/staff/customer-profile")
+def staff_customer_profile(
+    email: str = Query("", max_length=255),
+    mindbody_client_id: str = Query("", max_length=120),
+    local_id: Optional[int] = Query(None, ge=1),
+    user: User = Depends(require("customers.view")),
+    db: Session = Depends(db_session),
+):
+    """Return one unified cached profile plus recent booking history."""
+    from mindbody_sync import _ensure_client_store
+    _ensure_client_store()
+
+    email = (email or "").strip().lower()
+    mindbody_client_id = (mindbody_client_id or "").strip()
+    if not email and not mindbody_client_id and local_id is None:
+        raise HTTPException(400, "customer_identifier_required")
+
+    profile_sql = _CUSTOMER_DIRECTORY_CTE + """
+    SELECT
+        u.*,
+        COALESCE(
+            CASE
+                WHEN u.local_id IS NULL AND br.total IS NOT NULL THEN br.total
+                ELSE be.total
+            END,
+            0
+        ) AS booking_count,
+        COALESCE(
+            CASE
+                WHEN u.local_id IS NULL AND br.active IS NOT NULL THEN br.active
+                ELSE be.active
+            END,
+            0
+        ) AS active_bookings
+    FROM unified u
+    LEFT JOIN booking_by_email be ON be.email_key = lower(COALESCE(u.email, ''))
+    LEFT JOIN booking_by_remote br ON br.remote_id = u.remote_id
+    WHERE
+        (:local_id IS NOT NULL AND u.local_id = :local_id)
+        OR (:remote_id <> '' AND u.remote_id = :remote_id)
+        OR (:email <> '' AND lower(COALESCE(u.email, '')) = :email)
+    ORDER BY CASE WHEN u.local_id IS NOT NULL THEN 0 ELSE 1 END
+    LIMIT 1
+    """
+    profile_row = db.execute(text(profile_sql), {
+        "local_id": local_id,
+        "remote_id": mindbody_client_id,
+        "email": email,
+    }).mappings().first()
+    if not profile_row:
+        raise HTTPException(404, "customer_not_found")
+    customer = _directory_row(profile_row)
+
+    booking_query = select(Booking).order_by(Booking.created_at.desc()).limit(50)
+    remote_id = customer.get("mindbody_client_id") or ""
+    customer_email = str(customer.get("email") or "").strip().lower()
+    if remote_id and customer_email:
+        booking_query = booking_query.where(
+            (Booking.mindbody_client_id == remote_id) | (func.lower(Booking.email) == customer_email)
+        )
+    elif remote_id:
+        booking_query = booking_query.where(Booking.mindbody_client_id == remote_id)
+    else:
+        booking_query = booking_query.where(func.lower(Booking.email) == customer_email)
+
+    bookings = db.scalars(booking_query).all()
+    history = [{
+        "id": b.id,
+        "reference": b.reference,
+        "class_name": b.klass.title,
+        "starts_at": b.klass.starts_at.isoformat(),
+        "studio": b.klass.studio.name,
+        "status": b.status,
+        "payment_status": b.payment_status,
+        "payment_method": b.payment_method,
+        "amount_cents": b.amount_cents,
+        "source": b.source,
+    } for b in bookings]
+
+    return {"customer": customer, "bookings": history}
 
 
 @app.patch("/api/staff/customers/{customer_id}")
@@ -1699,7 +1895,7 @@ def staff_bookings(user: User = Depends(require("bookings.view")), db: Session =
         rows = [b for b in rows if b.klass.coach_id == user.coach.id]
     imported_total = db.scalar(select(func.coalesce(func.sum(ClassSession.source_bookings_total), 0))) or 0
     return {
-        "bookings": [{"id":b.id,"reference":b.reference,"class_id":b.class_id,"class_name":b.klass.title,"starts_at":b.klass.starts_at.isoformat(),"studio":b.klass.studio.name,"customer_name":b.customer_name,"email":b.email,"phone":b.phone,"spot_number":b.spot_number,"status":b.status,"payment_status":b.payment_status,"payment_method":b.payment_method,"amount_cents":b.amount_cents,"source":b.source,"mindbody_sync_status":b.mindbody_sync_status,"mindbody_sync_error":b.mindbody_sync_error,"mindbody_visit_id":b.mindbody_visit_id} for b in rows],
+        "bookings": [{"id":b.id,"reference":b.reference,"class_id":b.class_id,"class_name":b.klass.title,"starts_at":b.klass.starts_at.isoformat(),"studio":b.klass.studio.name,"customer_name":b.customer_name,"email":b.email,"phone":b.phone,"spot_number":b.spot_number,"status":b.status,"payment_status":b.payment_status,"payment_method":b.payment_method,"amount_cents":b.amount_cents,"source":b.source,"mindbody_client_id":b.mindbody_client_id,"mindbody_sync_status":b.mindbody_sync_status,"mindbody_sync_error":b.mindbody_sync_error,"mindbody_visit_id":b.mindbody_visit_id} for b in rows],
         "imported_booking_count": int(imported_total),
         "imported_booking_mode": "live_mirror_with_customer_data" if any(b.source == "mindbody" for b in rows) else "aggregated_without_personal_data",
     }
