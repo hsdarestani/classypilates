@@ -23,10 +23,12 @@
     }
   }
 
-  document.addEventListener('change',event=>{
+  function handleToggleEvent(event){
     const toggle=event.target.closest?.('[data-password-toggle]');
     if(toggle) apply(toggle);
-  });
+  }
+  document.addEventListener('change',handleToggleEvent);
+  document.addEventListener('input',handleToggleEvent);
 
   function upgradeLegacy(){
     const mappings=[
@@ -42,6 +44,10 @@
     }
   }
 
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',upgradeLegacy);
-  else upgradeLegacy();
+  function boot(){
+    upgradeLegacy();
+    document.querySelectorAll('[data-password-toggle]').forEach(toggle=>{if(toggle.checked)apply(toggle)});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);
+  else boot();
 })();
