@@ -152,6 +152,10 @@ def mark_local_change(entity_type: str, entity_id: int | str) -> None:
 
 
 class WriteClient(MindbodyClient):
+    _token_cache = ""
+    _token_expires_at = 0.0
+    _token_guard = threading.Lock()
+
     def __init__(self, config: MindbodyConfig, timeout: float = 25.0):
         super().__init__(config, timeout)
         self.access_token = ""
@@ -186,15 +190,23 @@ class WriteClient(MindbodyClient):
             raise MindbodyError(str(detail)[:1000], status=exc.code) from exc
 
     def issue_token(self) -> str:
-        username = os.getenv("MINDBODY_STAFF_USERNAME", "").strip()
-        password = os.getenv("MINDBODY_STAFF_PASSWORD", "")
-        if not username or not password:
-            raise MindbodyError("Mindbody staff credentials are not configured", code="not_configured")
-        result = self._write("usertoken/issue", {"Username": username, "Password": password}, authenticated=False)
-        self.access_token = str(result.get("AccessToken") or result.get("Token") or "")
-        if not self.access_token:
-            raise MindbodyError("Mindbody did not return a staff token", code="missing_token")
-        return self.access_token
+        now = time.time()
+        with self._token_guard:
+            if self._token_cache and now < self._token_expires_at:
+                self.access_token = self._token_cache
+                return self.access_token
+            username = os.getenv("MINDBODY_STAFF_USERNAME", "").strip()
+            password = os.getenv("MINDBODY_STAFF_PASSWORD", "")
+            if not username or not password:
+                raise MindbodyError("Mindbody staff credentials are not configured", code="not_configured")
+            result = self._write("usertoken/issue", {"Username": username, "Password": password}, authenticated=False)
+            token = str(result.get("AccessToken") or result.get("Token") or "")
+            if not token:
+                raise MindbodyError("Mindbody did not return a staff token", code="missing_token")
+            self.access_token = token
+            self.__class__._token_cache = token
+            self.__class__._token_expires_at = now + 600
+            return self.access_token
 
     def get_class_visits(self, class_id: str) -> dict[str, Any]:
         # V6 requires the request-scoped query key exactly as request.classID.
@@ -599,21 +611,10 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
             booking.mindbody_client_id = client_id
             booking.mindbody_visit_id = str(_value(visit, "Id", "ID", "VisitId", default="")) or f"client:{client_id}:class:{booking.klass.mindbody_class_id}"
 
-            # Staff-authenticated AddClientToClass can be more permissive than the
-            # consumer booking window. Verify that our write did not overbook.
-            remote_after = _find_remote_class(client, booking.klass)
-            if remote_after:
-                cap_after = _value(remote_after, "MaxCapacity", "Capacity", default=None)
-                booked_after = _value(remote_after, "TotalBooked", "TotalClients", default=None)
-                web_cap_after = _value(remote_after, "WebCapacity", default=None)
-                web_booked_after = _value(remote_after, "TotalWebBooked", "WebBooked", default=None)
-                over_physical = cap_after is not None and booked_after is not None and int(booked_after) > int(cap_after)
-                over_web = web_cap_after is not None and web_booked_after is not None and int(web_booked_after) > int(web_cap_after)
-                if over_physical or over_web:
-                    try:
-                        client.remove_from_class(client_id, booking.klass.mindbody_class_id)
-                    finally:
-                        raise MindbodyError("Mindbody class became full during booking")
+            # AddClientToClass is the authoritative write. The class was checked
+            # immediately before the hold and local row locking already protects the
+            # last Classy-visible spot. Avoid a second provider round trip here so
+            # checkout is not delayed by another full classes request.
 
             booking.mindbody_sync_status = "synced"
             booking.mindbody_sync_error = ""

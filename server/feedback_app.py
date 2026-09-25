@@ -860,6 +860,96 @@ def sell_class_pass_v2(data: ClassPassSaleInV2, user: core.User = Depends(core.r
     return {"sale": {"id": sale.id, "mode": sale.mode, "credits": credits, "amount_cents": amount_cents, "code": code, "status": sale.status}}
 
 
+def _mindbody_booking_error_code(raw: str) -> str:
+    provider_error = (raw or "").casefold()
+    if "invalid user token" in provider_error or "deniedaccess" in provider_error:
+        return "mindbody_auth_failed"
+    if "required" in provider_error and ("firstname" in provider_error or "lastname" in provider_error or "mobile" in provider_error):
+        return "mindbody_profile_incomplete"
+    if "permission" in provider_error:
+        return "mindbody_permission_denied"
+    if "full" in provider_error:
+        return "class_full"
+    if "timed out" in provider_error or "timeout" in provider_error:
+        return "mindbody_timeout"
+    if "cancelled" in provider_error or "not available" in provider_error:
+        return "class_unavailable"
+    return "mindbody_booking_failed"
+
+
+def _hold_booking_background(booking_id: int) -> None:
+    from mindbody_sync import hold_local_booking
+
+    hold_local_booking(booking_id)
+    email_job = None
+    with core.SessionLocal() as db:
+        booking = db.scalar(
+            select(core.Booking)
+            .where(core.Booking.id == booking_id)
+            .with_for_update()
+        )
+        if not booking:
+            return
+        if booking.mindbody_sync_status == "synced":
+            if booking.payment_status == "paid" and booking.payment_method == "class_credit":
+                email_job = core.booking_email_data(booking)
+            db.commit()
+        else:
+            booking.status = "cancelled"
+            if booking.payment_method == "class_credit":
+                link = db.scalar(
+                    select(core.CustomerBookingLink)
+                    .where(core.CustomerBookingLink.booking_id == booking.id)
+                )
+                if link:
+                    profile = db.scalar(
+                        select(core.CustomerProfile)
+                        .where(core.CustomerProfile.user_id == link.user_id)
+                        .with_for_update()
+                    )
+                    if profile:
+                        profile.credits += 1
+                booking.payment_method = "class_credit_refunded"
+            if booking.payment_status != "paid" or booking.payment_method == "class_credit_refunded":
+                booking.payment_status = "failed"
+            db.commit()
+    if email_job:
+        core.send_transactional_email(*email_job)
+
+
+@app.get("/api/bookings/sync-status")
+def public_booking_sync_status(
+    reference: str,
+    user: Optional[core.User] = Depends(core.optional_user),
+    db: Session = Depends(core.db_session),
+):
+    if not user or core.portal_for(user) != "/account":
+        raise HTTPException(401, "authentication_required")
+    booking = db.scalar(
+        select(core.Booking)
+        .where(
+            core.Booking.reference == reference.strip().upper(),
+            func.lower(core.Booking.email) == user.email.lower(),
+            core.Booking.source == "website",
+        )
+        .limit(1)
+    )
+    if not booking:
+        raise HTTPException(404, "booking_not_found")
+    ready = booking.mindbody_sync_status in {"synced", "local"}
+    failed = booking.mindbody_sync_status == "failed" or booking.status == "cancelled"
+    return {
+        "reference": booking.reference,
+        "sync_status": booking.mindbody_sync_status,
+        "booking_status": booking.status,
+        "payment_status": booking.payment_status,
+        "credit_used": booking.payment_method.startswith("class_credit"),
+        "ready": ready,
+        "failed": failed,
+        "error": _mindbody_booking_error_code(booking.mindbody_sync_error) if failed else "",
+    }
+
+
 @app.post("/api/bookings")
 def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks, user: Optional[core.User] = Depends(core.optional_user), db: Session = Depends(core.db_session)):
     base = core.PublicBookingIn(
@@ -873,10 +963,6 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     if core.as_utc(c.starts_at) <= datetime.now(timezone.utc):
         raise HTTPException(409, "class_started")
 
-    # A retry after a successful Mindbody hold must resume the same booking instead
-    # of creating a second booking or blocking the customer with duplicate_booking.
-    # This is especially important when the browser loses the response between the
-    # hold and the SumUp redirect.
     duplicate = db.scalar(
         select(core.Booking)
         .where(
@@ -894,40 +980,24 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
             and user.email.lower() == data.email.lower()
             and duplicate.source == "website"
         )
-        if same_customer and duplicate.payment_status == "paid":
-            return {
-                "booking": {"reference": duplicate.reference},
-                "payment_status": "paid",
-                "credit_used": duplicate.payment_method.startswith("class_credit"),
-                "credits_remaining": None,
-                "resumed": True,
-            }
         if (
             same_customer
-            and duplicate.payment_status == "pending"
-            and duplicate.payment_method == "sumup"
-            and duplicate.mindbody_sync_status == "synced"
+            and duplicate.payment_status in {"paid", "pending"}
+            and duplicate.mindbody_sync_status in {"pending", "syncing", "synced", "local"}
         ):
             return {
                 "booking": {"reference": duplicate.reference},
-                "payment_status": "pending",
-                "credit_used": False,
+                "payment_status": duplicate.payment_status,
+                "credit_used": duplicate.payment_method.startswith("class_credit"),
                 "credits_remaining": None,
+                "sync_status": duplicate.mindbody_sync_status,
                 "resumed": True,
             }
         raise HTTPException(409, "duplicate_booking")
 
-    # Mindbody is authoritative for provider-backed availability. Refresh it at
-    # booking time, then lock the local class row so concurrent Classy requests
-    # cannot consume the same last spot.
-    if c.mindbody_class_id:
-        from mindbody_sync import refresh_class_availability_strict
-        try:
-            refreshed = refresh_class_availability_strict(c.id)
-        except Exception as exc:
-            raise HTTPException(503, "mindbody_availability_unavailable") from exc
-        if int(refreshed.get("spots", 0) or 0) <= 0:
-            raise HTTPException(409, "class_full")
+    # Keep the request itself local and fast. Mindbody remains authoritative, but
+    # the provider hold runs after this response and checkout cannot start until the
+    # client observes sync_status=syncing/synced through the status endpoint.
     c = db.scalar(
         select(core.ClassSession)
         .where(core.ClassSession.id == c.id)
@@ -936,16 +1006,28 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     )
     if not c or c.status != "active":
         raise HTTPException(409, "class_unavailable")
-    live_reserved = db.scalar(select(func.count(core.Booking.id)).where(core.Booking.class_id == c.id, core.Booking.status == "reserved")) or 0
+    live_reserved = db.scalar(
+        select(func.count(core.Booking.id)).where(
+            core.Booking.class_id == c.id,
+            core.Booking.status == "reserved",
+        )
+    ) or 0
     reserved = int(c.imported_bookings or 0) + int(live_reserved)
     if reserved >= c.capacity:
         raise HTTPException(409, "class_full")
     if data.spot:
         if data.spot <= int(c.imported_bookings or 0):
             raise HTTPException(409, "spot_taken")
-        spot_taken = db.scalar(select(core.Booking).where(core.Booking.class_id == c.id, core.Booking.spot_number == data.spot, core.Booking.status == "reserved"))
+        spot_taken = db.scalar(
+            select(core.Booking).where(
+                core.Booking.class_id == c.id,
+                core.Booking.spot_number == data.spot,
+                core.Booking.status == "reserved",
+            )
+        )
         if spot_taken:
             raise HTTPException(409, "spot_taken")
+
     ref = "CP-" + os.urandom(4).hex().upper()
     use_credit = False
     profile = None
@@ -953,7 +1035,11 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     last_name = data.lastName.strip()
     booking_phone = data.phone.strip()
     if user and core.portal_for(user) == "/account" and user.email.lower() == data.email.lower():
-        profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
+        profile = db.scalar(
+            select(core.CustomerProfile)
+            .where(core.CustomerProfile.user_id == user.id)
+            .with_for_update()
+        )
         first_name = first_name or (user.first_name or "").strip()
         last_name = last_name or (user.last_name or "").strip()
         if not booking_phone and profile:
@@ -961,16 +1047,24 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         if profile and profile.credits > 0:
             profile.credits -= 1
             use_credit = True
+
     booking = core.Booking(
-        reference=ref, class_id=c.id, customer_name=(first_name + " " + last_name).strip(),
-        email=data.email.lower(), phone=booking_phone, spot_number=data.spot,
+        reference=ref,
+        class_id=c.id,
+        customer_name=(first_name + " " + last_name).strip(),
+        email=data.email.lower(),
+        phone=booking_phone,
+        spot_number=data.spot,
         payment_method="class_credit" if use_credit else "sumup",
-        payment_status="paid" if use_credit else "pending", amount_cents=0 if use_credit else 2800,
+        payment_status="paid" if use_credit else "pending",
+        amount_cents=0 if use_credit else 2800,
+        mindbody_sync_status="pending" if c.mindbody_class_id else "local",
     )
     db.add(booking)
     db.flush()
     if user and core.portal_for(user) == "/account" and user.email.lower() == data.email.lower():
         db.add(core.CustomerBookingLink(booking_id=booking.id, user_id=user.id))
+
     language = data.language.strip().lower()
     if language not in {"de", "en"}:
         language = "en"
@@ -983,38 +1077,19 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     ))
     db.commit()
 
-    # Hold the seat in Mindbody before telling the client the booking exists. This
-    # applies to both Class Credit bookings and pending SumUp bookings.
     if c.mindbody_class_id:
-        from mindbody_sync import hold_local_booking
-        hold_local_booking(booking.id)
-        db.expire(booking)
-        db.refresh(booking)
-        if booking.mindbody_sync_status != "synced":
-            booking.status = "cancelled"
-            if use_credit and profile:
-                db.expire(profile)
-                db.refresh(profile)
-                profile.credits += 1
-                booking.payment_method = "class_credit_refunded"
-                booking.payment_status = "failed"
-            else:
-                booking.payment_status = "failed"
-            db.commit()
-            provider_error = (booking.mindbody_sync_error or "").casefold()
-            if "invalid user token" in provider_error or "deniedaccess" in provider_error:
-                raise HTTPException(503, "mindbody_auth_failed")
-            if "required" in provider_error and ("firstname" in provider_error or "mobile" in provider_error):
-                raise HTTPException(409, "mindbody_profile_incomplete")
-            if "permission" in provider_error:
-                raise HTTPException(503, "mindbody_permission_denied")
-            if "full" in provider_error:
-                raise HTTPException(409, "class_full")
-            raise HTTPException(409, "mindbody_booking_failed")
-
-    if use_credit:
+        background_tasks.add_task(_hold_booking_background, booking.id)
+    elif use_credit:
         background_tasks.add_task(core.send_transactional_email, *core.booking_email_data(booking))
-    return {"booking": {"reference": ref}, "payment_status": booking.payment_status, "credit_used": use_credit, "credits_remaining": profile.credits if profile else None, "language": language}
+
+    return {
+        "booking": {"reference": ref},
+        "payment_status": booking.payment_status,
+        "credit_used": use_credit,
+        "credits_remaining": profile.credits if profile else None,
+        "language": language,
+        "sync_status": booking.mindbody_sync_status,
+    }
 
 
 @app.get("/api/staff/booking-preferences")

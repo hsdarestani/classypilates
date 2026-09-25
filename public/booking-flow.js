@@ -95,7 +95,29 @@
   function checkoutRefV2(){return 'CP-BOOKPAY-'+(cryptoSafeToken?cryptoSafeToken(10):Math.random().toString(36).slice(2,12).toUpperCase())}
   async function accountRequest(path,body){const response=await timedFetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify(body)},12000);let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'request_failed');return data}
   async function authenticateCustomer(){const details=wizard.details;if(wizard.mode==='authenticated'&&wizard.authUser){const response=await fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'});let user={};try{user=await response.json()}catch(_){}if(response.status===401)throw new Error('session_expired');if(!response.ok)throw new Error(user.detail||'request_failed');if(user.portal!=='/account')throw new Error('customer_account_required');wizard.authUser=user;return user}let result;if(wizard.mode==='register'){try{result=await accountRequest('/api/auth/register',{email:details.email,password:details.password,first_name:details.firstName,last_name:details.lastName,phone:details.phone,birth_date:details.birth,emergency_contact:details.emergency,marketing_opt_in:details.news})}catch(error){if(error.message!=='email_exists')throw error;result=await accountRequest('/api/auth/login',{email:details.email,password:details.password})}}else{result=await accountRequest('/api/auth/login',{email:details.email,password:details.password})}if(result.user?.portal!=='/account')throw new Error('customer_account_required');wizard.authUser=result.user;wizard.mode='authenticated';return result.user}
-  async function createServerBooking(r,user){const startsAt=r.startsAt||new Date(`${r.date}T${r.time}:00`).toISOString();const classId=Number.isInteger(Number(r.id))?Number(r.id):String(r.id);const response=await timedFetch('/api/bookings',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({classId,email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||'',spot:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod:'sumup',studioId:r.studio,title:r.name,classType:r.type,startsAt,duration:r.duration,capacity:r.capacity,coachName:r.coach,language:document.documentElement.lang==='de'?'de':'en'})},18000);let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'booking_failed');return data}
+  async function createServerBooking(r,user){const startsAt=r.startsAt||new Date(`${r.date}T${r.time}:00`).toISOString();const classId=Number.isInteger(Number(r.id))?Number(r.id):String(r.id);const response=await timedFetch('/api/bookings',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({classId,email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||'',spot:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod:'sumup',studioId:r.studio,title:r.name,classType:r.type,startsAt,duration:r.duration,capacity:r.capacity,coachName:r.coach,language:document.documentElement.lang==='de'?'de':'en'})},10000);let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'booking_failed');return data}
+  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  function paymentProgress(text){const btn=$('#finishPayment');if(btn){btn.disabled=true;btn.innerHTML=`<span class="button-spinner"></span> ${safe(text)}`}}
+  async function waitForBookingSync(reference){
+    const deadline=Date.now()+60000;
+    let dots=1;
+    while(Date.now()<deadline){
+      try{
+        const response=await timedFetch('/api/bookings/sync-status?reference='+encodeURIComponent(reference),{credentials:'same-origin',cache:'no-store'},8000);
+        let data={};try{data=await response.json()}catch(_){}
+        if(response.status===401)throw new Error('session_expired');
+        if(!response.ok)throw new Error(data.detail||'booking_sync_failed');
+        if(data.ready)return data;
+        if(data.failed)throw new Error(data.error||'mindbody_booking_failed');
+      }catch(error){
+        if(!['request_timeout','booking_sync_failed'].includes(error.message))throw error;
+      }
+      paymentProgress('Reserving your place'+'.'.repeat(dots));
+      dots=dots===3?1:dots+1;
+      await sleep(900);
+    }
+    throw new Error('mindbody_timeout')
+  }
   function saveLocalBooking(r,email,ref,paymentState,paymentMethod,adjust=true){const existing=read('cpBookings',[]);if(!existing.some(b=>b.ref===ref)){existing.unshift({ref,email,classId:r.id,name:r.name,time:r.time,date:r.date,studio:studioName(r),studioId:r.studio,coach:r.coach,spot:SPOT_SELECTION_ENABLED?spotLabel(wizard.spot,r):'',spotNumber:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod,status:'reserved',paymentState,createdAt:new Date().toISOString()});write('cpBookings',existing.slice(0,50));if(adjust){try{adjustSeats(r.id,-1)}catch(_){}}}try{localStorage.setItem('cpLastEmail',email)}catch(_){}}
   async function createBookingCheckout(bookingReference,user){const reference=checkoutRefV2();const response=await timedFetch('/api/checkout/create',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json','x-idempotency-key':reference},body:JSON.stringify({reference,bookingReference,customer:{email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||''},items:[]})},12000);let data={};try{data=await response.json()}catch(_){}const url=data.hosted_checkout_url||data.url;if(!response.ok||!url)throw new Error(data.detail||'checkout_failed');return {reference,url}}
   function showPaymentFailure(code){
@@ -116,6 +138,7 @@
       mindbody_profile_incomplete:'Your Classy profile is missing information required by Mindbody. Please update your mobile number and try again.',
       mindbody_permission_denied:'Mindbody rejected the reservation permission. No payment was taken.',
       request_timeout:'The booking service took too long to respond. No payment was confirmed. Please try again.',
+      mindbody_timeout:'Mindbody is taking longer than expected to confirm the reservation. No payment was taken. Tap continue again to resume the same booking.',
       sumup_not_configured:'Secure payment is currently unavailable.',
       sumup_unavailable:'SumUp is temporarily unavailable. Please try again.',
       sumup_checkout_state_unavailable:'The current SumUp payment session could not be verified. Please try again.',
@@ -143,15 +166,23 @@
       const user=await authenticateCustomer();
       const result=await createServerBooking(r,user);
       const ref=result.booking?.reference||bookingRefV2();
-      if(result.credit_used||result.payment_status==='paid'){
-        wizard.payment=result.credit_used?'class_credit':'sumup';
+      if(!result.booking?.reference)throw new Error('booking_failed');
+      let sync=result;
+      if(!['synced','local'].includes(result.sync_status||'')){
+        paymentProgress('Reserving your place…');
+        sync=await waitForBookingSync(ref);
+      }
+      const creditUsed=Boolean(sync.credit_used??result.credit_used);
+      const paymentStatus=sync.payment_status||result.payment_status;
+      if(creditUsed||paymentStatus==='paid'){
+        wizard.payment=creditUsed?'class_credit':'sumup';
         saveLocalBooking(r,email,ref,'paid',wizard.payment);
         renderSchedule();
         renderSuccess(ref);
         return
       }
-      if(!result.booking?.reference)throw new Error('booking_failed');
-      const checkout=await createBookingCheckout(result.booking.reference,user);
+      paymentProgress('Opening secure payment…');
+      const checkout=await createBookingCheckout(ref,user);
       write('cpPendingBookingPayment',{bookingReference:result.booking.reference,orderReference:checkout.reference,email,wizard:{class:r,spot:SPOT_SELECTION_ENABLED?wizard.spot:null,payment:'sumup',details:{email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||''}}});
       location.href=checkout.url
     }catch(error){
