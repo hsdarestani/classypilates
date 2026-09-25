@@ -78,15 +78,132 @@
   async function bookings(){const d=await api('/api/staff/bookings');let mb={};try{mb=await api('/api/staff/mindbody/status')}catch(_){}$('#view').innerHTML=`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY MIRROR</p><h2>${mb.configured?'Live two-way sync':'Setup required'}</h2><p>${mb.last_synced_at?'Last sync '+dt(mb.last_synced_at):'Waiting for first live sync'} · ${mb.pending||0} pending · ${mb.failed||0} failed</p></div>${has('bookings.manage')?'<button class="secondary" id="syncMindbody">Sync now</button>':''}</div></section><section class="panel"><div class="panel-head"><div><p class="kicker">BOOKING MANAGEMENT</p><h2>Website & Mindbody bookings</h2><p>${d.bookings.length} mirrored entries · customer, source, payment and sync state.</p></div></div>${d.bookings.length?bookingTable(d.bookings):'<div class="empty">No bookings yet.</div>'}</section>`;$('#syncMindbody')?.addEventListener('click',async()=>{await api('/api/staff/mindbody/sync',{method:'POST'});toast('Mindbody sync queued')});$$('[data-booking]').forEach(b=>b.onclick=async()=>{await api(`/api/staff/bookings/${b.dataset.booking}`,{method:'PATCH',body:JSON.stringify({status:b.dataset.status})});toast('Booking updated');bookings()})}
 
   async function customers(){
-    const d=await api('/api/staff/customers');let sales=[];try{sales=(await api('/api/staff/class-passes')).sales}catch(_){}
-    const customerOptions=d.customers.map(x=>`<option value="${x.id}">${esc([x.first_name,x.last_name].filter(Boolean).join(' ')||x.email)} · ${esc(x.email)}</option>`).join('');
-    const passPanel=has('customers.manage')?`<section class="panel pass-sale-panel"><div class="panel-head"><div><p class="kicker">ON-SITE SALES</p><h2>Sell a 10-Class Pass</h2><p>Assign ten credits directly to a customer, or create a gift code that can be redeemed later.</p></div></div><div class="pass-sale-grid"><label>PASS TYPE<select id="passMode"><option value="account">For customer account</option><option value="gift">As a gift code</option></select></label><label>PAYMENT<select id="passPayment"><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label id="passCustomerLabel">CUSTOMER<select id="passCustomer">${customerOptions}</select></label><div class="pass-summary"><span>10 CLASS CREDITS</span><b>219 € · 10 bookings</b><small>Valid across all Classy studios.</small></div><button class="primary" id="sellPass">Complete on-site sale</button></div><div id="passResult"></div>${sales.length?`<div class="pass-history"><h3>Recent passes</h3>${sales.slice(0,8).map(s=>`<div><span>${s.mode==='gift'?'Gift code':'Customer account'}</span><b>${esc(s.code||'10 credits assigned')}</b><small>${money(s.amount_cents)} · ${esc(s.payment_method)} · ${dt(s.created_at)}</small></div>`).join('')}</div>`:''}</section>`:'';
-    $('#view').innerHTML=`<div class="cards"><article class="metric"><span>CUSTOMER ACCOUNTS</span><b>${d.customers.length}</b><small>registered profiles</small></article><article class="metric"><span>ACTIVE CUSTOMERS</span><b>${d.customers.filter(x=>x.is_active).length}</b><small>with login access</small></article><article class="metric"><span>CLASS CREDITS</span><b>${d.customers.reduce((sum,x)=>sum+x.credits,0)}</b><small>available balance</small></article><article class="metric"><span>BOOKINGS</span><b>${d.customers.reduce((sum,x)=>sum+x.booking_count,0)}</b><small>linked to customer accounts</small></article></div>${passPanel}<section class="panel"><div class="panel-head"><div><p class="kicker">CUSTOMER ACCOUNTS</p><h2>Customers</h2><p>Manage profiles, credits, bookings and login status in one place.</p></div></div>${d.customers.length?`<div class="table"><div class="trow head"><span>CUSTOMER</span><span>CONTACT</span><span>BOOKINGS</span><span>CREDITS</span><span>STATUS</span><span></span></div>${d.customers.map(x=>`<div class="trow"><div><b>${esc([x.first_name,x.last_name].filter(Boolean).join(' ')||x.email)}</b><small>${esc(x.email)}</small></div><div><b>${esc(x.phone||'—')}</b><small>since ${dt(x.created_at)}</small></div><div><b>${x.active_bookings} active</b><small>${x.booking_count} total</small></div><div><b>${x.credits}</b><small>Class Credits</small></div><div><span class="status ${x.is_active?'active':'cancelled'}">${x.is_active?'Active':'Disabled'}</span></div><div class="actions"><button class="secondary" data-credit="${x.id}" data-current="${x.credits}">Credits</button><button class="${x.is_active?'danger':'secondary'}" data-customer-state="${x.id}" data-active="${x.is_active?'0':'1'}">${x.is_active?'Disable':'Activate'}</button></div></div>`).join('')}</div>`:'<div class="empty">No customer accounts yet.</div>'}</section>`;
+    const d=await api('/api/staff/customers');
+    let sales=[];try{sales=(await api('/api/staff/class-passes')).sales}catch(_){}
+    const localAccounts=d.customers.filter(x=>x.local_id);
+    const customerOptions=localAccounts.map(x=>`<option value="${x.local_id}">${esc([x.first_name,x.last_name].filter(Boolean).join(' ')||x.email)} · ${esc(x.email)}</option>`).join('');
+    const counts=d.counts||{};
+    const mindbodyCount=(counts.mindbody||0)+(counts.both||0);
+    const loginCount=d.customers.filter(x=>x.has_login).length;
+
+    const passPanel=has('customers.manage')?`<section class="panel pass-sale-panel"><div class="panel-head"><div><p class="kicker">ON-SITE SALES</p><h2>Sell a 10-Class Pass</h2><p>Class Credits are assigned to Classy customer accounts. Mindbody-only profiles remain visible in the same customer directory without creating an artificial login.</p></div></div><div class="pass-sale-grid"><label>PASS TYPE<select id="passMode"><option value="account">For customer account</option><option value="gift">As a gift code</option></select></label><label>PAYMENT<select id="passPayment"><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label id="passCustomerLabel">CUSTOMER<select id="passCustomer">${customerOptions}</select></label><div class="pass-summary"><span>10 CLASS CREDITS</span><b>219 € · 10 bookings</b><small>Valid across all Classy studios.</small></div><button class="primary" id="sellPass">Complete on-site sale</button></div><div id="passResult"></div>${sales.length?`<div class="pass-history"><h3>Recent passes</h3>${sales.slice(0,8).map(s=>`<div><span>${s.mode==='gift'?'Gift code':'Customer account'}</span><b>${esc(s.code||'10 credits assigned')}</b><small>${money(s.amount_cents)} · ${esc(s.payment_method)} · ${dt(s.created_at)}</small></div>`).join('')}</div>`:''}</section>`:'';
+
+    $('#view').innerHTML=`<div class="cards">
+      <article class="metric"><span>ALL CUSTOMERS</span><b>${d.customers.length}</b><small>one unified directory</small></article>
+      <article class="metric"><span>MINDBODY</span><b>${mindbodyCount}</b><small>provider profiles</small></article>
+      <article class="metric"><span>CLASSY LOGINS</span><b>${loginCount}</b><small>customer accounts</small></article>
+      <article class="metric"><span>BOOKINGS</span><b>${d.customers.reduce((sum,x)=>sum+Number(x.booking_count||0),0)}</b><small>linked across both sources</small></article>
+    </div>
+    ${passPanel}
+    <section class="panel customer-directory-panel">
+      <div class="panel-head"><div><p class="kicker">CUSTOMER DIRECTORY</p><h2>Customers</h2><p>Classy and Mindbody profiles live in the same list. Source stays visible on every profile.</p></div><button class="secondary" id="refreshMindbodyCustomers">Refresh Mindbody</button></div>
+      <div class="list-toolbar customer-toolbar"><input id="customerSearch" type="search" placeholder="Search name, email, phone or Mindbody ID…"><span id="customerCount"></span></div>
+      <div id="customerDirectory"></div>
+    </section>`;
+
+    const customerRows=rows=>{
+      const limited=rows.slice(0,250);
+      if(!limited.length)return '<div class="empty">No matching customers.</div>';
+      return `<div class="table customer-directory"><div class="trow head"><span>CUSTOMER</span><span>CONTACT</span><span>SOURCE</span><span>BOOKINGS</span><span>PROFILE</span><span></span></div>${limited.map(x=>{
+        const name=[x.first_name,x.last_name].filter(Boolean).join(' ')||x.email||`Mindbody ${x.mindbody_client_id||''}`;
+        const contact=x.email||x.phone||'No contact exposed';
+        const sourceClass=x.source==='Mindbody'?'mindbody':x.source==='Classy + Mindbody'?'both':'classy';
+        const sourceLabel=x.source||'Classy';
+        const secondary=x.phone&&x.email?x.phone:(x.birth_date?`DOB ${x.birth_date}`:'—');
+        const providerState=x.provider_status||((x.provider_active??x.is_active)?'Active':'Inactive');
+        return `<div class="trow">
+          <div><b>${esc(name)}</b><small>${esc(contact)}</small></div>
+          <div><b>${esc(secondary)}</b><small>${x.home_location?esc(x.home_location):x.client_type?esc(x.client_type):''}</small></div>
+          <div><span class="source-badge ${sourceClass}">${esc(sourceLabel)}</span><small>${x.mindbody_client_id?`MB ${esc(x.mindbody_client_id)}`:x.has_login?'Classy account':''}</small></div>
+          <div><b>${Number(x.active_bookings||0)} active</b><small>${Number(x.booking_count||0)} total</small></div>
+          <div><b>${x.has_login?`${Number(x.credits||0)} credits`:esc(providerState)}</b><small>${x.birth_date?esc(x.birth_date):x.has_login?'login enabled':'provider profile'}</small></div>
+          <div class="actions">
+            ${x.mindbody_client_id?`<button class="secondary" data-mb-customer="${esc(x.mindbody_client_id)}">Details</button>`:''}
+            ${x.local_id&&has('customers.manage')?`<button class="secondary" data-credit="${x.local_id}" data-current="${Number(x.credits||0)}">Credits</button><button class="${x.is_active?'danger':'secondary'}" data-customer-state="${x.local_id}" data-active="${x.is_active?'0':'1'}">${x.is_active?'Disable':'Activate'}</button>`:''}
+          </div>
+        </div>`
+      }).join('')}</div>${rows.length>limited.length?`<p class="directory-limit-note">Showing the first ${limited.length} of ${rows.length}. Use search to narrow the list.</p>`:''}`
+    };
+
+    const wireRows=()=>{
+      $$('[data-credit]').forEach(button=>button.onclick=async()=>{const value=prompt('New Class Credit balance',button.dataset.current);if(value===null)return;const credits=Number(value);if(!Number.isInteger(credits)||credits<0)return toast('Enter a valid number');await api(`/api/staff/customers/${button.dataset.credit}`,{method:'PATCH',body:JSON.stringify({credits})});toast('Credits updated');customers()});
+      $$('[data-customer-state]').forEach(button=>button.onclick=async()=>{await api(`/api/staff/customers/${button.dataset.customerState}`,{method:'PATCH',body:JSON.stringify({is_active:button.dataset.active==='1'})});toast('Customer status updated');customers()});
+      $$('[data-mb-customer]').forEach(button=>{button.onclick=()=>mindbodyCustomerModal(button.dataset.mbCustomer,d.customers.find(x=>String(x.mindbody_client_id)===String(button.dataset.mbCustomer)))})
+    };
+    const renderRows=rows=>{
+      $('#customerDirectory').innerHTML=customerRows(rows);
+      $('#customerCount').textContent=`${rows.length} of ${d.customers.length}`;
+      wireRows()
+    };
+    renderRows(d.customers);
+
+    $('#customerSearch')?.addEventListener('input',event=>{
+      const q=event.target.value.trim().casefold?.()||event.target.value.trim().toLowerCase();
+      if(!q)return renderRows(d.customers);
+      renderRows(d.customers.filter(x=>[
+        x.first_name,x.last_name,x.email,x.phone,x.mindbody_client_id,x.client_type,x.home_location,x.source
+      ].some(value=>String(value||'').toLowerCase().includes(q))))
+    });
+
+    $('#refreshMindbodyCustomers')?.addEventListener('click',async()=>{
+      const button=$('#refreshMindbodyCustomers'),old=button.textContent;
+      try{
+        button.disabled=true;button.textContent='Syncing…';
+        await api('/api/staff/mindbody/customers/sync',{method:'POST'});
+        toast('Mindbody customer refresh started');
+        setTimeout(()=>{if(state.view==='customers')customers()},4500)
+      }catch(error){toast(error.message);button.disabled=false;button.textContent=old}
+    });
+
     $('#passMode')?.addEventListener('change',()=>{$('#passCustomerLabel').hidden=$('#passMode').value==='gift'});
-    $('#sellPass')?.addEventListener('click',async()=>{const mode=$('#passMode').value,payment_method=$('#passPayment').value,customer_id=mode==='account'?Number($('#passCustomer').value):null;if(mode==='account'&&!customer_id)return toast('Choose a customer');const result=await api('/api/staff/class-passes/sell',{method:'POST',body:JSON.stringify({mode,customer_id,payment_method})});const sale=result.sale;$('#passResult').innerHTML=mode==='gift'?`<div class="voucher-result"><span>GIFT CODE CREATED</span><b>${esc(sale.code)}</b><p>Give this code to the recipient. It adds 10 credits after redemption.</p><button class="secondary" id="copyVoucher">Copy code</button></div>`:`<div class="voucher-result success"><span>PASS ASSIGNED</span><b>10 credits added</b><p>The customer now has ${sale.balance} available credits.</p></div>`;$('#copyVoucher')?.addEventListener('click',async()=>{await navigator.clipboard.writeText(sale.code);toast('Code copied')});toast('10-Class Pass created')});
-    $$('[data-credit]').forEach(button=>button.onclick=async()=>{const value=prompt('New Class Credit balance',button.dataset.current);if(value===null)return;const credits=Number(value);if(!Number.isInteger(credits)||credits<0)return toast('Enter a valid number');await api(`/api/staff/customers/${button.dataset.credit}`,{method:'PATCH',body:JSON.stringify({credits})});toast('Credits updated');customers()});
-    $$('[data-customer-state]').forEach(button=>button.onclick=async()=>{await api(`/api/staff/customers/${button.dataset.customerState}`,{method:'PATCH',body:JSON.stringify({is_active:button.dataset.active==='1'})});toast('Customer status updated');customers()})
+    $('#sellPass')?.addEventListener('click',async()=>{
+      const mode=$('#passMode').value,payment_method=$('#passPayment').value,customer_id=mode==='account'?Number($('#passCustomer').value):null;
+      if(mode==='account'&&!customer_id)return toast('Choose a Classy customer account');
+      const result=await api('/api/staff/class-passes/sell',{method:'POST',body:JSON.stringify({mode,customer_id,payment_method})});
+      const sale=result.sale;
+      $('#passResult').innerHTML=mode==='gift'?`<div class="voucher-result"><span>GIFT CODE CREATED</span><b>${esc(sale.code)}</b><p>Give this code to the recipient. It adds 10 credits after redemption.</p><button class="secondary" id="copyVoucher">Copy code</button></div>`:`<div class="voucher-result success"><span>PASS ASSIGNED</span><b>10 credits added</b><p>The customer now has ${sale.balance} available credits.</p></div>`;
+      $('#copyVoucher')?.addEventListener('click',async()=>{await navigator.clipboard.writeText(sale.code);toast('Code copied')});
+      toast('10-Class Pass created')
+    })
   }
+
+  async function mindbodyCustomerModal(clientId,cached){
+    const old=document.querySelector('.customer-detail-modal');if(old)old.remove();
+    const wrap=document.createElement('div');wrap.className='modal-wrap photo-editor-backdrop customer-detail-modal';
+    const cachedName=[cached?.first_name,cached?.last_name].filter(Boolean).join(' ')||cached?.email||`Mindbody ${clientId}`;
+    wrap.innerHTML=`<div class="panel modal customer-detail-card"><div class="panel-head"><div><p class="kicker">MINDBODY CLIENT</p><h2>${esc(cachedName)}</h2><p>Loading complete provider profile…</p></div><button class="secondary" data-close>×</button></div><div class="empty">Loading…</div></div>`;
+    document.body.appendChild(wrap);
+    const close=()=>wrap.remove();$$('[data-close]',wrap).forEach(button=>button.onclick=close);wrap.onclick=e=>{if(e.target===wrap)close()};
+    try{
+      const payload=await api(`/api/staff/mindbody/customers/${encodeURIComponent(clientId)}`);
+      const p=payload.Client||payload.client||payload;
+      const type=typeof p.ClientType==='object'?(p.ClientType?.Name||''):(p.ClientType||p.clientType||cached?.client_type||'');
+      const location=(p.HomeLocation?.Name||p.homeLocation?.name||cached?.home_location||'');
+      const name=[p.FirstName||p.firstName||cached?.first_name,p.LastName||p.lastName||cached?.last_name].filter(Boolean).join(' ')||cachedName;
+      const email=p.Email||p.email||cached?.email||'';
+      const phone=p.MobilePhone||p.mobilePhone||p.Phone||p.phone||cached?.phone||'';
+      const birth=p.BirthDate||p.birthDate||cached?.birth_date||'';
+      const status=p.Status||p.status||cached?.provider_status||'';
+      const balance=p.AccountBalance??p.accountBalance??cached?.account_balance??'';
+      const memberships=payload.ClientMemberships||payload.clientMemberships||payload.Memberships||[];
+      const visits=payload.Visits||payload.visits||payload.ClientVisits||[];
+      const services=payload.ClientServices||payload.clientServices||payload.Services||[];
+      const card=wrap.querySelector('.customer-detail-card');
+      card.innerHTML=`<div class="panel-head"><div><p class="kicker">MINDBODY CLIENT · ${esc(clientId)}</p><h2>${esc(name)}</h2><p>Live profile details from Mindbody.</p></div><button class="secondary" data-close>×</button></div>
+        <div class="customer-detail-grid">
+          <div><span>EMAIL</span><b>${esc(email||'—')}</b></div><div><span>PHONE</span><b>${esc(phone||'—')}</b></div>
+          <div><span>DATE OF BIRTH</span><b>${esc(birth||'—')}</b></div><div><span>STATUS</span><b>${esc(status||'—')}</b></div>
+          <div><span>CLIENT TYPE</span><b>${esc(type||'—')}</b></div><div><span>HOME LOCATION</span><b>${esc(location||'—')}</b></div>
+          <div><span>ACCOUNT BALANCE</span><b>${esc(String(balance||'—'))}</b></div><div><span>SOURCE</span><b>Mindbody</b></div>
+        </div>
+        <div class="customer-detail-summary"><span>${Array.isArray(memberships)?memberships.length:0} memberships</span><span>${Array.isArray(services)?services.length:0} services</span><span>${Array.isArray(visits)?visits.length:0} visits returned</span></div>
+        <details class="provider-json"><summary>Provider details</summary><pre>${esc(JSON.stringify(payload,null,2))}</pre></details>`;
+      $$('[data-close]',wrap).forEach(button=>button.onclick=close)
+    }catch(error){
+      const empty=wrap.querySelector('.empty');if(empty)empty.textContent=error.message||'Unable to load Mindbody profile.'
+    }
+  }
+
 
   async function classes(){
     const d=await api('/api/staff/classes');
