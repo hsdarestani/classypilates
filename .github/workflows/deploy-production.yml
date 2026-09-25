@@ -197,6 +197,15 @@ jobs:
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/auth/me >/dev/null
           curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" http://127.0.0.1:8787/api/staff/dashboard >/dev/null
 
+          # Read-only integration checks for the unified customer directory and
+          # Mindbody-backed class editor. Never create a provider class in deploy.
+          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN"             http://127.0.0.1:8787/api/staff/customers > /tmp/classy-customers-smoke.json
+          grep -q '"customers":\[' /tmp/classy-customers-smoke.json
+          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN"             http://127.0.0.1:8787/api/staff/mindbody/catalog > /tmp/classy-mindbody-catalog.json
+          grep -q '"class_descriptions":\[' /tmp/classy-mindbody-catalog.json
+          grep -q '"locations":\[' /tmp/classy-mindbody-catalog.json
+          rm -f /tmp/classy-customers-smoke.json /tmp/classy-mindbody-catalog.json
+
           CUSTOMER_CODE=$(curl -sS -o /tmp/classy-customer-register.json -c /tmp/classy-customer-cookies -w '%{http_code}' \
             -H 'Content-Type: application/json' \
             -d "{\"email\":\"$SMOKE_CUSTOMER_EMAIL\",\"password\":\"$SMOKE_CUSTOMER_PASSWORD\",\"first_name\":\"Portal\",\"last_name\":\"Smoke\"}" \
