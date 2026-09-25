@@ -26,6 +26,8 @@ SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
 _worker_started = False
 _worker_guard = threading.Lock()
+_client_worker_started = False
+_client_worker_guard = threading.Lock()
 _sync_state_ready = False
 _sync_state_guard = threading.Lock()
 
@@ -3087,6 +3089,27 @@ def retry_pending() -> int:
     return len(ids) + len(cancel_ids)
 
 
+def _client_directory_loop():
+    # Client profiles change less frequently than class availability, so keep this
+    # off the three-minute booking mirror and refresh independently.
+    time.sleep(20)
+    while True:
+        try:
+            if capability_status()["configured"]:
+                result = sync_client_directory()
+                print(
+                    f"Mindbody client directory: seen={result.get('seen', 0)} "
+                    f"written={result.get('written', 0)}",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(
+                f"Mindbody client directory failed: {type(exc).__name__}: {str(exc)[:300]}",
+                flush=True,
+            )
+        time.sleep(900)
+
+
 def _loop():
     if INITIAL_SYNC_DELAY:
         time.sleep(INITIAL_SYNC_DELAY)
@@ -3158,6 +3181,16 @@ def start_worker():
         _worker_started = True
         threading.Thread(target=_loop, name="mindbody-mirror", daemon=True).start()
 
+        global _client_worker_started
+        with _client_worker_guard:
+            if not _client_worker_started:
+                _client_worker_started = True
+                threading.Thread(
+                    target=_client_directory_loop,
+                    name="mindbody-client-directory",
+                    daemon=True,
+                ).start()
+
 
 def _manual_sync_locked() -> None:
     with RECONCILE_LOCK:
@@ -3169,6 +3202,17 @@ def _manual_sync_locked() -> None:
 def manual_sync(background: BackgroundTasks, user: core.User = Depends(core.require("bookings.manage"))):
     background.add_task(_manual_sync_locked)
     return {"ok": True, "queued": True}
+
+
+@core.app.post("/api/staff/mindbody/customers/sync")
+def manual_customer_sync(background: BackgroundTasks, user: core.User = Depends(core.require("customers.view"))):
+    background.add_task(sync_client_directory)
+    return {"ok": True, "queued": True}
+
+
+@core.app.get("/api/staff/mindbody/customers/{client_id}")
+def mindbody_customer_detail(client_id: str, user: core.User = Depends(core.require("customers.view"))):
+    return mindbody_client_complete_info(client_id)
 
 
 @core.app.get("/api/staff/mindbody/status")
