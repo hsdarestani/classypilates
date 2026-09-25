@@ -199,9 +199,14 @@ jobs:
 
           # Read-only integration checks for the unified customer directory and
           # Mindbody-backed class editor. Never create a provider class in deploy.
-          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN"             http://127.0.0.1:8787/api/staff/customers > /tmp/classy-customers-smoke.json
+          CUSTOMERS_CODE=$(curl -sS -o /tmp/classy-customers-smoke.json -w '%{http_code}'             -H "Authorization: Bearer $SMOKE_TOKEN"             http://127.0.0.1:8787/api/staff/customers)
+          echo "Unified customer smoke HTTP $CUSTOMERS_CODE"
+          test "$CUSTOMERS_CODE" = "200"
           grep -q '"customers":\[' /tmp/classy-customers-smoke.json
-          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN"             http://127.0.0.1:8787/api/staff/mindbody/catalog > /tmp/classy-mindbody-catalog.json
+
+          CATALOG_CODE=$(curl -sS -o /tmp/classy-mindbody-catalog.json -w '%{http_code}'             -H "Authorization: Bearer $SMOKE_TOKEN"             http://127.0.0.1:8787/api/staff/mindbody/catalog)
+          echo "Mindbody catalog smoke HTTP $CATALOG_CODE"
+          test "$CATALOG_CODE" = "200"
           grep -q '"class_descriptions":\[' /tmp/classy-mindbody-catalog.json
           grep -q '"locations":\[' /tmp/classy-mindbody-catalog.json
           rm -f /tmp/classy-customers-smoke.json /tmp/classy-mindbody-catalog.json
