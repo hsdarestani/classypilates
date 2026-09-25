@@ -24,6 +24,10 @@ jobs:
           dig +short TXT _dmarc.classypilates.de
           echo "=== MX ==="
           dig +short MX classypilates.de
+          echo "=== NS ==="
+          dig +short NS classypilates.de
+          echo "=== DOMAINKEY ROOT ==="
+          dig +short TXT _domainkey.classypilates.de
           echo "=== Common DKIM selectors ==="
           for s in default mail smtp selector1 selector2 alfahosting dkim; do
             echo "-- $s --"
