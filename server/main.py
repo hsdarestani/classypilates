@@ -1879,13 +1879,13 @@ def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session 
     b=db.scalar(select(Booking).where(Booking.reference==ref,Booking.email==email))
     if not b: raise HTTPException(404,"not_found")
     if b.status != "reserved": raise HTTPException(409,"booking_not_active")
+    if datetime.now(timezone.utc) >= as_utc(b.klass.starts_at) - timedelta(hours=12):
+        raise HTTPException(409, "cancellation_window_closed")
     from mindbody_sync import cancel_local_booking_strict
     try:
         cancel_local_booking_strict(b.id)
     except Exception as exc:
         raise HTTPException(503, "mindbody_cancellation_unavailable") from exc
-    if datetime.now(timezone.utc) >= as_utc(b.klass.starts_at) - timedelta(hours=12):
-        raise HTTPException(409, "cancellation_window_closed")
     b.status="cancelled"
     refunded_credits = credit_refund_for_cancelled_booking(b, db)
     db.commit()
