@@ -24,4 +24,4 @@ jobs:
           set -euo pipefail
           export SSHPASS="$PASS"
           sshpass -e scp -o StrictHostKeyChecking=no public/account.js root@"$HOST":/opt/classypilates/public/account.js
-          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "grep -Fq '\$\$(\"[data-cancel]\")' /opt/classypilates/public/account.js || grep -Fq '\$\$(\x27[data-cancel]\x27)' /opt/classypilates/public/account.js"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@"$HOST" "python3 -c \"from pathlib import Path; c=Path('/opt/classypilates/public/account.js').read_text(); assert \\\"\\$\\$('[data-cancel]')\\\" in c; print('account_selector_hotfix_verified')\""
