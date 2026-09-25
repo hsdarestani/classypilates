@@ -159,6 +159,39 @@
     "Your bookings": "Deine Buchungen",
     "BOOKING HISTORY": "BUCHUNGSVERLAUF"
 });
+
+  Object.assign(DE,{
+    "Review the coach, studio and time. Next, choose your preferred spot in the studio.": "Prüfe Trainer, Studio und Uhrzeit. Wähle danach deinen bevorzugten Platz im Studio.",
+    "Continue · Choose spot": "Weiter · Platz wählen",
+    "Choose your spot": "Wähle deinen Platz",
+    "Please enter a valid email address.": "Bitte gib eine gültige E Mail Adresse ein.",
+    "Check password": "Passwort prüfen",
+    "At least 8 characters.": "Mindestens 8 Zeichen.",
+    "First and last name are required.": "Vorname und Nachname sind erforderlich.",
+    "Check mobile number": "Mobilnummer prüfen",
+    "Please enter a valid mobile number.": "Bitte gib eine gültige Mobilnummer ein.",
+    "Date of birth required": "Geburtsdatum erforderlich",
+    "Please enter your date of birth.": "Bitte gib dein Geburtsdatum ein.",
+    "Reserving your place": "Dein Platz wird reserviert",
+    "This class is already booked on this Classy account.": "Dieser Kurs ist bereits auf diesem Classy Konto gebucht.",
+    "This class has just sold out.": "Dieser Kurs ist gerade ausgebucht.",
+    "This class is no longer available.": "Dieser Kurs ist nicht mehr verfügbar.",
+    "This class has already started.": "Dieser Kurs hat bereits begonnen.",
+    "This spot was just taken.": "Dieser Platz wurde gerade vergeben.",
+    "Please use a customer account.": "Bitte verwende ein Kundenkonto.",
+    "The voucher or gift code could not be found. Please check the code or remove it and try again.": "Der Gutschein oder Geschenkcode wurde nicht gefunden. Bitte prüfe den Code oder entferne ihn und versuche es erneut.",
+    "This voucher has already been redeemed.": "Dieser Gutschein wurde bereits eingelöst.",
+    "Secure payment is currently unavailable.": "Die sichere Zahlung ist aktuell nicht verfügbar.",
+    "The current SumUp payment session could not be verified. Please try again.": "Die aktuelle SumUp Zahlungssitzung konnte nicht bestätigt werden. Bitte versuche es erneut.",
+    "This reservation is no longer payable. Please refresh the schedule and try again.": "Diese Reservierung kann nicht mehr bezahlt werden. Bitte aktualisiere den Stundenplan und versuche es erneut.",
+    "A payment session is already active for this booking. Tap continue again to resume it.": "Für diese Buchung ist bereits eine Zahlungssitzung aktiv. Tippe erneut auf Weiter, um sie fortzusetzen.",
+    "This booking is already paid.": "Diese Buchung ist bereits bezahlt.",
+    "We could not start the payment. No payment was confirmed. Please try again.": "Die Zahlung konnte nicht gestartet werden. Es wurde keine Zahlung bestätigt. Bitte versuche es erneut.",
+    "Class Credit": "Kursguthaben",
+    "Payment is processing": "Zahlung wird verarbeitet",
+    "SumUp did not confirm the payment. The pending booking has been cancelled.": "SumUp hat die Zahlung nicht bestätigt. Die ausstehende Buchung wurde storniert.",
+    "No successful payment has been confirmed yet. Please check your account before trying again.": "Es wurde noch keine erfolgreiche Zahlung bestätigt. Bitte prüfe dein Konto, bevor du es erneut versuchst."
+});
   const PATTERNS=[
     [/^(\d+)[.)] (.+)$/, (n,value)=>`${n}. ${DE[value]||value}`],[/^(\d+) coach profiles\.$/,n=>`${n} Trainerprofile.`],[/^(\d+) profiles · photos are used across the schedule and booking flow\.$/,n=>`${n} Profile · Fotos werden im Stundenplan und Buchungsablauf verwendet.`],[/^(\d+) entries · customers, spots and payment status\.$/,n=>`${n} Einträge · Kunden, Plätze und Zahlungsstatus.`],[/^(\d+) sessions in the Control Center\.$/,n=>`${n} Einheiten in der Zentrale.`],[/^(\d+) historical bookings$/,n=>`${n} historische Buchungen`],[/^(\d+) Class Pack$/,n=>`${n} Kurspaket`],[/^(\d+) Class Packs$/,n=>`${n} Kurspakete`],[/^(\d+) Min\.$/,n=>`${n} Min.`],[/^(\d+) available$/,n=>`${n} verfügbar`],[/^(\d+) total$/,n=>`${n} gesamt`],[/^(\d+) classes saved$/,n=>`${n} Kurse gespeichert`],[/^(\d+) class saved$/,n=>`${n} Kurs gespeichert`],[/^(\d+) credits added$/,n=>`${n} Guthaben hinzugefügt`],[/^(\d+) Class Credits? available$/,n=>`${n} Kursguthaben verfügbar`],[/^You have (\d+) available\. No new payment is needed\.$/,n=>`Du hast ${n} verfügbar. Es ist keine neue Zahlung erforderlich.`],[/^One class credit was used\. You have (\d+) left\.$/,n=>`Ein Kursguthaben wurde verwendet. Du hast noch ${n} übrig.`],[/^The customer now has (\d+) available credits\.$/,n=>`Der Kunde hat jetzt ${n} verfügbare Guthaben.`],[/^Continue as (.+)\.$/,name=>`Weiter als ${name}.`],[/^(\d+) spots$/,n=>`${n} Plätze`],[/^Only (\d+) spots$/,n=>`Nur noch ${n} Plätze`],[/^(\d+) online payments? · (.+)$/, (n,rest)=>`${n} Online Zahlungen · ${rest}`]
   ];
