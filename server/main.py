@@ -8,6 +8,7 @@ import smtplib
 import ssl
 import html
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -41,6 +42,7 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
 SMTP_SSL = os.getenv("SMTP_SSL", "true").lower() in {"1", "true", "yes", "on"}
 SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "false").lower() in {"1", "true", "yes", "on"}
+CREDIT_VALUE_BY_PRICE = {2800: 1, 11900: 5, 21900: 10, 39900: 20}
 
 
 def send_transactional_email(to_email: str, subject: str, heading: str, paragraphs: list[str]) -> None:
@@ -51,6 +53,10 @@ def send_transactional_email(to_email: str, subject: str, heading: str, paragrap
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=False, usegmt=True)
+    msg["Message-ID"] = make_msgid(domain="classypilates.de")
+    if SMTP_USER:
+        msg["Reply-To"] = SMTP_USER
     text = heading + "\n\n" + "\n\n".join(paragraphs) + "\n\nClassy Pilates Frankfurt"
     msg.set_content(text)
     safe_heading = html.escape(heading)
@@ -100,14 +106,26 @@ def booking_email_data(booking: "Booking") -> tuple[str, str, str, list[str]]:
 
 def cancellation_email_data(booking: "Booking") -> tuple[str, str, str, list[str]]:
     starts = as_utc(booking.klass.starts_at).astimezone(ZoneInfo("Europe/Berlin"))
+    if booking.payment_method == "sumup_credit_refunded":
+        credits = CREDIT_VALUE_BY_PRICE.get(int(booking.amount_cents or 0), 1)
+        credit_text = (
+            f"Für deine bestätigte SumUp Zahlung wurden deinem Classy Konto {credits} Class Credits gutgeschrieben."
+            if credits != 1
+            else "Für deine bestätigte SumUp Zahlung wurde deinem Classy Konto 1 Class Credit gutgeschrieben."
+        )
+    elif booking.payment_method == "class_credit_refunded":
+        credit_text = "Der für diese Buchung verwendete Class Credit wurde deinem Classy Konto wieder gutgeschrieben."
+    else:
+        credit_text = "Die Stornierung wurde erfolgreich bestätigt."
     return (
         booking.email,
         f"Stornierungsbestätigung · {booking.klass.title}",
         "Deine Buchung wurde storniert",
         [
+            f"Hallo {booking.customer_name or 'Classy Client'},",
             f"{booking.klass.title} · {starts.strftime('%d.%m.%Y um %H:%M Uhr')} · {booking.klass.studio.name}",
             f"Buchungsnummer: {booking.reference}",
-            "Ein verwendeter Class Credit wurde deinem Kundenkonto wieder gutgeschrieben, sofern die Stornierungsfrist eingehalten wurde.",
+            credit_text,
         ],
     )
 
@@ -966,6 +984,55 @@ def customer_claim_booking(data: BookingClaimIn, user: User = Depends(customer_o
         db.add(CustomerBookingLink(booking_id=booking.id, user_id=user.id)); db.commit()
     return {"ok": True}
 
+def credit_refund_for_cancelled_booking(booking: "Booking", db: Session, user_id: Optional[int] = None) -> int:
+    """Convert an eligible cancelled booking payment back into Classy credits once."""
+    method = str(booking.payment_method or "").strip().lower()
+    if method.endswith("_refunded"):
+        return 0
+
+    credits = 0
+    refunded_method = method
+    if method == "class_credit":
+        credits = 1
+        refunded_method = "class_credit_refunded"
+    elif method == "sumup" and booking.payment_status == "paid":
+        credits = int(CREDIT_VALUE_BY_PRICE.get(int(booking.amount_cents or 0), 0))
+        if credits:
+            refunded_method = "sumup_credit_refunded"
+
+    if credits <= 0:
+        return 0
+
+    target_user_id = user_id
+    if not target_user_id:
+        link = db.get(CustomerBookingLink, booking.id)
+        if link:
+            target_user_id = link.user_id
+    if not target_user_id:
+        customer = db.scalar(
+            select(User)
+            .where(func.lower(User.email) == str(booking.email or "").strip().lower())
+            .limit(1)
+        )
+        if customer and portal_for(customer) == "/account":
+            target_user_id = customer.id
+    if not target_user_id:
+        return 0
+
+    profile = db.scalar(
+        select(CustomerProfile)
+        .where(CustomerProfile.user_id == target_user_id)
+        .with_for_update()
+    )
+    if not profile:
+        profile = CustomerProfile(user_id=target_user_id)
+        db.add(profile)
+        db.flush()
+    profile.credits += credits
+    booking.payment_method = refunded_method
+    return credits
+
+
 @app.delete("/api/customer/bookings/{reference}")
 def customer_cancel_booking(reference: str, background_tasks: BackgroundTasks, user: User = Depends(customer_only), db: Session = Depends(db_session)):
     booking = db.scalar(
@@ -985,14 +1052,10 @@ def customer_cancel_booking(reference: str, background_tasks: BackgroundTasks, u
     except Exception as exc:
         raise HTTPException(503, "mindbody_cancellation_unavailable") from exc
     booking.status = "cancelled"
-    if booking.payment_method == "class_credit":
-        profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == user.id).with_for_update())
-        if profile:
-            profile.credits += 1
-        booking.payment_method = "class_credit_refunded"
+    refunded_credits = credit_refund_for_cancelled_booking(booking, db, user.id)
     db.commit()
     background_tasks.add_task(send_transactional_email, *cancellation_email_data(booking))
-    return {"ok": True}
+    return {"ok": True, "credits_refunded": refunded_credits}
 
 @app.get("/api/customer/waitlist")
 def customer_waitlist(user: User = Depends(customer_only), db: Session = Depends(db_session)):
@@ -1821,16 +1884,13 @@ def public_cancel(payload: dict, background_tasks: BackgroundTasks, db: Session 
         cancel_local_booking_strict(b.id)
     except Exception as exc:
         raise HTTPException(503, "mindbody_cancellation_unavailable") from exc
+    if datetime.now(timezone.utc) >= as_utc(b.klass.starts_at) - timedelta(hours=12):
+        raise HTTPException(409, "cancellation_window_closed")
     b.status="cancelled"
-    if b.payment_method == "class_credit":
-        link = db.get(CustomerBookingLink, b.id)
-        profile = db.scalar(select(CustomerProfile).where(CustomerProfile.user_id == link.user_id).with_for_update()) if link else None
-        if profile:
-            profile.credits += 1
-        b.payment_method = "class_credit_refunded"
+    refunded_credits = credit_refund_for_cancelled_booking(b, db)
     db.commit()
     background_tasks.add_task(send_transactional_email, *cancellation_email_data(b))
-    return {"ok":True}
+    return {"ok":True, "credits_refunded": refunded_credits}
 
 @app.post("/api/waitlist")
 def join_waitlist(data: WaitlistIn, background_tasks: BackgroundTasks, user: Optional[User] = Depends(optional_user), db: Session = Depends(db_session)):
