@@ -1,0 +1,82 @@
+name: Backfill Cancelled SumUp Credit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/backfill-cancelled-sumup-credit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Credit cancelled paid booking
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from sqlalchemy import select
+          import main as core
+
+          reference = "CP-78203763"
+          with core.SessionLocal() as db:
+              booking = db.scalar(
+                  select(core.Booking)
+                  .where(core.Booking.reference == reference)
+                  .limit(1)
+              )
+              if not booking:
+                  raise SystemExit("booking_not_found")
+              if booking.status != "cancelled":
+                  raise SystemExit(f"booking_not_cancelled:{booking.status}")
+              if booking.payment_status != "paid":
+                  raise SystemExit(f"booking_not_paid:{booking.payment_status}")
+
+              link = db.get(core.CustomerBookingLink, booking.id)
+              if not link:
+                  raise SystemExit("customer_link_missing")
+              profile = db.scalar(
+                  select(core.CustomerProfile)
+                  .where(core.CustomerProfile.user_id == link.user_id)
+                  .with_for_update()
+              )
+              if not profile:
+                  profile = core.CustomerProfile(user_id=link.user_id)
+                  db.add(profile)
+                  db.flush()
+
+              before = int(profile.credits or 0)
+              if booking.payment_method == "sumup_credit_refunded":
+                  added = 0
+              elif booking.payment_method == "sumup":
+                  added = int(core.CREDIT_VALUE_BY_PRICE.get(int(booking.amount_cents or 0), 0))
+                  if added <= 0:
+                      raise SystemExit(f"unsupported_amount:{booking.amount_cents}")
+                  profile.credits += added
+                  booking.payment_method = "sumup_credit_refunded"
+                  db.commit()
+              else:
+                  raise SystemExit(f"unexpected_payment_method:{booking.payment_method}")
+
+              after = int(profile.credits or 0)
+              email = str(booking.email or "")
+              local, _, domain = email.partition("@")
+              masked = (local[:2] + "***@" + domain) if domain else "***"
+              print({
+                  "reference": reference,
+                  "email": masked,
+                  "amount_cents": int(booking.amount_cents or 0),
+                  "credits_added": added,
+                  "credits_before": before,
+                  "credits_after": after,
+                  "payment_method": booking.payment_method,
+              })
+          PY
