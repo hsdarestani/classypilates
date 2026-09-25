@@ -1,0 +1,41 @@
+name: Mindbody Customer Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/mindbody-customer-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Verify Mindbody customer and class reads
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from mindbody_sync import sync_client_directory, mindbody_class_catalog
+          clients = sync_client_directory(max_clients=5000)
+          catalog = mindbody_class_catalog()
+          print({
+              "clients_seen": int(clients.get("seen", 0)),
+              "clients_written": int(clients.get("written", 0)),
+              "bookings_enriched": int(clients.get("bookings_enriched", 0)),
+              "class_descriptions": len(catalog.get("class_descriptions", [])),
+              "locations": len(catalog.get("locations", [])),
+              "coaches": len(catalog.get("coaches", [])),
+          })
+          if int(clients.get("seen", 0)) <= 0:
+              raise SystemExit("no_mindbody_clients_returned")
+          if len(catalog.get("class_descriptions", [])) <= 0:
+              raise SystemExit("no_mindbody_class_descriptions")
+          PY
