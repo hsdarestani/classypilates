@@ -97,7 +97,7 @@
     ${passPanel}
     <section class="panel customer-directory-panel">
       <div class="panel-head"><div><p class="kicker">CUSTOMER DIRECTORY</p><h2>Customers</h2><p>Classy and Mindbody profiles live in the same list. Source stays visible on every profile.</p></div><button class="secondary" id="refreshMindbodyCustomers">Refresh Mindbody</button></div>
-      <div class="list-toolbar customer-toolbar"><input id="customerSearch" type="search" placeholder="Search name, email, phone or Mindbody ID…"><span id="customerCount"></span></div>
+      <div class="list-toolbar customer-toolbar"><input id="customerSearch" type="search" placeholder="Search name, email, phone or Mindbody ID…"><select id="customerSourceFilter" aria-label="Filter customer source"><option value="">All sources</option><option value="Classy">Classy</option><option value="Mindbody">Mindbody</option><option value="Classy + Mindbody">Classy + Mindbody</option></select><select id="customerStateFilter" aria-label="Filter customer status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select><span id="customerCount"></span></div>
       <div id="customerDirectory"></div>
     </section>`;
 
@@ -135,15 +135,22 @@
       $('#customerCount').textContent=`${rows.length} of ${d.customers.length}`;
       wireRows()
     };
+    const applyCustomerFilters=()=>{
+      const q=($('#customerSearch')?.value||'').trim().toLowerCase();
+      const source=$('#customerSourceFilter')?.value||'';
+      const stateFilter=$('#customerStateFilter')?.value||'';
+      renderRows(d.customers.filter(x=>{
+        const matchesQuery=!q||[x.first_name,x.last_name,x.email,x.phone,x.mindbody_client_id,x.client_type,x.home_location,x.source].some(value=>String(value||'').toLowerCase().includes(q));
+        const matchesSource=!source||x.source===source;
+        const active=Boolean(x.provider_active??x.is_active);
+        const matchesState=!stateFilter||(stateFilter==='active'?active:!active);
+        return matchesQuery&&matchesSource&&matchesState;
+      }))
+    };
     renderRows(d.customers);
-
-    $('#customerSearch')?.addEventListener('input',event=>{
-      const q=event.target.value.trim().toLowerCase();
-      if(!q)return renderRows(d.customers);
-      renderRows(d.customers.filter(x=>[
-        x.first_name,x.last_name,x.email,x.phone,x.mindbody_client_id,x.client_type,x.home_location,x.source
-      ].some(value=>String(value||'').toLowerCase().includes(q))))
-    });
+    $('#customerSearch')?.addEventListener('input',applyCustomerFilters);
+    $('#customerSourceFilter')?.addEventListener('change',applyCustomerFilters);
+    $('#customerStateFilter')?.addEventListener('change',applyCustomerFilters);
 
     $('#refreshMindbodyCustomers')?.addEventListener('click',async()=>{
       const button=$('#refreshMindbodyCustomers'),old=button.textContent;
@@ -215,7 +222,7 @@
 
     const providerReady=Boolean(catalog&&Array.isArray(catalog.class_descriptions)&&catalog.class_descriptions.length);
     const mindbodySource=Boolean(mbStatus?.configured||providerReady||d.classes.some(c=>c.mindbody_managed));
-    const writeThroughReady=Boolean(mindbodySource&&providerReady);
+    const writeThroughReady=false;
     const coachSelect=coachRows.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join('');
     const descriptionOptions=providerReady
       ? catalog.class_descriptions.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
@@ -242,7 +249,7 @@
         <div><button class="primary" id="createClass">${providerReady?'Create in Mindbody':'Save class series'}</button></div>
       </div>
     </section>`:''}
-    ${mindbodySource?`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY SCHEDULE</p><h2>${writeThroughReady?'Two way schedule management':'Mindbody schedule connected'}</h2><p>${writeThroughReady?'Create and supported schedule changes are written to Mindbody first, then mirrored back into Classy.':'Mindbody remains the source of truth. The class catalog could not be loaded, so write controls are temporarily disabled rather than risking a local only change.'}</p></div><span class="provider-chip mindbody">${writeThroughReady?'Two way':'Read only'}</span></div>${writeThroughReady?'<div class="provider-note"><b>Provider first safety.</b><span>Studio, coach, time, duration and capacity write through to Mindbody. Class name, type and description use the existing Mindbody Class Description.</span></div>':'<div class="provider-note"><b>No local fallback.</b><span>Refresh later or check Mindbody connectivity. We do not create a local phantom class while the provider catalog is unavailable.</span></div>'}</section>`:''}
+    ${mindbodySource?`<section class="panel"><div class="panel-head"><div><p class="kicker">MINDBODY SCHEDULE</p><h2>${writeThroughReady?'Two way schedule management':'Mindbody schedule connected'}</h2><p>${writeThroughReady?'Create and supported schedule changes are written to Mindbody first, then mirrored back into Classy.':'Mindbody remains the source of truth. Class management is intentionally read only here while the integration is active.'}</p></div><span class="provider-chip mindbody">${writeThroughReady?'Two way':'Read only'}</span></div>${writeThroughReady?'<div class="provider-note"><b>Provider first safety.</b><span>Studio, coach, time, duration and capacity write through to Mindbody. Class name, type and description use the existing Mindbody Class Description.</span></div>':'<div class="provider-note"><b>No local fallback.</b><span>Create, edit and cancellation stay in Mindbody for now. The Classy write through capability remains in the backend so it can be enabled later.</span></div>'}</section>`:''}
     <section class="panel"><div class="panel-head"><div><p class="kicker">CENTRAL SCHEDULE</p><h2>Classes</h2><p>${d.classes.length} sessions in the Control Center. ${writeThroughReady?'Mindbody backed rows can be managed here with provider first writes.':mindbodySource?'Schedule data is mirrored from Mindbody and is temporarily read only here.':'Manage the local Classy schedule here.'}</p></div></div>${classTable(d.classes,mindbodySource&&!writeThroughReady)}</section>`;
 
     if($('#cStart')){
