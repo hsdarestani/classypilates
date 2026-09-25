@@ -1,0 +1,74 @@
+name: Vendor Legacy WordPress Media
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/vendor-legacy-media.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download every legacy WordPress asset referenced by the new site
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          from urllib.parse import urlparse, unquote
+
+          root = Path("public")
+          pattern = re.compile(r'https://classypilates\.de(/wp-content/uploads/[^\s\\"\'\)<>]+)')
+          urls = set()
+
+          for path in root.rglob("*"):
+              if not path.is_file() or path.suffix.lower() not in {".css",".js",".html",".json",".md"}:
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8", errors="ignore")
+              except Exception:
+                  continue
+              for m in pattern.finditer(text):
+                  rel = m.group(1).rstrip(";,")
+                  urls.add("https://classypilates.de" + rel)
+
+          if not urls:
+              raise SystemExit("No legacy WordPress media references found.")
+
+          print(f"Found {len(urls)} referenced legacy media files.")
+          for url in sorted(urls):
+              parsed = urlparse(url)
+              rel_path = unquote(parsed.path).lstrip("/")
+              dest = root / rel_path
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              print(f"Downloading {url} -> {dest}")
+              subprocess.run([
+                  "curl","-kfsSL","--retry","3","--connect-timeout","15",
+                  "--resolve","classypilates.de:443:81.88.34.82",
+                  url,"-o",str(dest)
+              ], check=True)
+              if dest.stat().st_size < 1024:
+                  raise SystemExit(f"Downloaded file looks invalid or too small: {dest}")
+
+          print("Legacy media vendored successfully.")
+          PY
+
+      - name: Commit vendored media
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/wp-content
+          if git diff --cached --quiet; then
+            echo "All referenced legacy media is already local."
+            exit 0
+          fi
+          git commit -m "Vendor legacy WordPress media locally"
+          git push
