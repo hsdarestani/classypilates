@@ -6,8 +6,20 @@
   const safeNext=()=>{const value=new URLSearchParams(location.search).get('next');return allowedPortals.has(value)?value:''};
   async function api(path,body){let response;try{response=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify(body)})}catch(_){throw new Error('server_unreachable')}let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'request_failed');return data}
   function setMode(mode){const login=mode==='login';$('#loginForm').hidden=!login;$('#registerForm').hidden=login;$('#loginTab').classList.toggle('active',login);$('#registerTab').classList.toggle('active',!login)}
+  function bindPasswordToggle(toggleSelector,...fieldSelectors){
+    const toggle=$(toggleSelector);
+    if(!toggle)return;
+    const sync=()=>{
+      const type=toggle.checked?'text':'password';
+      fieldSelectors.map(selector=>$(selector)).filter(Boolean).forEach(field=>field.setAttribute('type',type));
+    };
+    toggle.addEventListener('change',sync);
+    toggle.addEventListener('input',sync);
+    sync();
+  }
   $('#loginTab').onclick=()=>setMode('login');$('#registerTab').onclick=()=>setMode('register');
-  $('#showPassword').onchange=()=>{$('#loginPassword').type=$('#showPassword').checked?'text':'password'};
+  bindPasswordToggle('#showPassword','#loginPassword');
+  bindPasswordToggle('#showRegisterPassword','#registerPassword');
   $('#loginForm').onsubmit=async event=>{event.preventDefault();const button=$('#loginSubmit');$('#loginMessage').textContent='';try{button.disabled=true;button.textContent='Checking…';const data=await api('/api/auth/login',{email:$('#loginEmail').value.trim(),password:$('#loginPassword').value});location.replace(safeNext()||routeFor(data.user))}catch(error){$('#loginMessage').textContent=error.message==='server_unreachable'?'The login server is unavailable.':messages[error.message]||error.message}finally{button.disabled=false;button.textContent='Sign in'}};
   $('#registerForm').onsubmit=async event=>{event.preventDefault();const button=$('#registerSubmit');$('#registerMessage').textContent='';if(!$('#registerTerms').checked){$('#registerMessage').textContent='Please accept the terms.';return}try{button.disabled=true;button.textContent='Creating account…';await api('/api/auth/register',{email:$('#registerEmail').value.trim(),password:$('#registerPassword').value,first_name:$('#registerFirst').value.trim(),last_name:$('#registerLast').value.trim(),phone:$('#registerPhone').value.trim(),marketing_opt_in:$('#registerMarketing').checked});location.replace('/account')}catch(error){$('#registerMessage').textContent=error.message==='server_unreachable'?'The server is unavailable.':messages[error.message]||error.message}finally{button.disabled=false;button.textContent='Create account'}};
   fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'}).then(async response=>{if(!response.ok)return;const user=await response.json();location.replace(safeNext()||routeFor(user))}).catch(()=>{});
