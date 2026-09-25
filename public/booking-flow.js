@@ -107,7 +107,7 @@
     }catch(error){
       if(button){button.disabled=false;button.textContent='Continue to payment'}
       const message=error.message==='invalid_credentials'?'Email or password is incorrect.':error.message==='password_too_short'?'The password must be at least 8 characters.':'We could not check your Classy account. Please try again.';
-      showToast('Account check failed',message)
+      showToast('Account check failed',message,'error')
     }
   }
 
@@ -125,6 +125,11 @@
     const action=selectedCredit?'Use 1 Class Credit':'Continue to SumUp';
     setDrawer('Checkout',`${review}<div class="wizard-panel payment-panel"><div class="wizard-kicker">SECURE CHECKOUT</div><h4>Ready to confirm.</h4><p>${intro}</p><div class="wizard-payment-grid">${paymentOptions}</div><div class="payment-security-note"><span>✓</span><p>${selectedCredit?'Your existing credit is only deducted after the booking is created successfully.':'No payment is marked as successful until SumUp confirms it.'}</p></div><div class="wizard-sticky-actions"><button class="drawer-action secondary" id="backDetails">Back</button><button class="drawer-action" id="finishPayment">${action}</button></div></div>`,4);
     $('[data-wpay]').forEach(b=>b.addEventListener('click',()=>{wizard.payment=b.dataset.wpay;wizard.paymentChoiceMade=true;renderPaymentStep()}));$('#backDetails')?.addEventListener('click',renderDetailsStep);$('#finishPayment')?.addEventListener('click',processPayment)
+  }
+  function resetPaymentButton(){
+    const btn=$('#finishPayment');if(!btn)return;
+    btn.disabled=false;
+    btn.innerHTML=wizard.payment==='class_credit'?'Use 1 Class Credit':'Continue to SumUp'
   }
   function processPayment(){const btn=$('#finishPayment');if(btn){btn.disabled=true;btn.innerHTML=wizard.payment==='class_credit'?'<span class="button-spinner"></span> Using Class Credit…':'<span class="button-spinner"></span> Preparing secure payment…'}completeBookingPayment()}
   function bookingRefV2(){return 'CP-'+(cryptoSafeToken?cryptoSafeToken(8):Math.random().toString(36).slice(2,10).toUpperCase())}
@@ -233,7 +238,8 @@
         return
       }
       console.warn('Classy checkout failed:',error.message);
-      if(error.message==='class_credit_unavailable'){wizard.credits=0;wizard.payment='sumup';wizard.paymentChoiceMade=true}
+      if(error.message==='class_credit_unavailable'){wizard.credits=0;wizard.payment='sumup';wizard.paymentChoiceMade=true;renderPaymentStep()}
+      else resetPaymentButton();
       showPaymentFailure(error.message)
     }
   }
