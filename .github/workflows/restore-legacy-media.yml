@@ -1,11 +1,6 @@
 name: Restore Legacy WordPress Media
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/deploy-production.yml"
-      - ".github/workflows/restore-legacy-media.yml"
   workflow_dispatch:
 
 permissions:
