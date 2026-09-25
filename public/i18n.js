@@ -43,7 +43,7 @@
     'Mindbody could not authorize the reservation. No payment was taken. Please try again in a moment.':'Mindbody konnte die Reservierung nicht autorisieren. Es wurde keine Zahlung ausgeführt. Bitte versuche es gleich noch einmal.',
     'Your Classy profile is missing information required by Mindbody. Please update your mobile number and try again.':'In deinem Classy Profil fehlen Angaben, die Mindbody benötigt. Bitte ergänze deine Mobilnummer und versuche es erneut.',
     'Mindbody rejected the reservation permission. No payment was taken.':'Mindbody hat die Berechtigung für die Reservierung abgelehnt. Es wurde keine Zahlung ausgeführt.',
-    'The booking service took too long to respond. No payment was confirmed. Please try again.':'Der Buchungsdienst hat zu lange gebraucht. Es wurde keine Zahlung bestätigt. Bitte versuche es erneut.',
+    'The booking request timed out before it could be confirmed. No payment was taken. Tap continue again to safely resume.':'Die Buchungsanfrage hat zu lange gebraucht. Es wurde keine Zahlung ausgeführt. Tippe erneut auf Weiter, um die Buchung sicher fortzusetzen.',
     'Reserving your place…':'Dein Platz wird reserviert…',
     'Opening secure payment…':'Sichere Zahlung wird geöffnet…',
     'Mindbody is taking longer than expected to confirm the reservation. No payment was taken. Tap continue again to resume the same booking.':'Mindbody benötigt länger als erwartet, um die Reservierung zu bestätigen. Es wurde keine Zahlung ausgeführt. Tippe erneut auf Weiter, um dieselbe Buchung fortzusetzen.'

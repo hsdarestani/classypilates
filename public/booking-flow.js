@@ -137,7 +137,7 @@
       mindbody_auth_failed:'Mindbody could not authorize the reservation. No payment was taken. Please try again in a moment.',
       mindbody_profile_incomplete:'Your Classy profile is missing information required by Mindbody. Please update your mobile number and try again.',
       mindbody_permission_denied:'Mindbody rejected the reservation permission. No payment was taken.',
-      request_timeout:'The booking service took too long to respond. No payment was confirmed. Please try again.',
+      request_timeout:'The booking request timed out before it could be confirmed. No payment was taken. Tap continue again to safely resume.',
       mindbody_timeout:'Mindbody is taking longer than expected to confirm the reservation. No payment was taken. Tap continue again to resume the same booking.',
       sumup_not_configured:'Secure payment is currently unavailable.',
       sumup_unavailable:'SumUp is temporarily unavailable. Please try again.',

@@ -2,6 +2,8 @@ import os
 import smtplib
 import ssl
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError
 from urllib.request import Request as UrlRequest, urlopen
@@ -21,6 +23,10 @@ import main as core
 
 app = core.app
 BERLIN = ZoneInfo("Europe/Berlin")
+BOOKING_HOLD_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(2, int(os.getenv("MINDBODY_BOOKING_HOLD_WORKERS", "8"))),
+    thread_name_prefix="mindbody-booking-hold",
+)
 ALLOWED_PACKS = {1, 5, 10, 20, 30, 50}
 KNOWN_PACK_PRICES = {1: 2800, 5: 11900, 10: 21900, 20: 39900}
 SHOP_PRODUCTS = {
@@ -880,6 +886,7 @@ def _mindbody_booking_error_code(raw: str) -> str:
 def _hold_booking_background(booking_id: int) -> None:
     from mindbody_sync import hold_local_booking
 
+    started = time.monotonic()
     hold_local_booking(booking_id)
     email_job = None
     with core.SessionLocal() as db:
@@ -913,6 +920,19 @@ def _hold_booking_background(booking_id: int) -> None:
             if booking.payment_status != "paid" or booking.payment_method == "class_credit_refunded":
                 booking.payment_status = "failed"
             db.commit()
+    elapsed = time.monotonic() - started
+    try:
+        with core.SessionLocal() as db:
+            status_row = db.get(core.Booking, booking_id)
+            if status_row:
+                print(
+                    f"Mindbody checkout hold: ref={status_row.reference} "
+                    f"status={status_row.mindbody_sync_status} elapsed={elapsed:.2f}s "
+                    f"error={_mindbody_booking_error_code(status_row.mindbody_sync_error) if status_row.mindbody_sync_error else 'none'}",
+                    flush=True,
+                )
+    except Exception as exc:
+        print(f"Mindbody checkout hold logging failed: {type(exc).__name__}", flush=True)
     if email_job:
         core.send_transactional_email(*email_job)
 
@@ -1078,7 +1098,11 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     db.commit()
 
     if c.mindbody_class_id:
-        background_tasks.add_task(_hold_booking_background, booking.id)
+        # Do not use FastAPI BackgroundTasks here. Starlette waits for those tasks
+        # before the ASGI request fully completes, and nginx can buffer that response,
+        # which made the browser hit its checkout timeout while Mindbody was still
+        # working. Submit to a dedicated executor so /api/bookings returns immediately.
+        BOOKING_HOLD_EXECUTOR.submit(_hold_booking_background, booking.id)
     elif use_credit:
         background_tasks.add_task(core.send_transactional_email, *core.booking_email_data(booking))
 
