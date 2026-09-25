@@ -2,7 +2,7 @@
   const selector='input[data-password-visibility]';
 
   function targetsFor(toggle){
-    const raw=(toggle.getAttribute('data-password-targets')||'').trim();
+    const raw=(toggle.getAttribute('data-password-targets')||toggle.getAttribute('data-password-toggle')||'').trim();
     if(raw){
       return raw.split(',').map(value=>value.trim()).filter(Boolean).flatMap(value=>[...document.querySelectorAll(value)]);
     }
