@@ -3,7 +3,7 @@
   const localGenerateSchedule=generateSchedule,localConfirmBooking=confirmBooking,localJoinWaitlist=joinWaitlist,localRenderMyBookings=renderMyBookings,localCancelBooking=cancelBooking;
   const readJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback))}catch(_){return fallback}};
   const writeJson=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value))}catch(_){}};
-  let remoteClasses=null,lastRange='';
+  let remoteClasses=null,lastRange='',remoteSignature='';
   const apiFetch=async(url,options={},timeoutMs=15000)=>{const controller=new AbortController();const t=setTimeout(()=>controller.abort(),timeoutMs);try{return await fetch(url,{...options,cache:'no-store',signal:controller.signal,headers:{'content-type':'application/json','cache-control':'no-cache',...(options.headers||{})}})}finally{clearTimeout(t)}};
   const apiUnavailable=r=>!r||[404,501,503].includes(r.status);
   const rememberEmail=e=>{try{localStorage.setItem('cpLastEmail',e)}catch(_){}};const lastEmail=()=>{try{return localStorage.getItem('cpLastEmail')||''}catch(_){return''}};
@@ -12,7 +12,36 @@
   function mapRemote(row){const d=new Date(row.starts_at),date=frankfurtDate(d),type=row.type==='Mat Pilates'?'Mat':row.type;return{id:row.id,date,dateObj:new Date(`${date}T12:00:00`),time:frankfurtTime(d),startsAt:row.starts_at,duration:Number(row.duration)||50,studio:row.studio,type,name:row.name,description:row.description||'',coach:row.coach||'Classy Coach',spots:Math.max(0,Number(row.spots)||0),capacity:Number(row.capacity)||10,reserved:Math.max(0,Number(row.reserved)||0),importedReserved:Math.max(0,Number(row.imported_reserved)||0)}}
   function remoteForSelectedDay(){if(!remoteClasses)return null;const target=isoDate(dateAt(state.selectedDay));return remoteClasses.filter(r=>r.date===target).sort((a,b)=>a.time.localeCompare(b.time)||a.studio.localeCompare(b.studio))}
   generateSchedule=function(){const rows=remoteForSelectedDay();return rows===null?[]:rows};
-  async function refreshRemoteSchedule(){const from=isoDate(dateAt(0));const to=isoDate(dateAt(13));const range=from+'|'+to;if(range===lastRange&&remoteClasses)return;lastRange=range;const source=$('#scheduleSource');if(source)source.textContent='Loading Mindbody schedule…';try{const r=await apiFetch(`/api/schedule?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&_ts=${Date.now()}`);if(!r.ok)throw new Error('schedule_failed');const data=await r.json();remoteClasses=Array.isArray(data.classes)?data.classes.map(mapRemote):[];if(source)source.textContent=`LIVE · ${remoteClasses.length} sessions in the selected period`;renderSchedule()}catch(_){remoteClasses=[];if(source)source.textContent='Live schedule is currently unavailable';renderSchedule()}}
+  const scheduleSignature=rows=>JSON.stringify(rows.map(r=>[r.id,r.date,r.time,r.studio,r.name,r.coach,r.spots,r.capacity,r.reserved]));
+  async function refreshRemoteSchedule(){
+    const from=isoDate(dateAt(0)),to=isoDate(dateAt(13)),range=from+'|'+to;
+    if(range===lastRange&&remoteClasses)return;
+    lastRange=range;
+    const source=$('#scheduleSource'),hadData=Array.isArray(remoteClasses);
+    if(source&&!hadData)source.textContent='Loading Mindbody schedule…';
+    try{
+      const r=await apiFetch(`/api/schedule?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&_ts=${Date.now()}`);
+      if(!r.ok)throw new Error('schedule_failed');
+      const data=await r.json();
+      const next=Array.isArray(data.classes)?data.classes.map(mapRemote):[];
+      const nextSignature=scheduleSignature(next);
+      const changed=nextSignature!==remoteSignature;
+      remoteClasses=next;
+      remoteSignature=nextSignature;
+      if(source)source.textContent=`LIVE · ${remoteClasses.length} sessions in the selected period`;
+      if(changed||!hadData)renderSchedule()
+    }catch(_){
+      lastRange='';
+      if(!hadData){
+        remoteClasses=[];
+        remoteSignature='[]';
+        if(source)source.textContent='Live schedule is currently unavailable';
+        renderSchedule()
+      }else if(source){
+        source.textContent=`LIVE · ${remoteClasses.length} sessions · showing last confirmed update`
+      }
+    }
+  }
   async function remoteConfirm(r){
     const emailInput=$('#bookEmail');const email=emailInput?.value.trim().toLowerCase()||'';if(!validEmail(email)){showToast('Check email','Please enter a valid email address.');emailInput?.focus();return}
     const firstName=state.mode==='first'?($('#bookName')?.value.trim()||''):'';if(state.mode==='first'&&firstName.length<2){showToast('First name required','Please enter your first name.');$('#bookName')?.focus();return}
@@ -58,7 +87,32 @@
     }catch(_){showToast('Waitlist unavailable','The waitlist could not be removed. It remains active.')}
   }
   async function loadBookings(){const input=$('#accountEmail'),refInput=$('#accountReference');const email=input?.value.trim().toLowerCase()||'',reference=refInput?.value.trim().toUpperCase()||'';if(!validEmail(email)){showToast('Check email','Please enter a valid email address.');return}if(!/^CP-[A-Z0-9]{8}$/.test(reference)){showToast('Check booking number','Enter your booking number in the format CP-XXXXXXXX.');return}try{const response=await apiFetch(`/api/bookings?email=${encodeURIComponent(email)}&reference=${encodeURIComponent(reference)}`);const data=await response.json();if(!response.ok){showToast('Not found','Email and booking number do not match.');return}rememberEmail(email);const active=(data.bookings||[]).filter(b=>b.status==='reserved');const creditLine=`<div class="credit-box"><span>Available credits</span><b>${Number(data.credits)||0}×</b></div>`;$('#drawerBody').innerHTML=active.length?`<div class="drawer-step">${creditLine}${active.map(b=>`<div class="selected-class"><div class="line"><span>${esc(String(b.starts_at).slice(0,10))} · ${esc(String(b.starts_at).slice(11,16))}</span><b>${esc(b.name)}</b></div><div class="line"><span>Studio</span><b>${esc(b.studio_name)}</b></div><div class="line"><span>Booking</span><b>${esc(b.reference)}</b></div><button class="drawer-action secondary" data-api-cancel="${esc(b.reference)}" type="button">Cancel booking</button></div>`).join('')}<button class="drawer-action" id="buyMoreCredits" type="button">Buy credits</button></div>`:`<div class="drawer-step">${creditLine}<div class="confirmation"><div class="big-check" style="background:#d8d0c1;color:#151513">✓</div><h4>This booking is not active.</h4><button class="drawer-action" id="goSchedule" type="button">Open schedule</button></div></div>`;$$('[data-api-cancel]').forEach(btn=>btn.addEventListener('click',()=>remoteCancel(btn.dataset.apiCancel,email)));$('#goSchedule')?.addEventListener('click',()=>{closeDrawer();$('#schedule').scrollIntoView({behavior:'smooth'})});$('#buyMoreCredits')?.addEventListener('click',()=>location.href='/shop')}catch(_){showToast('Connection failed','Please try again.')}}
-  async function remoteCancel(reference,email){try{const response=await apiFetch('/api/bookings',{method:'DELETE',body:JSON.stringify({reference,email})});if(apiUnavailable(response)){showToast('Cancellation unavailable','Cancellation could not be confirmed with the server. Your booking remains active.');return}if(!response.ok){showToast('Cancellation failed','Please try again.');return}showToast('Booking cancelled','The spot and credit were released.');lastRange='';await refreshRemoteSchedule();closeDrawer()}catch(_){showToast('Cancellation failed','Please try again.')}}
+  async function remoteCancel(reference,email){
+    const button=$(`[data-api-cancel="${reference}"]`);
+    const original=button?.textContent||'Cancel booking';
+    if(button){button.disabled=true;button.innerHTML='<span class="button-spinner"></span> Cancelling…'}
+    showToast('Cancellation in progress','Mindbody is confirming the cancellation.');
+    try{
+      const response=await apiFetch('/api/bookings',{method:'DELETE',body:JSON.stringify({reference,email})});
+      if(apiUnavailable(response)){
+        if(button){button.disabled=false;button.textContent=original}
+        showToast('Cancellation unavailable','Cancellation could not be confirmed with the server. Your booking remains active.');
+        return
+      }
+      if(!response.ok){
+        if(button){button.disabled=false;button.textContent=original}
+        showToast('Cancellation failed','Please try again.');
+        return
+      }
+      showToast('Booking cancelled','The spot and credit were released.');
+      closeDrawer();
+      lastRange='';
+      refreshRemoteSchedule().catch(()=>{})
+    }catch(_){
+      if(button){button.disabled=false;button.textContent=original}
+      showToast('Cancellation failed','Please try again.')
+    }
+  }
   ['openBookings','openBookingsMobile'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();$('#mobileMenu')?.classList.remove('open');renderMyBookings()},true)});
   document.addEventListener('click',e=>{if(e.target.closest('#datePrev,#dateNext,.date-btn'))setTimeout(refreshRemoteSchedule,0)});
   const forceRefreshSchedule=()=>{lastRange='';return refreshRemoteSchedule()};
