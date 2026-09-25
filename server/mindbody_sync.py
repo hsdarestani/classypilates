@@ -702,6 +702,75 @@ def cached_mindbody_customers() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def cached_mindbody_customers_page(
+    *,
+    query: str = "",
+    active: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Read a small sorted page from the cached Mindbody directory."""
+    _ensure_client_store()
+    query = " ".join(str(query or "").strip().split()).casefold()
+    limit = max(1, min(int(limit or 100), 25000))
+    offset = max(0, int(offset or 0))
+    where = []
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if query:
+        where.append("""
+            lower(
+                COALESCE(first_name,'') || ' ' ||
+                COALESCE(last_name,'') || ' ' ||
+                COALESCE(email,'') || ' ' ||
+                COALESCE(phone,'') || ' ' ||
+                COALESCE(remote_id,'') || ' ' ||
+                COALESCE(client_type,'') || ' ' ||
+                COALESCE(home_location,'')
+            ) LIKE :query
+        """)
+        params["query"] = f"%{query}%"
+    if active is not None:
+        where.append("active = :active")
+        params["active"] = bool(active)
+    clause = " WHERE " + " AND ".join(where) if where else ""
+    columns = """
+        remote_id, unique_id, first_name, last_name, email, phone,
+        birth_date, gender, client_type, status, active, photo_url,
+        home_location, account_balance, synced_at
+    """
+    with core.engine.connect() as connection:
+        total = int(connection.execute(
+            text("SELECT COUNT(*) FROM mindbody_customers" + clause),
+            params,
+        ).scalar() or 0)
+        rows = connection.execute(text(
+            "SELECT " + columns + " FROM mindbody_customers" + clause +
+            " ORDER BY lower(COALESCE(last_name,'')), lower(COALESCE(first_name,'')), lower(COALESCE(email,'')), remote_id"
+            " LIMIT :limit OFFSET :offset"
+        ), params).mappings().all()
+    return {"customers": [dict(row) for row in rows], "total": total}
+
+
+def cached_mindbody_customers_for_emails(emails: list[str] | set[str]) -> list[dict[str, Any]]:
+    """Return cached provider rows matching a small set of local customer emails."""
+    _ensure_client_store()
+    normalized = sorted({str(value or "").strip().casefold() for value in emails if str(value or "").strip()})
+    if not normalized:
+        return []
+    params = {f"email_{index}": value for index, value in enumerate(normalized)}
+    placeholders = ",".join(f":email_{index}" for index in range(len(normalized)))
+    with core.engine.connect() as connection:
+        rows = connection.execute(text(f"""
+            SELECT remote_id, unique_id, first_name, last_name, email, phone,
+                   birth_date, gender, client_type, status, active, photo_url,
+                   home_location, account_balance, synced_at
+            FROM mindbody_customers
+            WHERE lower(COALESCE(email,'')) IN ({placeholders})
+            ORDER BY lower(COALESCE(email,'')), remote_id
+        """), params).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def mindbody_client_complete_info(client_id: str) -> dict[str, Any]:
     return WriteClient.from_env(timeout=20.0).get_client_complete_info(str(client_id))
 
