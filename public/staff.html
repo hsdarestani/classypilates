@@ -27,8 +27,8 @@
     <div class="auth-visual"><div class="auth-brand"><img class="brand-logo-img" src="/Logo_BW_Trans-300x234.png" alt="Classy Pilates"></div><div><p>STAFF EXPERIENCE</p><h1>One team.<br><em>One control center.</em></h1><small>Bookings, classes, coaches, finance and operations across all Frankfurt studios.</small></div></div>
     <div class="auth-card">
       <a href="/" class="back-site">← Back to website</a>
-      <form id="loginBox"><p class="kicker">SECURE ACCESS</p><h2>Team Login</h2><p class="muted">For administrators and coaches.</p><label>Email<input id="loginEmail" type="email" autocomplete="username" placeholder="name@classypilates.de" required></label><label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label><label class="password-toggle"><input id="showPassword" type="checkbox"> Show password</label><button id="loginBtn" type="submit">Sign in</button><div class="msg" id="loginMsg" aria-live="polite"></div></form>
-      <div id="setupBox" hidden><p class="kicker">FIRST SETUP</p><h2>Create the first admin</h2><p class="muted">This step is only available while no user exists.</p><label>First name<input id="setupFirst" value="Admin"></label><label>Email<input id="setupEmail" type="email" placeholder="admin@classypilates.de"></label><label>Password<input id="setupPassword" type="password" placeholder="At least 10 characters"></label><button id="setupBtn">Create admin</button><div class="msg" id="setupMsg"></div></div>
+      <form id="loginBox"><p class="kicker">SECURE ACCESS</p><h2>Team Login</h2><p class="muted">For administrators and coaches.</p><label>Email<input id="loginEmail" type="email" autocomplete="username" placeholder="name@classypilates.de" required></label><label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label><label class="password-toggle"><input id="showPassword" type="checkbox" data-password-toggle="#loginPassword"> Show password</label><button id="loginBtn" type="submit">Sign in</button><div class="msg" id="loginMsg" aria-live="polite"></div></form>
+      <div id="setupBox" hidden><p class="kicker">FIRST SETUP</p><h2>Create the first admin</h2><p class="muted">This step is only available while no user exists.</p><label>First name<input id="setupFirst" value="Admin"></label><label>Email<input id="setupEmail" type="email" placeholder="admin@classypilates.de"></label><label>Password<input id="setupPassword" type="password" placeholder="At least 10 characters"></label><label class="password-toggle"><input id="showSetupPassword" type="checkbox" data-password-toggle="#setupPassword"> Show password</label><button id="setupBtn">Create admin</button><div class="msg" id="setupMsg"></div></div>
     </div>
   </section>
 
@@ -54,7 +54,7 @@
     </main>
   </div>
   <div class="toast" id="toast"></div>
-  <script src="/staff.js?v=20260824-pass1"></script>
+  <script src="/staff.js?v=20260925-passwordtoggle1"></script>
   <script src="/staff-feedback.js?v=20260827-1"></script>
   <script src="/staff-class-language.js?v=20260828-1"></script>
   <script src="/staff-validation.js?v=20260827-1"></script>
