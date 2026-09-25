@@ -186,8 +186,14 @@ function openPass(passKey){
   $('#drawerBody').innerHTML=`<div class="drawer-step"><h4>${esc(pass.name)}</h4><div class="credit-box"><span>Price</span><b>${esc(pass.price)}</b></div><p>Purchases currently continue through the existing Classy Pilates sales page so payments remain uninterrupted during the transition.</p><button class="drawer-action" id="buyPass" type="button">Continue securely to purchase</button><button class="drawer-action secondary" id="cancelPass" type="button">Cancel</button></div>`;
   openDrawer();$('#cancelPass')?.addEventListener('click',closeDrawer);$('#buyPass')?.addEventListener('click',()=>{window.open(BUY_URL,'_blank','noopener');closeDrawer()});
 }
-function showToast(title,text){
-  if(!$('#toast'))return;$('#toastTitle').textContent=title;$('#toastText').textContent=text;$('#toast').classList.add('show');clearTimeout(showToast.t);showToast.t=setTimeout(()=>$('#toast').classList.remove('show'),3200)
+function showToast(title,text,type='auto'){
+  const toast=$('#toast');if(!toast)return;
+  const inferred=/failed|error|unable|not completed|expired/i.test(String(title||''))?'error':/check|required/i.test(String(title||''))?'warning':'success';
+  const kind=type==='auto'?inferred:type;
+  $('#toastTitle').textContent=title;$('#toastText').textContent=text;
+  toast.classList.remove('success','warning','error');toast.classList.add('show',kind);
+  const icon=toast.querySelector(':scope > span');if(icon)icon.textContent=kind==='error'?'!':kind==='warning'?'!':'✓';
+  clearTimeout(showToast.t);showToast.t=setTimeout(()=>{toast.classList.remove('show','success','warning','error')},3200)
 }
 function initEvents(){
   $('#locationFilter')?.addEventListener('change',e=>{state.location=e.target.value;renderSchedule()});
