@@ -498,6 +498,169 @@ def _value(row: dict[str, Any], *names: str, default=None):
     return default
 
 
+_client_store_ready = False
+_client_store_guard = threading.Lock()
+
+
+def _ensure_client_store() -> None:
+    global _client_store_ready
+    if _client_store_ready:
+        return
+    with _client_store_guard:
+        if _client_store_ready:
+            return
+        with core.engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS mindbody_customers (
+                    remote_id VARCHAR(120) PRIMARY KEY,
+                    unique_id VARCHAR(120),
+                    first_name VARCHAR(160),
+                    last_name VARCHAR(160),
+                    email VARCHAR(255),
+                    phone VARCHAR(100),
+                    birth_date VARCHAR(40),
+                    gender VARCHAR(80),
+                    client_type VARCHAR(160),
+                    status VARCHAR(80),
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    photo_url TEXT,
+                    home_location VARCHAR(255),
+                    account_balance VARCHAR(80),
+                    raw_json TEXT NOT NULL DEFAULT '{}',
+                    synced_at VARCHAR(64) NOT NULL
+                )
+            """))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_mindbody_customers_email "
+                "ON mindbody_customers (email)"
+            ))
+        _client_store_ready = True
+
+
+def _client_remote_id(row: dict[str, Any]) -> str:
+    return str(_value(row, "Id", "ID", "ClientId", "clientId", default="") or "").strip()
+
+
+def _client_type_name(row: dict[str, Any]) -> str:
+    value = _value(row, "ClientType", "clientType", default="")
+    if isinstance(value, dict):
+        return str(_value(value, "Name", "name", default="") or "").strip()
+    return str(value or "").strip()
+
+
+def _client_location_name(row: dict[str, Any]) -> str:
+    value = _value(row, "HomeLocation", "homeLocation", default={})
+    if isinstance(value, dict):
+        return str(_value(value, "Name", "name", default="") or "").strip()
+    return str(value or "").strip()
+
+
+def _client_status(row: dict[str, Any]) -> tuple[str, bool]:
+    status = str(_value(row, "Status", "status", default="") or "").strip()
+    suspended = bool(_value(row, "Suspended", "IsSuspended", "isSuspended", default=False))
+    inactive = bool(_value(row, "Inactive", "IsInactive", "isInactive", default=False))
+    active = not suspended and not inactive and status.casefold() not in {"inactive", "suspended", "terminated"}
+    return status or ("Active" if active else "Inactive"), active
+
+
+def sync_client_directory(*, max_clients: int = 5000) -> dict[str, int]:
+    """Mirror Mindbody profiles for the unified staff customer directory."""
+    _ensure_client_store()
+    client = WriteClient.from_env(timeout=20.0)
+    now = datetime.now(timezone.utc).isoformat()
+    offset = 0
+    seen = 0
+    written = 0
+    while seen < max_clients:
+        payload = client.get_clients(limit=min(200, max_clients - seen), offset=offset)
+        batch = [
+            row for row in _extract_list(payload, ("Clients", "clients", "Items"))
+            if isinstance(row, dict)
+        ]
+        if not batch:
+            break
+        with core.engine.begin() as connection:
+            for row in batch:
+                remote_id = _client_remote_id(row)
+                if not remote_id:
+                    continue
+                status, active = _client_status(row)
+                email = str(_value(row, "Email", "email", default="") or "").strip().lower()
+                phone = str(_value(
+                    row, "MobilePhone", "mobilePhone", "Phone", "phone", "HomePhone", "homePhone",
+                    default="",
+                ) or "").strip()
+                birth = str(_value(row, "BirthDate", "birthDate", "Birthday", "birthday", default="") or "").strip()
+                balance = _value(row, "AccountBalance", "accountBalance", default="")
+                connection.execute(text("""
+                    INSERT INTO mindbody_customers (
+                        remote_id, unique_id, first_name, last_name, email, phone,
+                        birth_date, gender, client_type, status, active, photo_url,
+                        home_location, account_balance, raw_json, synced_at
+                    ) VALUES (
+                        :remote_id, :unique_id, :first_name, :last_name, :email, :phone,
+                        :birth_date, :gender, :client_type, :status, :active, :photo_url,
+                        :home_location, :account_balance, :raw_json, :synced_at
+                    )
+                    ON CONFLICT (remote_id) DO UPDATE SET
+                        unique_id=excluded.unique_id,
+                        first_name=excluded.first_name,
+                        last_name=excluded.last_name,
+                        email=excluded.email,
+                        phone=excluded.phone,
+                        birth_date=excluded.birth_date,
+                        gender=excluded.gender,
+                        client_type=excluded.client_type,
+                        status=excluded.status,
+                        active=excluded.active,
+                        photo_url=excluded.photo_url,
+                        home_location=excluded.home_location,
+                        account_balance=excluded.account_balance,
+                        raw_json=excluded.raw_json,
+                        synced_at=excluded.synced_at
+                """), {
+                    "remote_id": remote_id,
+                    "unique_id": str(_value(row, "UniqueId", "UniqueID", "uniqueId", default="") or ""),
+                    "first_name": str(_value(row, "FirstName", "firstName", default="") or "").strip(),
+                    "last_name": str(_value(row, "LastName", "lastName", default="") or "").strip(),
+                    "email": email,
+                    "phone": phone,
+                    "birth_date": birth,
+                    "gender": str(_value(row, "Gender", "gender", default="") or "").strip(),
+                    "client_type": _client_type_name(row),
+                    "status": status,
+                    "active": active,
+                    "photo_url": str(_value(row, "PhotoURL", "PhotoUrl", "photoUrl", default="") or "").strip(),
+                    "home_location": _client_location_name(row),
+                    "account_balance": "" if balance is None else str(balance),
+                    "raw_json": json.dumps(row, ensure_ascii=False, default=str),
+                    "synced_at": now,
+                })
+                written += 1
+        seen += len(batch)
+        if len(batch) < 200:
+            break
+        offset += len(batch)
+    return {"seen": seen, "written": written}
+
+
+def cached_mindbody_customers() -> list[dict[str, Any]]:
+    _ensure_client_store()
+    with core.engine.connect() as connection:
+        rows = connection.execute(text("""
+            SELECT remote_id, unique_id, first_name, last_name, email, phone,
+                   birth_date, gender, client_type, status, active, photo_url,
+                   home_location, account_balance, synced_at
+            FROM mindbody_customers
+            ORDER BY lower(COALESCE(last_name,'')), lower(COALESCE(first_name,'')), remote_id
+        """)).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def mindbody_client_complete_info(client_id: str) -> dict[str, Any]:
+    return WriteClient.from_env(timeout=20.0).get_client_complete_info(str(client_id))
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if not value:
         return None
