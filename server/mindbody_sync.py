@@ -568,16 +568,17 @@ def _client_status(row: dict[str, Any]) -> tuple[str, bool]:
     return status or ("Active" if active else "Inactive"), active
 
 
-def sync_client_directory(*, max_clients: int = 5000) -> dict[str, int]:
-    """Mirror Mindbody profiles for the unified staff customer directory."""
+def sync_client_directory(*, max_clients: int | None = None) -> dict[str, int]:
+    """Mirror the complete Mindbody client directory unless a diagnostic cap is supplied."""
     _ensure_client_store()
     client = WriteClient.from_env(timeout=20.0)
     now = datetime.now(timezone.utc).isoformat()
     offset = 0
     seen = 0
     written = 0
-    while seen < max_clients:
-        payload = client.get_clients(limit=min(200, max_clients - seen), offset=offset)
+    while max_clients is None or seen < max_clients:
+        page_limit = 200 if max_clients is None else min(200, max_clients - seen)
+        payload = client.get_clients(limit=page_limit, offset=offset)
         batch = [
             row for row in _extract_list(payload, ("Clients", "clients", "Items"))
             if isinstance(row, dict)
@@ -643,7 +644,7 @@ def sync_client_directory(*, max_clients: int = 5000) -> dict[str, int]:
                 })
                 written += 1
         seen += len(batch)
-        if len(batch) < 200:
+        if len(batch) < page_limit:
             break
         offset += len(batch)
     # Enrich existing Mindbody roster mirrors after the directory refresh. This
@@ -3438,7 +3439,7 @@ def _client_directory_loop():
                 f"Mindbody client directory failed: {type(exc).__name__}: {str(exc)[:300]}",
                 flush=True,
             )
-        time.sleep(900)
+        time.sleep(3600)
 
 
 def _loop():
