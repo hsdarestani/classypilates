@@ -1,0 +1,99 @@
+name: Staff Portal CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "public/staff*.js"
+      - "public/staff*.css"
+      - "public/staff.html"
+      - "server/main.py"
+      - "server/feedback_app.py"
+      - ".github/workflows/staff-portal-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staff-portal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: JavaScript syntax
+        run: |
+          node --check public/staff.js
+          node --check public/staff-polish.js
+          node --check public/staff-feedback.js
+          node --check public/staff-validation.js
+          node --check public/password-visibility.js
+
+      - name: Python syntax
+        run: |
+          python -m py_compile server/main.py server/feedback_app.py server/runtime_app.py
+
+      - name: Staff portal contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          main = Path("server/main.py").read_text(encoding="utf-8")
+          staff = Path("public/staff.js").read_text(encoding="utf-8")
+          shell = Path("public/staff.html").read_text(encoding="utf-8")
+
+          required_routes = [
+              '@app.get("/api/staff/dashboard")',
+              '@app.get("/api/staff/bookings")',
+              '@app.get("/api/staff/classes")',
+              '@app.get("/api/staff/coaches")',
+              '@app.get("/api/staff/customers")',
+              '@app.get("/api/staff/finance")',
+              '@app.get("/api/staff/roles")',
+              '@app.get("/api/staff/profile")',
+              '@app.patch("/api/staff/profile")',
+          ]
+          missing = [route for route in required_routes if route not in main]
+          if missing:
+              raise SystemExit(f"Missing staff routes: {missing}")
+
+          required_ui = [
+              "coach-portal",
+              "admin-portal",
+              "portalMode",
+              "My attendees",
+              "My schedule",
+              "coachTitles",
+              "async function dashboard()",
+              "async function bookings()",
+              "async function customers()",
+              "async function classes()",
+              "async function coachManager()",
+              "async function finance()",
+              "async function roles()",
+              "async function profile()",
+          ]
+          missing_ui = [token for token in required_ui if token not in staff and token not in shell]
+          if missing_ui:
+              raise SystemExit(f"Missing staff UI contracts: {missing_ui}")
+
+          if 'rows = [b for b in rows if b.klass.coach_id == user.coach.id]' not in main:
+              raise SystemExit("Coach booking scope guard missing")
+          if 'rows = [r for r in rows if r.coach_id == user.coach.id]' not in main:
+              raise SystemExit("Coach class scope guard missing")
+          if '"scope": "coach" if coach_scope else "admin"' not in main:
+              raise SystemExit("Role-scoped dashboard guard missing")
+
+          print("Admin and coach portal source contracts: OK")
+          PY
+
+      - name: Diff check
+        run: git diff --check HEAD^ HEAD
