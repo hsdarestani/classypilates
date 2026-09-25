@@ -53,11 +53,15 @@
     }
   };
 
-  $('#showNewPassword').onchange=()=>{
-    const type=$('#showNewPassword').checked?'text':'password';
-    $('#newPassword').type=type;
-    $('#confirmPassword').type=type;
-  };
+  function syncPasswordVisibility(){
+    const toggle=$('#showNewPassword');
+    if(!toggle)return;
+    const type=toggle.checked?'text':'password';
+    ['#newPassword','#confirmPassword'].map(selector=>$(selector)).filter(Boolean).forEach(field=>field.setAttribute('type',type));
+  }
+  $('#showNewPassword')?.addEventListener('change',syncPasswordVisibility);
+  $('#showNewPassword')?.addEventListener('input',syncPasswordVisibility);
+  syncPasswordVisibility();
 
   confirmForm.onsubmit=async event=>{
     event.preventDefault();
