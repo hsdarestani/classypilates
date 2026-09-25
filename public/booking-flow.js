@@ -101,14 +101,15 @@
     try{
       await authenticateCustomer();
       await refreshCreditBalance();
-      if((Number(wizard.credits)||0)>0&&!wizard.paymentChoiceMade)wizard.payment='class_credit';
-      if((Number(wizard.credits)||0)<=0)wizard.payment='sumup';
-      renderPaymentStep()
     }catch(error){
       if(button){button.disabled=false;button.textContent='Continue to payment'}
       const message=error.message==='invalid_credentials'?'Email or password is incorrect.':error.message==='password_too_short'?'The password must be at least 8 characters.':'We could not check your Classy account. Please try again.';
-      showToast('Account check failed',message,'error')
+      showToast('Account check failed',message,'error');
+      return
     }
+    if((Number(wizard.credits)||0)>0&&!wizard.paymentChoiceMade)wizard.payment='class_credit';
+    if((Number(wizard.credits)||0)<=0)wizard.payment='sumup';
+    renderPaymentStep()
   }
 
   function renderPaymentStep(){
@@ -124,7 +125,7 @@
     const intro=credits>0?'You already have Class Credit available. You can use one for this booking instead of making a new payment.':'No Class Credit is currently available on this account, so this booking will continue with SumUp.';
     const action=selectedCredit?'Use 1 Class Credit':'Continue to SumUp';
     setDrawer('Checkout',`${review}<div class="wizard-panel payment-panel"><div class="wizard-kicker">SECURE CHECKOUT</div><h4>Ready to confirm.</h4><p>${intro}</p><div class="wizard-payment-grid">${paymentOptions}</div><div class="payment-security-note"><span>✓</span><p>${selectedCredit?'Your existing credit is only deducted after the booking is created successfully.':'No payment is marked as successful until SumUp confirms it.'}</p></div><div class="wizard-sticky-actions"><button class="drawer-action secondary" id="backDetails">Back</button><button class="drawer-action" id="finishPayment">${action}</button></div></div>`,4);
-    $('[data-wpay]').forEach(b=>b.addEventListener('click',()=>{wizard.payment=b.dataset.wpay;wizard.paymentChoiceMade=true;renderPaymentStep()}));$('#backDetails')?.addEventListener('click',renderDetailsStep);$('#finishPayment')?.addEventListener('click',processPayment)
+    document.querySelectorAll('[data-wpay]').forEach(b=>b.addEventListener('click',()=>{wizard.payment=b.dataset.wpay;wizard.paymentChoiceMade=true;renderPaymentStep()}));$('#backDetails')?.addEventListener('click',renderDetailsStep);$('#finishPayment')?.addEventListener('click',processPayment)
   }
   function resetPaymentButton(){
     const btn=$('#finishPayment');if(!btn)return;
