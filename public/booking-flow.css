@@ -22,3 +22,37 @@
 @media(max-width:900px){body{padding-bottom:74px}.classy-quick-dock{top:auto;bottom:max(10px,env(safe-area-inset-bottom));left:10px;right:10px;transform:none;flex-direction:row;gap:0;background:rgba(244,240,232,.96);backdrop-filter:blur(14px);padding:6px;border:1px solid rgba(21,21,19,.12);border-radius:14px;box-shadow:0 12px 35px rgba(0,0,0,.16)}.classy-quick-dock a,.classy-quick-dock a:hover{width:auto;min-width:0;flex:1;height:46px;margin:0;justify-content:center;border:0;border-right:1px solid rgba(255,255,255,.15)}.classy-quick-dock a:last-child{border-right:0}.classy-quick-dock .dock-icon{width:auto;min-width:0;margin-right:7px}.classy-quick-dock b{padding:0}.studio-card .studio-hover-actions{opacity:1;transform:none;pointer-events:auto;top:auto;bottom:78px}.studio-hover-actions a,.studio-hover-actions button{background:rgba(15,15,14,.72)}.booking-drawer.booking-v2{padding-bottom:86px}.spot-grid{grid-template-columns:repeat(3,minmax(68px,1fr));gap:22px 14px}.studio-floor{padding:45px 26px 28px}.wizard-payment-grid{grid-template-columns:1fr}.class-row .class-coach{grid-template-columns:32px 1fr}.class-coach .coach-avatar{width:32px;height:32px}}
 @media(max-width:600px){.booking-progress-v2 b{display:none}.booking-progress-v2 span{justify-content:center}.wizard-class-card{grid-template-columns:58px 1fr}.wizard-class-card>img{width:58px;height:66px}.wizard-class-card .coach-chip{grid-column:1/-1;text-align:left;border-left:0;border-top:1px solid rgba(21,21,19,.1);padding:9px 0 0;display:flex;align-items:center;gap:8px}.coach-chip small,.coach-chip b,.coach-chip em{display:inline}.wizard-panel>h4{font-size:24px}.class-facts{grid-template-columns:1fr}.class-facts div{border-right:0;border-bottom:1px solid rgba(21,21,19,.08)}.class-facts div:last-child{border-bottom:0}.studio-map-top{height:66px}.studio-map-top>span{position:absolute;right:12px;top:12px}.coach-station{left:12px}.studio-floor{min-height:390px;padding:45px 12px 24px}.spot-grid{grid-template-columns:repeat(3,1fr);gap:19px 5px}.studio-spot{min-height:86px}.studio-spot .spot-bed{width:58px;height:35px}.spot-legend{gap:9px 13px}.wizard-sticky-actions{grid-template-columns:1fr}.details-grid{grid-template-columns:1fr}.details-grid .full{grid-column:auto}.success-grid{grid-template-columns:1fr}.success-grid div+div{border-left:0;border-top:1px solid rgba(21,21,19,.1)}.success-actions{grid-template-columns:1fr}.booking-success-v2 h3{font-size:34px}.classy-quick-dock b{font-size:8px}.studio-hover-actions span{display:none}.studio-hover-actions a,.studio-hover-actions button{padding:0 10px}}
 @media(prefers-reduced-motion:reduce){.studio-spot,.wizard-pay,.classy-quick-dock a,.studio-hover-actions{transition:none!important}}
+
+
+/* Checkout polish 2026-09-25: keep each step visually isolated and mobile first. */
+.payment-review-card{display:grid;grid-template-columns:1fr auto;border:1px solid rgba(21,21,19,.13);background:#fff;margin:0 0 14px}.payment-review-session,.payment-review-price{padding:18px 20px}.payment-review-price{min-width:190px;border-left:1px solid rgba(21,21,19,.1);display:flex;flex-direction:column;justify-content:center}.payment-review-card span{font-size:8px;letter-spacing:.16em;font-weight:800;color:#7c756c}.payment-review-card b{display:block;font-size:17px;margin:6px 0 4px}.payment-review-card small{display:block;font-size:11px;line-height:1.55;color:#777268}.payment-review-price b{font-size:24px;letter-spacing:-.03em}.payment-panel{padding-top:18px}.single-payment{grid-template-columns:1fr!important}.single-payment .wizard-pay{max-width:none}.payment-security-note{display:flex;align-items:center;gap:10px;padding:12px 14px;margin:4px 0 16px;background:#eef2eb;border:1px solid #ced9ca}.payment-security-note>span{width:24px;height:24px;min-width:24px;border-radius:50%;display:grid;place-items:center;background:#2f6f50;color:#fff;font-size:11px}.payment-security-note p{margin:0;font-size:10px;line-height:1.45;color:#53604f}.payment-error{margin:0 0 14px;padding:14px 15px;border:1px solid #cfa49b;background:#fff1ee}.payment-error b{display:block;font-size:11px}.payment-error p{margin:5px 0 0;font-size:10px;line-height:1.5;color:#76554e}.booking-v2 .voucher-box{margin:14px 0!important;padding:14px 15px!important;background:#fff!important;border:1px solid rgba(21,21,19,.12)!important}.booking-v2 .voucher-box>span{margin-bottom:8px!important}.booking-v2 .voucher-box input{min-height:46px!important;font-size:14px!important}.booking-v2 .voucher-box button{min-height:46px!important}.booking-v2 .voucher-box small{font-size:9px!important}.booking-v2 .wizard-sticky-actions{margin-top:16px}.booking-v2.open~.toast{z-index:80}body:has(#bookingDrawer.open) .experience-switch,body:has(#bookingDrawer.open) .classy-quick-dock{opacity:0!important;pointer-events:none!important}
+
+@media(max-width:780px){
+  body .booking-drawer.booking-v2{left:0!important;right:0!important;top:0!important;bottom:0!important;width:100vw!important;max-width:none!important;height:100dvh!important;padding:0!important;background:#faf8f4!important;transform:translateY(102%)!important;transition:transform .28s cubic-bezier(.2,.8,.2,1)!important;overscroll-behavior:contain}
+  body .booking-drawer.booking-v2.open{transform:none!important}
+  .booking-v2 .drawer-head{position:sticky!important;top:0!important;z-index:20!important;padding:calc(14px + env(safe-area-inset-top)) 20px 14px!important;background:#faf8f4!important;border-bottom:1px solid rgba(21,21,19,.12)!important}
+  .booking-v2 .drawer-head .eyebrow{margin-bottom:5px!important}
+  .booking-v2 .drawer-head h3{font-size:28px!important;line-height:1!important}
+  .booking-v2 .close-btn{width:42px!important;height:42px!important;background:#fff!important}
+  .booking-v2 #drawerBody{padding:18px 20px calc(34px + env(safe-area-inset-bottom))}
+  .booking-v2 .booking-progress-v2{margin:0 0 18px!important}
+  .booking-v2 .wizard-panel{padding:10px 0 0}
+  .booking-v2 .wizard-panel>h4{font-size:28px!important;margin-bottom:9px}
+  .booking-v2 .wizard-panel>p{font-size:13px!important;line-height:1.55!important;margin-top:0}
+  .payment-review-card{grid-template-columns:1fr;margin-bottom:18px;border-radius:0}
+  .payment-review-session,.payment-review-price{padding:15px 16px}
+  .payment-review-price{min-width:0;border-left:0;border-top:1px solid rgba(21,21,19,.1);display:grid;grid-template-columns:1fr auto;align-items:end;column-gap:12px}
+  .payment-review-price span,.payment-review-price small{grid-column:1}.payment-review-price b{grid-column:2;grid-row:1/3;margin:0;font-size:22px}
+  .single-payment .wizard-pay{min-height:78px!important;padding:12px!important;grid-template-columns:68px 1fr auto!important}
+  .single-payment .pay-mark{min-width:62px!important;height:42px!important}
+  .booking-v2 .voucher-box{padding:12px!important}
+  .booking-v2 .voucher-box>div{grid-template-columns:1fr auto!important}
+  .booking-v2 .voucher-box button{padding:0 14px!important}
+  .booking-v2 .wizard-sticky-actions{grid-template-columns:.42fr 1fr;position:sticky;bottom:0;padding:10px 0 calc(4px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(250,248,244,0),#faf8f4 22%);z-index:8}
+}
+@media(max-width:480px){
+  .booking-v2 #drawerBody{padding-left:16px;padding-right:16px}
+  .booking-v2 .voucher-box>div{grid-template-columns:1fr!important}
+  .booking-v2 .voucher-box button{width:100%!important}
+  .booking-v2 .wizard-sticky-actions{grid-template-columns:1fr}
+}

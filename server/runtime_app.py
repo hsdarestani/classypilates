@@ -476,8 +476,17 @@ def _cleanup_stale_booking_holds() -> int:
         if not should_cancel:
             continue
 
-        # Remove provider hold first; if that fails, leave a retryable cancel_failed marker.
-        mindbody_sync.cancel_local_booking(booking_id)
+        # Remove the provider hold first. Never mark the local booking cancelled
+        # unless Mindbody confirmed the reservation is gone.
+        try:
+            mindbody_sync.cancel_local_booking_strict(booking_id)
+        except Exception as exc:
+            print(
+                f"Stale booking hold release failed: booking_id={booking_id} "
+                f"{type(exc).__name__}: {str(exc)[:240]}",
+                flush=True,
+            )
+            continue
         with core.SessionLocal() as db:
             booking = db.get(core.Booking, booking_id)
             if not booking or booking.payment_status == "paid":
@@ -497,6 +506,36 @@ def _cleanup_stale_booking_holds() -> int:
             db.commit()
             released += 1
     return released
+
+
+_original_retry_pending = mindbody_sync.retry_pending
+
+
+def _retry_pending_with_hold_cleanup() -> int:
+    retried = _original_retry_pending()
+    released = _cleanup_stale_booking_holds()
+    if released:
+        print(f"Released {released} abandoned SumUp booking hold(s)", flush=True)
+    return retried
+
+
+# The three minute mirror loop calls retry_pending() directly, not
+# sync_from_mindbody(). Hook cleanup into that hot path so abandoned holds are
+# actually released instead of remaining in Mindbody indefinitely.
+mindbody_sync.retry_pending = _retry_pending_with_hold_cleanup
+
+
+@core.app.on_event("startup")
+def _cleanup_abandoned_booking_holds_on_startup() -> None:
+    try:
+        released = _cleanup_stale_booking_holds()
+        if released:
+            print(f"Startup released {released} abandoned SumUp booking hold(s)", flush=True)
+    except Exception as exc:
+        print(
+            f"Startup booking hold cleanup deferred: {type(exc).__name__}: {str(exc)[:240]}",
+            flush=True,
+        )
 
 
 def _sync_from_mindbody_hardened() -> dict[str, int]:

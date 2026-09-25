@@ -34,7 +34,14 @@
   function studioName(r){return studioById(r.studio)?.name||r.studio}
   function classSummary(r){return `<div class="wizard-class-card"><img src="${photoFor(r.coach)}" alt="Coach ${safe(r.coach)}"><div><span>${safe(r.type)} · ${r.duration} MIN</span><h4>${safe(r.name)}</h4>${r.description?`<p>${safe(r.description)}</p>`:''}<p>${safe(formatFullDate(r.dateObj))} · ${r.time}<br>${safe(studioName(r))}</p></div><div class="coach-chip"><small>COACH</small><b>${safe(r.coach)}</b><em>Selected</em></div></div>`}
   function setProgress(step){const labels=SPOT_SELECTION_ENABLED?['Class','Spot','Details','Payment','Done']:['Class','Details','Payment','Done'];const visibleStep=SPOT_SELECTION_ENABLED?step:step===1?1:step===3?2:step===4?3:4;const progress=labels.map((x,i)=>`<span class="${i+1<=visibleStep?'done':''} ${i+1===visibleStep?'active':''}"><i>${i+1<visibleStep?'✓':i+1}</i><b>${x}</b></span>`).join('');return `<div class="booking-progress-v2">${progress}</div>`}
-  function setDrawer(title,html,step){$('#drawerTitle').textContent=title;$('#drawerBody').innerHTML=setProgress(step)+html;$('#bookingDrawer')?.classList.add('booking-v2');openDrawer()}
+  function setDrawer(title,html,step){
+    $('#drawerTitle').textContent=title;
+    $('#drawerBody').innerHTML=setProgress(step)+html;
+    const drawer=$('#bookingDrawer');
+    drawer?.classList.add('booking-v2');
+    openDrawer();
+    if(drawer)requestAnimationFrame(()=>{drawer.scrollTop=0});
+  }
   function customerDraft(){const value=read('cpWizardCustomer',{});if(!value||typeof value!=='object')return{};const {password,...draft}=value;if(password)write('cpWizardCustomer',draft);return draft}
 
   function startWizard(r){wizard={class:r,spot:null,payment:'sumup',details:customerDraft(),mode:state.mode==='first'?'register':'login',authUser:null,sessionChecked:false};renderClassStep()}
@@ -74,11 +81,13 @@
   }
 
   function renderPaymentStep(){
-    const spotPaymentSummary=SPOT_SELECTION_ENABLED?`<div><span>SPOT</span><b>${safe(spotLabel(wizard.spot,wizard.class))}</b></div>`:'';
-    setDrawer('Choose payment',`${classSummary(wizard.class)}<div class="checkout-mini-summary">${spotPaymentSummary}<div><span>PAYMENT</span><b>1 Class Credit or 28,00 €</b></div></div><div class="wizard-panel"><div class="wizard-kicker">SECURE PAYMENT</div><h4>Confirm your booking.</h4><p>If your Classy account has an available credit, it will be used automatically. Otherwise you will continue to the secure SumUp checkout.</p><div class="wizard-payment-grid">${payMethods.map(m=>`<button type="button" class="wizard-pay ${wizard.payment===m.id?'active':''}" data-wpay="${m.id}"><span class="pay-mark">${safe(m.mark)}</span><span><b>${safe(m.name)}</b><small>${safe(m.detail)}</small></span><i>${wizard.payment===m.id?'✓':''}</i></button>`).join('')}</div><div class="wizard-sticky-actions"><button class="drawer-action secondary" id="backDetails">Back</button><button class="drawer-action" id="finishPayment">Confirm & continue</button></div></div>`,4);
+    const r=wizard.class;
+    const when=`${safe(formatFullDate(r.dateObj))} · ${safe(r.time)}`;
+    const studio=safe(studioName(r));
+    const review=`<div class="payment-review-card"><div class="payment-review-session"><span>YOUR CLASS</span><b>${safe(r.name)}</b><small>${when}<br>${studio}</small></div><div class="payment-review-price"><span>PAYMENT</span><b>28,00 €</b><small>or 1 available Class Credit</small></div></div>`;
+    setDrawer('Checkout',`${review}<div class="wizard-panel payment-panel"><div class="wizard-kicker">SECURE CHECKOUT</div><h4>Ready to confirm.</h4><p>If your Classy account has an available credit, it is used automatically. Otherwise we open the secure SumUp checkout. Your place stays linked to this booking while payment is completed.</p><div class="wizard-payment-grid single-payment">${payMethods.map(m=>`<button type="button" class="wizard-pay ${wizard.payment===m.id?'active':''}" data-wpay="${m.id}"><span class="pay-mark">${safe(m.mark)}</span><span><b>${safe(m.name)}</b><small>${safe(m.detail)}</small></span><i>${wizard.payment===m.id?'✓':''}</i></button>`).join('')}</div><div class="payment-security-note"><span>✓</span><p>No payment is marked as successful until SumUp confirms it.</p></div><div class="wizard-sticky-actions"><button class="drawer-action secondary" id="backDetails">Back</button><button class="drawer-action" id="finishPayment">Continue to SumUp</button></div></div>`,4);
     $$('[data-wpay]').forEach(b=>b.addEventListener('click',()=>{wizard.payment=b.dataset.wpay;renderPaymentStep()}));$('#backDetails')?.addEventListener('click',renderDetailsStep);$('#finishPayment')?.addEventListener('click',processPayment)
   }
-
   function processPayment(){const btn=$('#finishPayment');if(btn){btn.disabled=true;btn.innerHTML='<span class="button-spinner"></span> Preparing secure payment…'}completeBookingPayment()}
   function bookingRefV2(){return 'CP-'+(cryptoSafeToken?cryptoSafeToken(8):Math.random().toString(36).slice(2,10).toUpperCase())}
   function checkoutRefV2(){return 'CP-BOOKPAY-'+(cryptoSafeToken?cryptoSafeToken(10):Math.random().toString(36).slice(2,12).toUpperCase())}
@@ -87,8 +96,68 @@
   async function createServerBooking(r,user){const startsAt=r.startsAt||new Date(`${r.date}T${r.time}:00`).toISOString();const classId=Number.isInteger(Number(r.id))?Number(r.id):String(r.id);const response=await fetch('/api/bookings',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({classId,email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||'',spot:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod:'sumup',studioId:r.studio,title:r.name,classType:r.type,startsAt,duration:r.duration,capacity:r.capacity,coachName:r.coach})});let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'booking_failed');return data}
   function saveLocalBooking(r,email,ref,paymentState,paymentMethod,adjust=true){const existing=read('cpBookings',[]);if(!existing.some(b=>b.ref===ref)){existing.unshift({ref,email,classId:r.id,name:r.name,time:r.time,date:r.date,studio:studioName(r),studioId:r.studio,coach:r.coach,spot:SPOT_SELECTION_ENABLED?spotLabel(wizard.spot,r):'',spotNumber:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod,status:'reserved',paymentState,createdAt:new Date().toISOString()});write('cpBookings',existing.slice(0,50));if(adjust){try{adjustSeats(r.id,-1)}catch(_){}}}try{localStorage.setItem('cpLastEmail',email)}catch(_){}}
   async function createBookingCheckout(bookingReference,user){const reference=checkoutRefV2();const response=await fetch('/api/checkout/create',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json','x-idempotency-key':reference},body:JSON.stringify({reference,bookingReference,customer:{email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||''},items:[]})});let data={};try{data=await response.json()}catch(_){}const url=data.hosted_checkout_url||data.url;if(!response.ok||!url)throw new Error(data.detail||'checkout_failed');return {reference,url}}
+  function showPaymentFailure(code){
+    const messages={
+      invalid_credentials:'Email or password is incorrect.',
+      duplicate_booking:'This class is already booked on this Classy account.',
+      class_full:'This class has just sold out.',
+      class_unavailable:'This class is no longer available.',
+      class_started:'This class has already started.',
+      spot_taken:'This spot was just taken.',
+      customer_account_required:'Please use a customer account.',
+      password_too_short:'The password must be at least 8 characters.',
+      voucher_not_found:'The voucher or gift code could not be found. Please check the code or remove it and try again.',
+      voucher_already_redeemed:'This voucher has already been redeemed.',
+      mindbody_availability_unavailable:'Live availability could not be confirmed with Mindbody. Please try again in a moment.',
+      mindbody_booking_failed:'We could not hold this place in Mindbody. No payment was taken. Please retry or choose another class.',
+      sumup_not_configured:'Secure payment is currently unavailable.',
+      sumup_unavailable:'SumUp is temporarily unavailable. Please try again.',
+      sumup_checkout_state_unavailable:'The current SumUp payment session could not be verified. Please try again.',
+      booking_not_payable:'This reservation is no longer payable. Please refresh the schedule and try again.',
+      booking_checkout_already_active:'A payment session is already active for this booking. Tap continue again to resume it.',
+      booking_already_paid:'This booking is already paid.',
+      checkout_failed:'Secure payment could not be started.'
+    };
+    const message=messages[code]||'We could not start the payment. No payment was confirmed. Please try again.';
+    renderPaymentStep();
+    const panel=$('.payment-panel');
+    const grid=panel?.querySelector('.wizard-payment-grid');
+    if(panel&&grid){
+      const box=document.createElement('div');
+      box.className='payment-error';
+      box.innerHTML=`<b>Payment not completed</b><p>${safe(message)}</p>`;
+      panel.insertBefore(box,grid);
+      requestAnimationFrame(()=>box.scrollIntoView({behavior:'smooth',block:'center'}));
+    }else showToast('Payment not completed',message);
+  }
+
   async function completeBookingPayment(){
-    const r=wizard.class,email=wizard.details.email;try{const user=await authenticateCustomer();const result=await createServerBooking(r,user);const ref=result.booking?.reference||bookingRefV2();if(result.credit_used||result.payment_status==='paid'){wizard.payment='class_credit';saveLocalBooking(r,email,ref,'paid','class_credit');renderSchedule();renderSuccess(ref);return}if(!result.booking?.reference)throw new Error('booking_failed');const checkout=await createBookingCheckout(result.booking.reference,user);write('cpPendingBookingPayment',{bookingReference:result.booking.reference,orderReference:checkout.reference,email,wizard:{class:r,spot:SPOT_SELECTION_ENABLED?wizard.spot:null,payment:'sumup',details:{email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||''}}});location.href=checkout.url}catch(error){if(error.message==='session_expired'){wizard.authUser=null;wizard.mode='login';wizard.sessionChecked=true;showToast('Session expired','Please sign in again to continue your booking.');renderDetailsStep();return}const map={invalid_credentials:'Email or password is incorrect.',duplicate_booking:'You have already booked this class.',class_full:'This class is now sold out.',spot_taken:'This spot was just taken.',customer_account_required:'Please use a customer account.',password_too_short:'The password must be at least 8 characters.',sumup_not_configured:'Secure payment is currently unavailable.',sumup_unavailable:'SumUp is currently unavailable. Please try again.',checkout_failed:'Secure payment could not be started.'};showToast('Booking not completed',map[error.message]||'Check your details and try again. No payment was confirmed.');renderPaymentStep()}
+    const r=wizard.class,email=wizard.details.email;
+    try{
+      const user=await authenticateCustomer();
+      const result=await createServerBooking(r,user);
+      const ref=result.booking?.reference||bookingRefV2();
+      if(result.credit_used||result.payment_status==='paid'){
+        wizard.payment=result.credit_used?'class_credit':'sumup';
+        saveLocalBooking(r,email,ref,'paid',wizard.payment);
+        renderSchedule();
+        renderSuccess(ref);
+        return
+      }
+      if(!result.booking?.reference)throw new Error('booking_failed');
+      const checkout=await createBookingCheckout(result.booking.reference,user);
+      write('cpPendingBookingPayment',{bookingReference:result.booking.reference,orderReference:checkout.reference,email,wizard:{class:r,spot:SPOT_SELECTION_ENABLED?wizard.spot:null,payment:'sumup',details:{email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||''}}});
+      location.href=checkout.url
+    }catch(error){
+      if(error.message==='session_expired'){
+        wizard.authUser=null;wizard.mode='login';wizard.sessionChecked=true;
+        showToast('Session expired','Please sign in again to continue your booking.');
+        renderDetailsStep();
+        return
+      }
+      console.warn('Classy checkout failed:',error.message);
+      showPaymentFailure(error.message)
+    }
   }
   function calendarHref(){const r=wizard.class;const start=new Date(r.startsAt||`${r.date}T${r.time}:00`),end=new Date(start.getTime()+r.duration*60000),fmt=d=>d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');const spotText=SPOT_SELECTION_ENABLED?` · ${spotLabel(wizard.spot,r)}`:'';const body=`BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nDTSTART:${fmt(start)}\nDTEND:${fmt(end)}\nSUMMARY:Classy Pilates – ${r.name}\nLOCATION:${studioName(r)}\nDESCRIPTION:Coach ${r.coach}${spotText}\nEND:VEVENT\nEND:VCALENDAR`;return'data:text/calendar;charset=utf-8,'+encodeURIComponent(body)}
   function renderSuccess(ref){const method=wizard.payment==='class_credit'?'Class Credit':(payMethods.find(x=>x.id===wizard.payment)?.name||wizard.payment);const spotGrid=SPOT_SELECTION_ENABLED?`<div><span>SPOT</span><b>${safe(spotLabel(wizard.spot,wizard.class))}</b></div>`:'';setDrawer('Booking confirmed',`<div class="booking-success-v2"><div class="success-orbit"><span>✓</span></div><p class="eyebrow">YOU'RE IN</p><h3>See you in class.</h3><p class="success-lead">Your booking is reserved and linked to your Classy account.</p>${classSummary(wizard.class)}<div class="success-grid">${spotGrid}<div><span>PAYMENT</span><b>${safe(method)}</b></div><div><span>BOOKING</span><b>${safe(ref)}</b></div></div><div class="demo-payment-note success"><span>ACCOUNT READY</span><p>Your bookings, credits and profile are now available in “My Classy”.</p></div><div class="success-actions"><a class="drawer-action" href="/account">Open My Classy</a><a class="drawer-action secondary" href="${calendarHref()}" download="classy-pilates.ics">Add to calendar</a><button class="drawer-action secondary" id="doneV2">Done</button></div></div>`,5);$('#doneV2')?.addEventListener('click',closeDrawer)}

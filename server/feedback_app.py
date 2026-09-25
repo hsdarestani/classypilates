@@ -873,6 +873,50 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     if core.as_utc(c.starts_at) <= datetime.now(timezone.utc):
         raise HTTPException(409, "class_started")
 
+    # A retry after a successful Mindbody hold must resume the same booking instead
+    # of creating a second booking or blocking the customer with duplicate_booking.
+    # This is especially important when the browser loses the response between the
+    # hold and the SumUp redirect.
+    duplicate = db.scalar(
+        select(core.Booking)
+        .where(
+            core.Booking.class_id == c.id,
+            core.Booking.email == data.email.lower(),
+            core.Booking.status == "reserved",
+        )
+        .order_by(core.Booking.created_at.desc())
+        .limit(1)
+    )
+    if duplicate:
+        same_customer = bool(
+            user
+            and core.portal_for(user) == "/account"
+            and user.email.lower() == data.email.lower()
+            and duplicate.source == "website"
+        )
+        if same_customer and duplicate.payment_status == "paid":
+            return {
+                "booking": {"reference": duplicate.reference},
+                "payment_status": "paid",
+                "credit_used": duplicate.payment_method.startswith("class_credit"),
+                "credits_remaining": None,
+                "resumed": True,
+            }
+        if (
+            same_customer
+            and duplicate.payment_status == "pending"
+            and duplicate.payment_method == "sumup"
+            and duplicate.mindbody_sync_status == "synced"
+        ):
+            return {
+                "booking": {"reference": duplicate.reference},
+                "payment_status": "pending",
+                "credit_used": False,
+                "credits_remaining": None,
+                "resumed": True,
+            }
+        raise HTTPException(409, "duplicate_booking")
+
     # Mindbody is authoritative for provider-backed availability. Refresh it at
     # booking time, then lock the local class row so concurrent Classy requests
     # cannot consume the same last spot.
@@ -896,9 +940,6 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     reserved = int(c.imported_bookings or 0) + int(live_reserved)
     if reserved >= c.capacity:
         raise HTTPException(409, "class_full")
-    duplicate = db.scalar(select(core.Booking).where(core.Booking.class_id == c.id, core.Booking.email == data.email.lower(), core.Booking.status == "reserved"))
-    if duplicate:
-        raise HTTPException(409, "duplicate_booking")
     if data.spot:
         if data.spot <= int(c.imported_bookings or 0):
             raise HTTPException(409, "spot_taken")
