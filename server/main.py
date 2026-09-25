@@ -1175,22 +1175,37 @@ def redeem_class_pass(data: VoucherRedeemIn, user: User = Depends(customer_only)
 @app.get("/api/staff/dashboard")
 def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Depends(db_session)):
     now = datetime.now(timezone.utc)
-    class_count = db.scalar(select(func.count(ClassSession.id)).where(ClassSession.starts_at >= now, ClassSession.status == "active")) or 0
-    live_booking_count = db.scalar(select(func.count(Booking.id)).where(Booking.status == "reserved")) or 0
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    coach_scope = bool(user.coach and not can(user, "bookings.manage") and not can(user, "classes.edit"))
+
+    class_filters = [ClassSession.starts_at >= now, ClassSession.status == "active"]
+    booking_filters = [Booking.status == "reserved"]
+    today_filters = [Booking.created_at >= day_start]
+    if coach_scope:
+        class_filters.append(ClassSession.coach_id == user.coach.id)
+        booking_filters.append(Booking.class_id.in_(select(ClassSession.id).where(ClassSession.coach_id == user.coach.id)))
+        today_filters.append(Booking.class_id.in_(select(ClassSession.id).where(ClassSession.coach_id == user.coach.id)))
+
+    class_count = db.scalar(select(func.count(ClassSession.id)).where(*class_filters)) or 0
+    live_booking_count = db.scalar(select(func.count(Booking.id)).where(*booking_filters)) or 0
+
+    imported_filters = [ClassSession.starts_at >= now, ClassSession.status == "active"]
+    if coach_scope:
+        imported_filters.append(ClassSession.coach_id == user.coach.id)
     imported_booking_count = db.scalar(
-        select(func.coalesce(func.sum(ClassSession.imported_bookings), 0)).where(
-            ClassSession.starts_at >= now, ClassSession.status == "active"
-        )
+        select(func.coalesce(func.sum(ClassSession.imported_bookings), 0)).where(*imported_filters)
     ) or 0
+
     booking_count = int(live_booking_count) + int(imported_booking_count)
-    coach_count = db.scalar(select(func.count(Coach.id)).where(Coach.active == True)) or 0
-    paid_cents = db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0
-    pass_cents = db.scalar(select(func.coalesce(func.sum(ClassPassSale.amount_cents), 0))) or 0
-    today_bookings = db.scalar(select(func.count(Booking.id)).where(Booking.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0))) or 0
+    coach_count = 1 if coach_scope else (db.scalar(select(func.count(Coach.id)).where(Coach.active == True)) or 0)
+    paid_cents = 0 if coach_scope else (db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0)
+    pass_cents = 0 if coach_scope else (db.scalar(select(func.coalesce(func.sum(ClassPassSale.amount_cents), 0))) or 0)
+    today_bookings = db.scalar(select(func.count(Booking.id)).where(*today_filters)) or 0
     return {
         "upcoming_classes": class_count, "active_bookings": booking_count,
         "imported_bookings": int(imported_booking_count), "live_bookings": int(live_booking_count),
-        "coaches": coach_count, "revenue_cents": int(paid_cents) + int(pass_cents), "today_bookings": today_bookings,
+        "coaches": int(coach_count), "revenue_cents": int(paid_cents) + int(pass_cents), "today_bookings": today_bookings,
+        "scope": "coach" if coach_scope else "admin",
     }
 
 @app.get("/api/staff/finance")
