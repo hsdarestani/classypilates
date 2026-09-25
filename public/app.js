@@ -192,7 +192,7 @@ function showToast(title,text,type='auto'){
   const kind=type==='auto'?inferred:type;
   $('#toastTitle').textContent=title;$('#toastText').textContent=text;
   toast.classList.remove('success','warning','error');toast.classList.add('show',kind);
-  const icon=toast.querySelector(':scope > span');if(icon)icon.textContent=kind==='error'?'!':kind==='warning'?'!':'✓';
+  const icon=toast.querySelector(':scope > span');if(icon){icon.textContent=kind==='error'?'!':kind==='warning'?'!':'✓';icon.style.background=kind==='error'?'#8a3e37':kind==='warning'?'#8b6a32':'#305d42'}
   clearTimeout(showToast.t);showToast.t=setTimeout(()=>{toast.classList.remove('show','success','warning','error')},3200)
 }
 function initEvents(){
