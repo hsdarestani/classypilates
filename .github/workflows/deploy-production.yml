@@ -137,6 +137,20 @@ jobs:
           curl -fsS http://127.0.0.1:8787/api/health
           curl -fsS http://127.0.0.1:8787/api/checkout/create | grep -q '"provider":"sumup"'
 
+          docker compose exec -T api python - <<'PY'
+          from mindbody_sync import WriteClient
+          probe = WriteClient.from_env(timeout=12.0)
+          probe._write("client/addclient", {
+              "FirstName": "Checkout",
+              "LastName": "Probe",
+              "Email": "checkout-probe@example.invalid",
+              "MobilePhone": "+4915112345678",
+              "Active": True,
+              "Test": True,
+          })
+          print("Mindbody authenticated write validation: OK")
+          PY
+
           # Production schedule is now sourced from live Mindbody. Do not import the
           # historical bundled snapshot here; it can recreate classes that were later
           # changed or removed in Mindbody.

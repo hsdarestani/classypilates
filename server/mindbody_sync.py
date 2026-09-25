@@ -169,7 +169,7 @@ class WriteClient(MindbodyClient):
             "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "ClassyPilates/2.0",
         }
         if authenticated:
-            headers["Authorization"] = f"Bearer {self.access_token}"
+            headers["Authorization"] = self.access_token
         request = urllib.request.Request(
             f"{self.config.api_url}/{path.lstrip('/')}", data=json.dumps(payload).encode(), headers=headers, method="POST"
         )
@@ -271,12 +271,13 @@ class WriteClient(MindbodyClient):
             raise MindbodyError(detail[:1000], status=exc.code) from exc
 
     def add_client_details(self, *, email: str, first_name: str, last_name: str, phone: str = "") -> str:
-        result = self._write("client/addclient", {"Client": {
+        result = self._write("client/addclient", {
             "FirstName": first_name.strip(),
             "LastName": last_name.strip(),
             "Email": email.strip().lower(),
             "MobilePhone": phone.strip(),
-        }})
+            "Active": True,
+        })
         client = result.get("Client") or result.get("client") or {}
         client_id = client.get("Id") or client.get("ID") or result.get("ClientId")
         if not client_id:
@@ -342,7 +343,7 @@ class WriteClient(MindbodyClient):
             headers={
                 "API-Key": self.config.api_key,
                 "SiteId": self.config.site_id,
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": self.access_token,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
                 "User-Agent": "ClassyPilates/2.0",
@@ -534,8 +535,17 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
             if not booking.klass.mindbody_class_id:
                 raise MindbodyError("No matching Mindbody class ID for this session")
 
-            client = WriteClient.from_env()
-            remote = _find_remote_class(client, booking.klass)
+            client = WriteClient.from_env(timeout=15.0)
+            remote = None
+            synced_at = booking.klass.mindbody_synced_at
+            recently_checked = bool(
+                synced_at
+                and (datetime.now(timezone.utc) - core.as_utc(synced_at)).total_seconds() < 30
+            )
+            if not recently_checked:
+                remote = _find_remote_class(client, booking.klass)
+            else:
+                remote = {"IsAvailable": True}
             if not remote:
                 raise MindbodyError("Mindbody class is not available")
             if bool(_value(remote, "IsCanceled", "IsCancelled", "Cancelled", "isCanceled", default=False)):
@@ -554,6 +564,18 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
                 raise MindbodyError("Mindbody online booking capacity is full")
 
             client_id = str(booking.mindbody_client_id or "")
+            if not client_id:
+                previous_client_id = db.scalar(
+                    select(core.Booking.mindbody_client_id)
+                    .where(
+                        func.lower(core.Booking.email) == booking.email.lower(),
+                        core.Booking.mindbody_client_id.is_not(None),
+                        core.Booking.id != booking.id,
+                    )
+                    .order_by(core.Booking.created_at.desc())
+                    .limit(1)
+                )
+                client_id = str(previous_client_id or "")
             if not client_id:
                 candidates = client.find_clients(booking.email)
                 match = next(

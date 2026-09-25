@@ -949,14 +949,21 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     ref = "CP-" + os.urandom(4).hex().upper()
     use_credit = False
     profile = None
+    first_name = data.firstName.strip()
+    last_name = data.lastName.strip()
+    booking_phone = data.phone.strip()
     if user and core.portal_for(user) == "/account" and user.email.lower() == data.email.lower():
         profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
+        first_name = first_name or (user.first_name or "").strip()
+        last_name = last_name or (user.last_name or "").strip()
+        if not booking_phone and profile:
+            booking_phone = (profile.phone or "").strip()
         if profile and profile.credits > 0:
             profile.credits -= 1
             use_credit = True
     booking = core.Booking(
-        reference=ref, class_id=c.id, customer_name=(data.firstName + " " + data.lastName).strip(),
-        email=data.email.lower(), phone=data.phone, spot_number=data.spot,
+        reference=ref, class_id=c.id, customer_name=(first_name + " " + last_name).strip(),
+        email=data.email.lower(), phone=booking_phone, spot_number=data.spot,
         payment_method="class_credit" if use_credit else "sumup",
         payment_status="paid" if use_credit else "pending", amount_cents=0 if use_credit else 2800,
     )
@@ -994,6 +1001,15 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
             else:
                 booking.payment_status = "failed"
             db.commit()
+            provider_error = (booking.mindbody_sync_error or "").casefold()
+            if "invalid user token" in provider_error or "deniedaccess" in provider_error:
+                raise HTTPException(503, "mindbody_auth_failed")
+            if "required" in provider_error and ("firstname" in provider_error or "mobile" in provider_error):
+                raise HTTPException(409, "mindbody_profile_incomplete")
+            if "permission" in provider_error:
+                raise HTTPException(503, "mindbody_permission_denied")
+            if "full" in provider_error:
+                raise HTTPException(409, "class_full")
             raise HTTPException(409, "mindbody_booking_failed")
 
     if use_credit:

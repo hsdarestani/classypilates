@@ -39,7 +39,11 @@
     'Use code':'Code einlösen',
     'BOOKING LANGUAGE':'BUCHUNGSSPRACHE',
     'Urgent class-change emails will use this language.':'Wichtige E-Mails zu Kursänderungen werden in dieser Sprache gesendet.',
-    'Preparing secure payment…':'Sichere Zahlung wird vorbereitet…'
+    'Preparing secure payment…':'Sichere Zahlung wird vorbereitet…',
+    'Mindbody could not authorize the reservation. No payment was taken. Please try again in a moment.':'Mindbody konnte die Reservierung nicht autorisieren. Es wurde keine Zahlung ausgeführt. Bitte versuche es gleich noch einmal.',
+    'Your Classy profile is missing information required by Mindbody. Please update your mobile number and try again.':'In deinem Classy Profil fehlen Angaben, die Mindbody benötigt. Bitte ergänze deine Mobilnummer und versuche es erneut.',
+    'Mindbody rejected the reservation permission. No payment was taken.':'Mindbody hat die Berechtigung für die Reservierung abgelehnt. Es wurde keine Zahlung ausgeführt.',
+    'The booking service took too long to respond. No payment was confirmed. Please try again.':'Der Buchungsdienst hat zu lange gebraucht. Es wurde keine Zahlung bestätigt. Bitte versuche es erneut.'
   });
   const PATTERNS=[
     [/^(\d+)[.)] (.+)$/, (n,value)=>`${n}. ${DE[value]||value}`],[/^(\d+) coach profiles\.$/,n=>`${n} Trainerprofile.`],[/^(\d+) profiles · photos are used across the schedule and booking flow\.$/,n=>`${n} Profile · Fotos werden im Stundenplan und Buchungsablauf verwendet.`],[/^(\d+) entries · customers, spots and payment status\.$/,n=>`${n} Einträge · Kunden, Plätze und Zahlungsstatus.`],[/^(\d+) sessions in the Control Center\.$/,n=>`${n} Einheiten in der Zentrale.`],[/^(\d+) historical bookings$/,n=>`${n} historische Buchungen`],[/^(\d+) Class Pack$/,n=>`${n} Kurspaket`],[/^(\d+) Class Packs$/,n=>`${n} Kurspakete`],[/^(\d+) Min\.$/,n=>`${n} Min.`],[/^(\d+) available$/,n=>`${n} verfügbar`],[/^(\d+) total$/,n=>`${n} gesamt`],[/^(\d+) classes saved$/,n=>`${n} Kurse gespeichert`],[/^(\d+) class saved$/,n=>`${n} Kurs gespeichert`],[/^(\d+) credits added$/,n=>`${n} Guthaben hinzugefügt`],[/^One class credit was used\. You have (\d+) left\.$/,n=>`Ein Kursguthaben wurde verwendet. Du hast noch ${n} übrig.`],[/^The customer now has (\d+) available credits\.$/,n=>`Der Kunde hat jetzt ${n} verfügbare Guthaben.`]
