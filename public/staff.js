@@ -138,7 +138,7 @@
     renderRows(d.customers);
 
     $('#customerSearch')?.addEventListener('input',event=>{
-      const q=event.target.value.trim().casefold?.()||event.target.value.trim().toLowerCase();
+      const q=event.target.value.trim().toLowerCase();
       if(!q)return renderRows(d.customers);
       renderRows(d.customers.filter(x=>[
         x.first_name,x.last_name,x.email,x.phone,x.mindbody_client_id,x.client_type,x.home_location,x.source
