@@ -71,9 +71,10 @@ def request_password_reset(
             [
                 f"Hello {user.first_name or 'Classy Client'},",
                 "We received a request to reset the password for your Classy Pilates account.",
-                f"Open this secure link within {RESET_TTL_MINUTES} minutes: {url}",
+                f"Use the secure button below within {RESET_TTL_MINUTES} minutes.",
                 "If you did not request this, you can ignore this email. Your current password remains unchanged.",
             ],
+            ("Reset password", url),
         )
     return {"ok": True}
 
