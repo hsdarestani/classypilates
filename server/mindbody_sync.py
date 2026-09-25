@@ -5,6 +5,8 @@ and a paid website booking is never added twice. Failures remain visible and ret
 """
 from __future__ import annotations
 
+import calendar
+import json
 import os
 import threading
 import time
@@ -273,6 +275,30 @@ class WriteClient(MindbodyClient):
     def find_clients(self, email: str) -> list[dict[str, Any]]:
         payload = self._authorized_get("client/clients", {"SearchText": email, "Limit": 50})
         return [x for x in _extract_list(payload, ("Clients", "clients", "Items")) if isinstance(x, dict)]
+
+    def get_clients(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+        return self._authorized_get(
+            "client/clients",
+            {"request.limit": limit, "request.offset": offset},
+        )
+
+    def get_client_complete_info(self, client_id: str) -> dict[str, Any]:
+        return self._authorized_get(
+            "client/clientcompleteinfo",
+            {"request.clientId": client_id},
+        )
+
+    def get_class_descriptions(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+        return self._authorized_get(
+            "class/classdescriptions",
+            {"request.includeInactive": False, "request.limit": limit, "request.offset": offset},
+        )
+
+    def add_class_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._write("class/addclassschedule", payload)
+
+    def update_class_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._write("class/updateclassschedule", payload)
 
     def _public_get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         import json, urllib.error, urllib.parse, urllib.request
