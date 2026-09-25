@@ -3493,6 +3493,11 @@ def manual_sync(background: BackgroundTasks, user: core.User = Depends(core.requ
     return {"ok": True, "queued": True}
 
 
+@core.app.get("/api/staff/mindbody/catalog")
+def staff_mindbody_catalog(user: core.User = Depends(core.require("classes.view"))):
+    return mindbody_class_catalog()
+
+
 @core.app.post("/api/staff/mindbody/customers/sync")
 def manual_customer_sync(background: BackgroundTasks, user: core.User = Depends(core.require("customers.view"))):
     background.add_task(sync_client_directory)
