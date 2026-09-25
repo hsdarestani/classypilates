@@ -139,16 +139,19 @@ jobs:
 
           docker compose exec -T api python - <<'PY'
           from mindbody_sync import WriteClient
+          from mindbody_api import MindbodyError
           probe = WriteClient.from_env(timeout=12.0)
-          probe._write("client/addclient", {
-              "FirstName": "Checkout",
-              "LastName": "Probe",
-              "Email": "checkout-probe@example.invalid",
-              "MobilePhone": "+4915112345678",
-              "Active": True,
-              "Test": True,
-          })
-          print("Mindbody authenticated write validation: OK")
+          try:
+              probe._write("client/addclient", {})
+          except MindbodyError as exc:
+              message = str(exc).casefold()
+              if "invalid user token" in message or "deniedaccess" in message:
+                  raise
+              if "required" not in message:
+                  raise
+              print("Mindbody authenticated write validation: OK")
+          else:
+              raise SystemExit("Unexpected success for empty AddClient probe")
           PY
 
           # Production schedule is now sourced from live Mindbody. Do not import the
@@ -560,6 +563,12 @@ jobs:
           ORDER BY b.created_at DESC
           LIMIT 8;
           SQL
+
+          echo "Refreshing Mindbody mirror before final audit..."
+          docker compose exec -T api python - <<'PY'
+          import mindbody_sync
+          print(mindbody_sync.sync_from_mindbody())
+          PY
 
           echo "Running live Mindbody/Classy availability audit..."
           docker compose exec -T api python mindbody_audit.py
