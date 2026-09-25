@@ -24,7 +24,7 @@ jobs:
           export SSHPASS="$PASS"
           sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
           from mindbody_sync import sync_client_directory, mindbody_class_catalog
-          clients = sync_client_directory(max_clients=5000)
+          clients = sync_client_directory(max_clients=20000)
           catalog = mindbody_class_catalog()
           print({
               "clients_seen": int(clients.get("seen", 0)),
