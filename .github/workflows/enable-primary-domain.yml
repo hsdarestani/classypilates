@@ -86,13 +86,9 @@ jobs:
           nginx -t
           systemctl reload nginx
 
-          WWW_IP="$(getent ahostsv4 www.classypilates.de 2>/dev/null | awk '{print $1}' | head -n1 || true)"
-          THIS_IP="$(getent ahostsv4 classypilates.de 2>/dev/null | awk '{print $1}' | head -n1 || true)"
-          if [ -n "$WWW_IP" ] && [ "$WWW_IP" = "$THIS_IP" ]; then
-            certbot --nginx -d classypilates.de -d www.classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring
-          else
-            certbot --nginx -d classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring
-          fi
+          # Cut over the apex first. www still points at the legacy host and must
+          # not block certificate issuance for the primary domain.
+          certbot --nginx -d classypilates.de --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring
 
           nginx -t
           systemctl reload nginx
