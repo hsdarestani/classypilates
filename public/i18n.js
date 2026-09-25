@@ -192,6 +192,35 @@
     "SumUp did not confirm the payment. The pending booking has been cancelled.": "SumUp hat die Zahlung nicht bestätigt. Die ausstehende Buchung wurde storniert.",
     "No successful payment has been confirmed yet. Please check your account before trying again.": "Es wurde noch keine erfolgreiche Zahlung bestätigt. Bitte prüfe dein Konto, bevor du es erneut versuchst."
 });
+
+  Object.assign(DE,{
+    "available on your account": "auf deinem Konto verfügbar",
+    "HISTORY": "VERLAUF",
+    "past bookings": "vergangene Buchungen",
+    "Ready when you are.": "Bereit, wenn du es bist.",
+    "You have no active class booked right now.": "Du hast aktuell keinen aktiven Kurs gebucht.",
+    "Explore schedule": "Stundenplan ansehen",
+    "ACTIVE BOOKINGS": "AKTIVE BUCHUNGEN",
+    "Your current reservations": "Deine aktuellen Buchungen",
+    "Only active bookings are shown here. Past and cancelled bookings stay in booking history.": "Hier werden nur aktive Buchungen angezeigt. Vergangene und stornierte Buchungen findest du im Buchungsverlauf.",
+    "No active reservations": "Keine aktiven Buchungen",
+    "Choose your next Classy session whenever you are ready.": "Buche deine nächste Classy Einheit, sobald du bereit bist.",
+    "View booking": "Buchung ansehen",
+    "Keep your contact details up to date for bookings and studio communication.": "Halte deine Kontaktdaten für Buchungen und die Kommunikation mit dem Studio aktuell.",
+    "Classy news & studio updates": "Classy News und Studio Updates",
+    "Receive selected studio news and class updates by email.": "Erhalte ausgewählte Studio News und Kurs Updates per E Mail.",
+    "Save profile": "Profil speichern",
+    "Use at least 8 characters for your new password.": "Verwende mindestens 8 Zeichen für dein neues Passwort.",
+    "Temporarily reveal both password fields.": "Beide Passwortfelder vorübergehend anzeigen.",
+    "Change password": "Passwort ändern",
+    "CURRENT PASSWORD": "AKTUELLES PASSWORT",
+    "NEW PASSWORD": "NEUES PASSWORT",
+    "View all": "Alle anzeigen",
+    "Book a class": "Kurs buchen",
+    "available": "verfügbar",
+    "active bookings": "aktive Buchungen",
+    "open entries": "offene Einträge"
+});
   const PATTERNS=[
     [/^(\d+)[.)] (.+)$/, (n,value)=>`${n}. ${DE[value]||value}`],[/^(\d+) coach profiles\.$/,n=>`${n} Trainerprofile.`],[/^(\d+) profiles · photos are used across the schedule and booking flow\.$/,n=>`${n} Profile · Fotos werden im Stundenplan und Buchungsablauf verwendet.`],[/^(\d+) entries · customers, spots and payment status\.$/,n=>`${n} Einträge · Kunden, Plätze und Zahlungsstatus.`],[/^(\d+) sessions in the Control Center\.$/,n=>`${n} Einheiten in der Zentrale.`],[/^(\d+) historical bookings$/,n=>`${n} historische Buchungen`],[/^(\d+) Class Pack$/,n=>`${n} Kurspaket`],[/^(\d+) Class Packs$/,n=>`${n} Kurspakete`],[/^(\d+) Min\.$/,n=>`${n} Min.`],[/^(\d+) available$/,n=>`${n} verfügbar`],[/^(\d+) total$/,n=>`${n} gesamt`],[/^(\d+) classes saved$/,n=>`${n} Kurse gespeichert`],[/^(\d+) class saved$/,n=>`${n} Kurs gespeichert`],[/^(\d+) credits added$/,n=>`${n} Guthaben hinzugefügt`],[/^(\d+) Class Credits? available$/,n=>`${n} Kursguthaben verfügbar`],[/^You have (\d+) available\. No new payment is needed\.$/,n=>`Du hast ${n} verfügbar. Es ist keine neue Zahlung erforderlich.`],[/^One class credit was used\. You have (\d+) left\.$/,n=>`Ein Kursguthaben wurde verwendet. Du hast noch ${n} übrig.`],[/^The customer now has (\d+) available credits\.$/,n=>`Der Kunde hat jetzt ${n} verfügbare Guthaben.`],[/^Continue as (.+)\.$/,name=>`Weiter als ${name}.`],[/^(\d+) spots$/,n=>`${n} Plätze`],[/^Only (\d+) spots$/,n=>`Nur noch ${n} Plätze`],[/^(\d+) online payments? · (.+)$/, (n,rest)=>`${n} Online Zahlungen · ${rest}`]
   ];
