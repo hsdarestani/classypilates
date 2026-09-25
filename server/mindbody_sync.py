@@ -291,9 +291,12 @@ class WriteClient(MindbodyClient):
         )
 
     def get_class_descriptions(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
-        return self._authorized_get(
+        # Authorization is optional for GetClassDescriptions. Use the public path
+        # so catalog reads cannot invalidate or compete with the staff token used
+        # for booking and write operations.
+        return self._public_get(
             "class/classdescriptions",
-            {"request.includeInactive": False, "request.limit": limit, "request.offset": offset},
+            {"request.limit": limit, "request.offset": offset},
         )
 
     def add_class_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
