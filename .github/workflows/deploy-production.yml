@@ -270,6 +270,7 @@ jobs:
               location = /terms-conditions { try_files /terms-conditions.html =404; }
               location = /studio-rules { try_files /studio-rules.html =404; }
               location = /shop { try_files /shop.html =404; }
+              location = /special-offer { try_files /special-offer.html =404; add_header Cache-Control "no-cache, no-store, must-revalidate"; }
               location = /classfit { try_files /classfit.html =404; }
               location = /login { try_files /login.html =404; add_header Cache-Control "no-store"; }
               location = /account { try_files /account.html =404; add_header Cache-Control "no-store"; }
@@ -278,6 +279,7 @@ jobs:
               location = /terms-conditions.html { return 301 /terms-conditions; }
               location = /studio-rules.html { return 301 /studio-rules; }
               location = /shop.html { return 301 /shop; }
+              location = /special-offer.html { return 301 /special-offer; }
               location = /classfit.html { return 301 /classfit; }
               location = /login.html { return 301 /login; }
               location = /account.html { return 301 /account; }
