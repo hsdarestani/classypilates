@@ -333,6 +333,13 @@ class PaymentOrder(Base):
     booking_reference: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")
     credited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # External SumUp bookings are mirrored into Mindbody as an "Other" payment
+    # only after SumUp confirms PAID. These fields keep that reconciliation
+    # idempotent without changing the booking/payment semantics used elsewhere.
+    mindbody_sale_status: Mapped[str] = mapped_column(String(30), default="", index=True)
+    mindbody_sale_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mindbody_service_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mindbody_sale_error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -473,10 +480,19 @@ def migrate_schema():
     inspector = inspect(engine)
     if inspector.has_table("payment_orders"):
         payment_columns = {column["name"] for column in inspector.get_columns("payment_orders")}
-        if "booking_reference" not in payment_columns:
-            with engine.begin() as connection:
-                connection.execute(text("ALTER TABLE payment_orders ADD COLUMN booking_reference VARCHAR(40)"))
-                connection.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_orders_booking_reference ON payment_orders (booking_reference)"))
+        payment_additions = {
+            "booking_reference": "VARCHAR(40)",
+            "mindbody_sale_status": "VARCHAR(30) NOT NULL DEFAULT ''",
+            "mindbody_sale_id": "VARCHAR(100)",
+            "mindbody_service_id": "VARCHAR(100)",
+            "mindbody_sale_error": "TEXT NOT NULL DEFAULT ''",
+        }
+        with engine.begin() as connection:
+            for name, sql_type in payment_additions.items():
+                if name not in payment_columns:
+                    connection.execute(text(f"ALTER TABLE payment_orders ADD COLUMN {name} {sql_type}"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_orders_booking_reference ON payment_orders (booking_reference)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_orders_mindbody_sale_status ON payment_orders (mindbody_sale_status)"))
         with engine.begin() as connection:
             duplicate_active_order = connection.execute(text("""
                 SELECT 1
