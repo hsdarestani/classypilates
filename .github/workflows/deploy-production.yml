@@ -375,8 +375,13 @@ jobs:
               VERIFY_URL="http://127.0.0.1"
               VERIFY_RESOLVE=(-H "Host: new.classypilates.de")
             fi
-            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login" | grep -q 'ONE LOGIN'
-            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account" | grep -q 'MY CLASSY'
+            # Avoid curl exit 23 under "set -o pipefail" when grep -q exits
+            # as soon as it finds a match and closes the pipe on a larger HTML page.
+            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login" -o /tmp/classy-login-smoke.html
+            curl -kfsS "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account" -o /tmp/classy-account-smoke.html
+            grep -q 'ONE LOGIN' /tmp/classy-login-smoke.html
+            grep -q 'MY CLASSY' /tmp/classy-account-smoke.html
+            rm -f /tmp/classy-login-smoke.html /tmp/classy-account-smoke.html
             LOGIN_HTML_CODE=$(curl -ksS -o /dev/null -w '%{http_code}' "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/login.html")
             ACCOUNT_HTML_CODE=$(curl -ksS -o /dev/null -w '%{http_code}' "${VERIFY_RESOLVE[@]}" "$VERIFY_URL/account.html")
             test "$LOGIN_HTML_CODE" = "301"
