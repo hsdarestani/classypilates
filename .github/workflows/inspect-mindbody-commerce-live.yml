@@ -1,0 +1,72 @@
+name: Inspect Mindbody Commerce Live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-mindbody-commerce-live.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect read only Mindbody commerce data
+        env:
+          API_KEY: ${{ secrets.MINDBODY_API_KEY }}
+          SITE_ID: ${{ secrets.MINDBODY_SITE_ID }}
+          STAFF_USERNAME: ${{ secrets.MINDBODY_STAFF_USERNAME }}
+          STAFF_PASSWORD: ${{ secrets.MINDBODY_STAFF_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.parse, urllib.request, urllib.error
+          base="https://api.mindbodyonline.com/public/v6"
+          common={"API-Key":os.environ["API_KEY"],"SiteId":os.environ["SITE_ID"],"Accept":"application/json","Content-Type":"application/json"}
+          body=json.dumps({"Username":os.environ["STAFF_USERNAME"],"Password":os.environ["STAFF_PASSWORD"]}).encode()
+          req=urllib.request.Request(base+"/usertoken/issue",data=body,method="POST",headers=common)
+          with urllib.request.urlopen(req,timeout=30) as res:
+              tok=json.load(res)
+          token=tok.get("AccessToken") or tok.get("Token")
+          auth={**common,"Authorization":token}
+
+          def get(path, params=None):
+              q=urllib.parse.urlencode(params or {}, doseq=True)
+              req=urllib.request.Request(base+path+("?" + q if q else ""),headers=auth)
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as res:
+                      return res.status,json.load(res)
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read().decode(errors="replace")
+                  return exc.code,{"error":raw[:1000]}
+
+          st,locs=get("/site/locations")
+          print("LOCATIONS",st)
+          for loc in locs.get("Locations",[]):
+              print(json.dumps({"id":loc.get("Id"),"name":loc.get("Name")},ensure_ascii=False))
+
+          st,pay=get("/site/paymenttypes")
+          print("PAYMENT_TYPES",st,json.dumps(pay,ensure_ascii=False)[:12000])
+
+          for loc in locs.get("Locations",[]):
+              lid=loc.get("Id")
+              st,sv=get("/sale/services",{"request.locationId":lid,"request.onlineOnly":False,"request.limit":200,"request.offset":0})
+              print("SERVICES",lid,loc.get("Name"),st)
+              rows=sv.get("Services") or sv.get("services") or []
+              for s in rows:
+                  name=str(s.get("Name") or "")
+                  if name in {"1 Class","5 Classes","10 Classes","20 Classes"} or "Class" in name:
+                      keep={k:s.get(k) for k in ["Id","Name","Price","OnlinePrice","Count","ProductId","ProgramId","TaxRate","SellOnline","MembershipRequired","ExpirationType","ExpirationUnit","ExpirationLength"] if k in s}
+                      print(json.dumps(keep,ensure_ascii=False))
+
+          # inspect two known clients without exposing email/phone
+          for client_id in ["100019131","100018587"]:
+              st,cs=get("/client/clientservices",{"request.clientId":client_id,"request.limit":100,"request.offset":0,"request.showActiveOnly":False})
+              print("CLIENT_SERVICES",client_id,st)
+              rows=cs.get("ClientServices") or cs.get("clientServices") or []
+              for row in rows[:30]:
+                  keep={k:row.get(k) for k in ["Id","Name","Count","Remaining","ActiveDate","ExpirationDate","ProductId","ServiceId","ProgramId","Current"] if k in row}
+                  print(json.dumps(keep,ensure_ascii=False))
+          PY
