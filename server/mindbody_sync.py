@@ -1512,6 +1512,12 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             return False
         if order.mindbody_sale_status == "synced":
             return True
+        if order.mindbody_sale_status == "syncing":
+            # Another worker already owns the provider write. Stale claims are
+            # recovered by retry_pending only after a timeout and a provider read.
+            return False
+        if order.mindbody_sale_status not in {"pending", "failed"}:
+            return False
         if order.status != "paid":
             return False
 
@@ -1560,6 +1566,13 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             "client_id": str(booking.mindbody_client_id or ""),
             "amount_cents": int(order.amount_cents or 0),
         }
+
+        # Claim the provider write while holding the row lock. This prevents two
+        # simultaneous SumUp callbacks / status polls from creating two Mindbody
+        # sales for the same booking.
+        order.mindbody_sale_status = "syncing"
+        order.mindbody_sale_error = ""
+        db.commit()
 
     # Payment can complete very quickly after the booking endpoint returns. If the
     # asynchronous pre-payment seat hold is still finishing, give it a bounded chance
@@ -1629,7 +1642,28 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
         if not service_id:
             raise MindbodyError("mindbody_single_class_service_missing_id")
 
-        _set_mindbody_sale_state(order_id, "syncing", service_id=service_id)
+        # Re-check the local reservation immediately before the irreversible
+        # provider sale. A concurrent cancellation must win over reconciliation.
+        with core.SessionLocal() as db:
+            order = db.get(core.PaymentOrder, order_id)
+            booking = db.get(core.Booking, snapshot["booking_id"])
+            if (
+                not order
+                or order.status != "paid"
+                or order.mindbody_sale_status != "syncing"
+                or not booking
+                or booking.status != "reserved"
+                or booking.payment_status != "paid"
+                or booking.payment_method != "sumup"
+            ):
+                if order and order.mindbody_sale_status == "syncing":
+                    order.mindbody_sale_status = "skipped_cancelled"
+                    order.mindbody_sale_error = "booking_changed_before_provider_sale"
+                    db.commit()
+                return False
+            order.mindbody_service_id = service_id
+            db.commit()
+
         result = client.checkout_external_class_payment(
             client_id=snapshot["client_id"],
             class_id=snapshot["class_id"],
@@ -3851,13 +3885,32 @@ def retry_pending() -> int:
                 core.PaymentOrder.mindbody_sale_status.in_(["pending", "failed"]),
             ).limit(50)
         ))
+        stale_claim_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        stale_sale_ids = list(db.scalars(
+            select(core.PaymentOrder.id).where(
+                core.PaymentOrder.booking_reference.is_not(None),
+                core.PaymentOrder.status == "paid",
+                core.PaymentOrder.mindbody_sale_status == "syncing",
+                core.PaymentOrder.updated_at < stale_claim_cutoff,
+            ).limit(25)
+        ))
     for booking_id in ids:
         sync_local_booking(booking_id)
     for booking_id in cancel_ids:
         cancel_local_booking(booking_id)
-    for order_id in paid_sale_ids:
+    for order_id in stale_sale_ids:
+        # A crashed worker may have completed the remote sale before losing its
+        # response. Move the claim back to retryable; reconcile_paid_booking_sale
+        # checks the live class visit first and will not sell again if Mindbody
+        # already attached the 1 Class service.
+        _set_mindbody_sale_state(
+            order_id,
+            "failed",
+            error="stale_sync_claim_recheck",
+        )
+    for order_id in [*paid_sale_ids, *stale_sale_ids]:
         reconcile_paid_booking_sale(order_id)
-    return len(ids) + len(cancel_ids) + len(paid_sale_ids)
+    return len(ids) + len(cancel_ids) + len(paid_sale_ids) + len(stale_sale_ids)
 
 
 def _client_directory_loop():
