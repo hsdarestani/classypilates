@@ -55,6 +55,12 @@ jobs:
           UPLOAD_DIR: /tmp/classy-public-feed-uploads
         run: python server/mindbody_public_feed_guard.py
 
+      - name: Mindbody external payment regression guard
+        env:
+          DATABASE_URL: sqlite:////tmp/classy-payment-reconciliation-guard.db
+          UPLOAD_DIR: /tmp/classy-payment-reconciliation-uploads
+        run: python server/mindbody_payment_reconciliation_guard.py
+
       - name: Production domain guard
         run: |
           grep -q 'new.classypilates.de' .github/workflows/deploy-production.yml
