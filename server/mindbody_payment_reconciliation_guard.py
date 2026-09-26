@@ -1,13 +1,43 @@
-"""Regression guard for the website SumUp -> Mindbody paid-visit bridge.
+"""Dependency-free regression guard for SumUp -> Mindbody reconciliation.
 
-Runs without network access. It protects the two safety properties that matter most:
-1. only a one-class pricing option can be selected (never a pack / Wellhub), and
-2. the provider write is a class-linked CheckoutShoppingCart using the site's
-   externally-collected "Other" payment mapping (Custom ID 9).
+CI intentionally runs this before installing the production Python dependencies.
+The guard therefore parses the real implementation, executes only its pure pricing
+selector, and statically verifies the provider payload invariants.
 """
 from __future__ import annotations
 
-import mindbody_sync as mb
+import ast
+from pathlib import Path
+from typing import Any
+
+
+SOURCE_PATH = Path(__file__).with_name("mindbody_sync.py")
+SOURCE = SOURCE_PATH.read_text(encoding="utf-8")
+TREE = ast.parse(SOURCE)
+
+
+class MindbodyError(Exception):
+    pass
+
+
+def module_function(name: str) -> ast.FunctionDef:
+    for node in TREE.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"Missing function: {name}")
+
+
+# Execute only the pure service-selection helpers from the production source.
+namespace: dict[str, Any] = {"Any": Any, "MindbodyError": MindbodyError}
+nodes = [
+    module_function("_value"),
+    module_function("_service_price_cents"),
+    module_function("_pick_single_class_service"),
+]
+ast.fix_missing_locations(module := ast.Module(body=nodes, type_ignores=[]))
+exec(compile(module, str(SOURCE_PATH), "exec"), namespace)
+
+pick = namespace["_pick_single_class_service"]
 
 
 def service(service_id: str, name: str, price: float, count: int, service_type: str = "DropIn"):
@@ -29,78 +59,58 @@ catalog = [
     service("100007", "10 Classes", 219.0, 10, "Series"),
     service("100061", "Wellhub", 0.0, 1),
 ]
-
-picked = mb._pick_single_class_service(catalog, amount_cents=2800)
+picked = pick(catalog, amount_cents=2800)
 assert picked["Id"] == "100071", picked
 
 try:
-    mb._pick_single_class_service(
-        [service("x", "10 Classes", 219.0, 10, "Series")],
-        amount_cents=21900,
-    )
-except mb.MindbodyError:
+    pick([service("x", "10 Classes", 219.0, 10, "Series")], amount_cents=21900)
+except MindbodyError:
     pass
 else:
-    raise AssertionError("A multi-class pack must never be used to reconcile one visit.")
-
-captured: dict = {}
-client = object.__new__(mb.WriteClient)
+    raise AssertionError("A multi-class pack must never reconcile one class visit.")
 
 
-def fake_write(path: str, payload: dict, *, authenticated: bool = True):
-    captured["path"] = path
-    captured["payload"] = payload
-    captured["authenticated"] = authenticated
-    return {"ShoppingCart": {"Id": "test-cart"}}
-
-
-client._write = fake_write  # type: ignore[method-assign]
-result = client.checkout_external_class_payment(
-    client_id="100019131",
-    class_id="20866",
-    location_id="1",
-    service_id="100071",
-    amount_cents=2800,
+# Inspect the actual WriteClient methods rather than duplicating their payload logic.
+write_client = next(
+    node for node in TREE.body
+    if isinstance(node, ast.ClassDef) and node.name == "WriteClient"
 )
-assert result["ShoppingCart"]["Id"] == "test-cart"
-assert captured["path"] == "sale/checkoutshoppingcart"
+methods = {
+    node.name: node
+    for node in write_client.body
+    if isinstance(node, ast.FunctionDef)
+}
+checkout = ast.get_source_segment(SOURCE, methods["checkout_external_class_payment"]) or ""
+services = ast.get_source_segment(SOURCE, methods["get_sale_services_for_class"]) or ""
 
-payload = captured["payload"]
-assert payload["Test"] is False
-assert payload["InStore"] is True
-assert payload["SendEmail"] is False
-assert payload["ClientId"] == 100019131
-assert payload["LocationId"] == 1
-assert payload["Items"] == [
-    {
-        "Item": {"Type": "Service", "Metadata": {"Id": "100071"}},
-        "Quantity": 1,
-        "ClassIds": [20866],
-    }
+required_checkout_fragments = [
+    '"sale/checkoutshoppingcart"',
+    '"Type": "Service"',
+    '"ClassIds": [int(class_id)]',
+    '"Type": "Custom"',
+    '"Amount": amount',
+    '"Id": MINDBODY_EXTERNAL_PAYMENT_METHOD_ID',
+    '"Test": False',
+    '"InStore": True',
+    '"SendEmail": False',
 ]
-assert payload["Payments"] == [
-    {
-        "Type": "Custom",
-        "Metadata": {"Amount": 28.0, "Id": 9},
-    }
+for fragment in required_checkout_fragments:
+    assert fragment in checkout, f"Missing checkout safety invariant: {fragment}"
+
+required_service_fragments = [
+    '"sale/services"',
+    '"request.classId": int(class_id)',
+    '"request.locationId": int(location_id)',
+    '"request.sellOnline": True',
+    '"request.includeDiscontinued": False',
 ]
+for fragment in required_service_fragments:
+    assert fragment in services, f"Missing service-query invariant: {fragment}"
 
-query: dict = {}
-
-
-def fake_get(path: str, params: dict):
-    query["path"] = path
-    query["params"] = params
-    return {"Services": catalog}
-
-
-client._authorized_get = fake_get  # type: ignore[method-assign]
-rows = client.get_sale_services_for_class("20866", "1")
-assert len(rows) == len(catalog)
-assert query["path"] == "sale/services"
-assert query["params"]["request.classId"] == 20866
-assert query["params"]["request.locationId"] == 1
-assert query["params"]["request.sellOnline"] is True
-assert query["params"]["request.includeDiscontinued"] is False
+assert 'MINDBODY_EXTERNAL_PAYMENT_METHOD_ID = int(os.getenv("MINDBODY_EXTERNAL_PAYMENT_METHOD_ID", "9") or "9")' in SOURCE
+assert 'booking.payment_method != "sumup"' in SOURCE
+assert 'booking.payment_status != "paid"' in SOURCE
+assert 'booking.source != "website"' in SOURCE
+assert 'order.mindbody_sale_status == "synced"' in SOURCE
 
 print("Mindbody payment reconciliation guard OK")
