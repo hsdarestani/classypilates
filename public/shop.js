@@ -2,6 +2,7 @@ const PRODUCTS={
   single:{id:'single',name:'1 Class',eyebrow:'SINGLE',price:2800,description:'Maximum flexibility for your next class.'},
   five:{id:'five',name:'5 Classes',eyebrow:'FLEXIBLE',price:11900,description:'Five classes for a flexible training rhythm.'},
   ten:{id:'ten',name:'10 Classes',eyebrow:'MOST POPULAR',price:21900,description:'€21.90 per class — ideal for a consistent routine.',featured:true},
+  special10:{id:'special10',name:'10 Classes · Special Offer',eyebrow:'SPECIAL OFFER',price:17900,description:'10 Class Credits · special campaign price.',hidden:true},
   twenty:{id:'twenty',name:'20 Classes',eyebrow:'COMMITTED',price:39900,description:'€19.95 per class — for regular training.'}
 };
 const PAYMENT_METHODS=[
@@ -21,7 +22,7 @@ function total(){return cartItems().reduce((s,p)=>s+p.price,0)}
 function showToast(title,text=''){const t=$('#toast');$('#toastTitle').textContent=title;$('#toastText').textContent=text;t.classList.add('show');clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.remove('show'),2800)}
 
 function renderProducts(){
-  $('#productGrid').innerHTML=Object.values(PRODUCTS).map(p=>`<article class="product-card ${p.featured?'featured':''}">${p.featured?'<span class="badge">MOST POPULAR</span>':''}<small>${esc(p.eyebrow)}</small><h3>${esc(p.name)}</h3><div class="price">${money(p.price)}</div><p>${esc(p.description)}</p><button type="button" data-add="${p.id}">Add to cart →</button></article>`).join('');
+  $('#productGrid').innerHTML=Object.values(PRODUCTS).filter(p=>!p.hidden).map(p=>`<article class="product-card ${p.featured?'featured':''}">${p.featured?'<span class="badge">MOST POPULAR</span>':''}<small>${esc(p.eyebrow)}</small><h3>${esc(p.name)}</h3><div class="price">${money(p.price)}</div><p>${esc(p.description)}</p><button type="button" data-add="${p.id}">Add to cart →</button></article>`).join('');
   $$('[data-add]').forEach(btn=>btn.addEventListener('click',()=>addProduct(btn.dataset.add)));
 }
 function addProduct(id){if(!PRODUCTS[id])return;if(!state.cart.includes(id))state.cart.push(id);write('cpCart',state.cart);updateCartCount();showToast('Added to cart',PRODUCTS[id].name);openCart()}
