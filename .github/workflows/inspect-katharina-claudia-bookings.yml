@@ -1,0 +1,144 @@
+name: Inspect Katharina and Claudia Bookings
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-katharina-claudia-bookings.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Inspect production booking and Mindbody state
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          import json
+          from sqlalchemy import select, func
+          from zoneinfo import ZoneInfo
+          import main as core
+          import mindbody_sync as mb
+
+          targets = ["Katharina Spieker", "Claudia Ilicic"]
+          berlin = ZoneInfo("Europe/Berlin")
+
+          def val(row, *names, default=None):
+              for name in names:
+                  if isinstance(row, dict) and name in row:
+                      return row[name]
+              return default
+
+          def client_names(visit):
+              c = visit.get("Client") or visit.get("client") or {}
+              first = val(c, "FirstName", "firstName", "first_name", default="") or val(visit, "FirstName", "firstName", default="")
+              last = val(c, "LastName", "lastName", "last_name", default="") or val(visit, "LastName", "lastName", default="")
+              return str(first).strip(), str(last).strip()
+
+          client = mb.WriteClient.from_env(timeout=15.0)
+
+          with core.SessionLocal() as db:
+              for target in targets:
+                  print("=== TARGET", target, "===")
+                  rows = db.scalars(
+                      select(core.Booking)
+                      .where(func.lower(core.Booking.customer_name) == target.lower())
+                      .order_by(core.Booking.created_at.desc())
+                      .limit(12)
+                  ).all()
+                  if not rows:
+                      # fallback for mirrored records where display name may differ
+                      bits = target.split()
+                      rows = db.scalars(
+                          select(core.Booking)
+                          .where(func.lower(core.Booking.customer_name).like(f"%{bits[-1].lower()}%"))
+                          .order_by(core.Booking.created_at.desc())
+                          .limit(12)
+                      ).all()
+
+                  print("LOCAL_COUNT", len(rows))
+                  for b in rows:
+                      starts = core.as_utc(b.klass.starts_at).astimezone(berlin)
+                      order = db.scalar(
+                          select(core.PaymentOrder)
+                          .where(core.PaymentOrder.booking_reference == b.reference)
+                          .order_by(core.PaymentOrder.created_at.desc())
+                          .limit(1)
+                      )
+                      snap = {
+                          "reference": b.reference,
+                          "source": b.source,
+                          "customer_name": b.customer_name,
+                          "class_title": b.klass.title,
+                          "starts_berlin": starts.isoformat(),
+                          "studio": b.klass.studio.name if b.klass.studio else b.klass.studio_id,
+                          "booking_status": b.status,
+                          "payment_status": b.payment_status,
+                          "payment_method": b.payment_method,
+                          "amount_cents": int(b.amount_cents or 0),
+                          "mindbody_sync_status": b.mindbody_sync_status,
+                          "mindbody_sync_error": (b.mindbody_sync_error or "")[:240],
+                          "mindbody_class_id": b.klass.mindbody_class_id,
+                          "mindbody_visit_id": b.mindbody_visit_id,
+                          "mindbody_client_id": b.mindbody_client_id,
+                          "created_at": b.created_at.isoformat() if b.created_at else None,
+                          "payment_order_status": order.status if order else None,
+                          "payment_order_amount_cents": int(order.amount_cents or 0) if order else None,
+                          "payment_order_provider_linked": bool(order and order.provider_payment_id),
+                      }
+                      print("LOCAL", json.dumps(snap, ensure_ascii=False, sort_keys=True))
+
+                      if not b.klass.mindbody_class_id:
+                          continue
+                      try:
+                          payload = client.get_class_visits(str(b.klass.mindbody_class_id))
+                          visits = [v for v in mb._extract_class_visits(payload) if isinstance(v, dict)]
+                      except Exception as exc:
+                          print("MB_ERROR", type(exc).__name__, str(exc)[:240])
+                          continue
+
+                      matched = []
+                      for visit in visits:
+                          visit_id = str(val(visit, "Id", "ID", "VisitId", "VisitID", default="") or "")
+                          c = visit.get("Client") or visit.get("client") or {}
+                          client_id = str(val(visit, "ClientId", "ClientID", default=val(c, "Id", "ID", default="")) or "")
+                          first, last = client_names(visit)
+                          by_id = (b.mindbody_visit_id and visit_id == str(b.mindbody_visit_id)) or (b.mindbody_client_id and client_id == str(b.mindbody_client_id))
+                          by_name = f"{first} {last}".strip().casefold() == target.casefold()
+                          if by_id or by_name:
+                              matched.append(visit)
+
+                      print("MB_MATCH_COUNT", len(matched))
+                      for visit in matched[:3]:
+                          first, last = client_names(visit)
+                          safe = {
+                              "name": f"{first} {last}".strip(),
+                              "visit_id": val(visit, "Id", "ID", "VisitId", "VisitID"),
+                              "client_id": val(visit, "ClientId", "ClientID", default=val(visit.get("Client") or {}, "Id", "ID")),
+                              "status": val(visit, "Status", "status"),
+                              "signed_in": val(visit, "SignedIn", "IsSignedIn", "signedIn"),
+                              "cancelled": val(visit, "Cancelled", "IsCancelled", "cancelled"),
+                              "late_cancelled": val(visit, "LateCancelled", "lateCancelled"),
+                              "client_service_id": val(visit, "ClientServiceId", "ClientServiceID"),
+                              "client_service_name": val(visit, "ClientServiceName", "ServiceName"),
+                              "pricing_option": val(visit, "PricingOptionName", "PricingOption"),
+                              "payment_status": val(visit, "PaymentStatus", "paymentStatus"),
+                              "unpaid": val(visit, "Unpaid", "IsUnpaid", "unpaid"),
+                          }
+                          print("MB_VISIT", json.dumps(safe, ensure_ascii=False, sort_keys=True))
+                          print("MB_KEYS", sorted(visit.keys()))
+                  print()
+          PY
+
+          echo "=== RELEVANT API LOG LINES ==="
+          docker compose logs --since=96h api 2>&1 | grep -Ei 'Katharina|Claudia|Spieker|Ilicic|Mindbody|SumUp|booking' | tail -n 400 || true
