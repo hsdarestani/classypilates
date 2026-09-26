@@ -113,4 +113,14 @@ assert 'booking.payment_status != "paid"' in SOURCE
 assert 'booking.source != "website"' in SOURCE
 assert 'order.mindbody_sale_status == "synced"' in SOURCE
 
+# The runtime composes two retry wrappers. They must capture different base
+# functions; reusing one global capture name previously made the mirror recurse
+# forever and prevented expired SumUp holds from being released.
+runtime_source = Path(__file__).with_name("runtime_app.py").read_text(encoding="utf-8")
+assert "_base_retry_pending = mindbody_sync.retry_pending" in runtime_source
+assert "retried = _base_retry_pending()" in runtime_source
+assert "_retry_pending_before_hold_cleanup = mindbody_sync.retry_pending" in runtime_source
+assert "retried = _retry_pending_before_hold_cleanup()" in runtime_source
+assert "_original_retry_pending" not in runtime_source
+
 print("Mindbody payment reconciliation guard OK")
