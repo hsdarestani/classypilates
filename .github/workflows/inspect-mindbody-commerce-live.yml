@@ -73,25 +73,29 @@ jobs:
 
           candidates=[]
           for s in rows:
-              name=" ".join(str(s.get("Name") or "").split()).casefold()
+              normalized=" ".join(str(s.get("Name") or "").split()).casefold()
               price=s.get("OnlinePrice")
               if price is None: price=s.get("Price")
-              if name=="1 class" and int(s.get("Count") or 0)==1 and abs(float(price or 0)-28.0)<0.001:
+              if normalized=="1 class" and int(s.get("Count") or 0)==1 and abs(float(price or 0)-28.0)<0.001:
                   candidates.append(s)
           print("CANDIDATES",json.dumps([{"Id":x.get("Id"),"Name":x.get("Name"),"ProgramId":x.get("ProgramId")} for x in candidates],ensure_ascii=False))
-          if len(candidates)!=1:
-              raise SystemExit("Expected exactly one class-specific 1 Class pricing option")
+
+          # Prefer the canonical exact current label when Mindbody has legacy duplicates.
+          canonical=[x for x in candidates if str(x.get("Name") or "")=="1 Class"]
+          picked=(canonical[0] if len(canonical)==1 else None)
+          if not picked:
+              raise SystemExit("No unambiguous canonical 1 Class pricing option")
+          service_id=picked["Id"]
+          print("PICKED_SERVICE",service_id)
 
           # Test=true is explicitly non-persistent in current Mindbody V6.
-          # Try each configured custom payment method, stopping on the first valid one.
-          methods=custom.get("CustomPaymentMethods") or custom.get("PaymentMethods") or custom.get("customPaymentMethods") or []
-          print("CUSTOM_METHOD_COUNT",len(methods))
-          service_id=candidates[0]["Id"]
-          success=False
-          for m in methods:
-              mid=m.get("Id") or m.get("ID")
-              mname=m.get("Name") or m.get("PaymentMethodName") or m.get("Description")
-              if mid is None: continue
+          # Validate possible representations of an externally collected SumUp payment.
+          variants=[
+              ("Other", {"Amount":28.0,"Notes":"External SumUp"}),
+              ("Custom", {"Amount":28.0,"Id":9}),
+              ("Cash", {"Amount":28.0,"Notes":"External SumUp"}),
+          ]
+          for payment_type, metadata in variants:
               payload={
                   "ClientId":100019131,
                   "LocationId":location_id,
@@ -103,20 +107,9 @@ jobs:
                       "Quantity":1,
                       "ClassIds":[class_id],
                   }],
-                  "Payments":[{
-                      "Type":"Custom",
-                      "Metadata":{"Amount":28.0,"Id":int(mid)},
-                  }],
+                  "Payments":[{"Type":payment_type,"Metadata":metadata}],
               }
               code,data=request("POST","/sale/checkoutshoppingcart",payload=payload)
               err=((data.get("Error") or {}).get("Message") if isinstance(data,dict) else None)
-              print("CUSTOM_TEST",json.dumps({"method_id":mid,"method_name":mname,"http":code,"error":err,"has_cart":bool(isinstance(data,dict) and data.get("ShoppingCart"))},ensure_ascii=False))
-              if 200 <= code < 300:
-                  success=True
-                  break
-
-          if not methods:
-              print("NO_CUSTOM_PAYMENT_METHODS_CONFIGURED")
-          if methods and not success:
-              raise SystemExit("No configured custom payment method validated in Test mode")
+              print("PAYMENT_TEST",json.dumps({"type":payment_type,"http":code,"error":err,"has_cart":bool(isinstance(data,dict) and data.get("ShoppingCart"))},ensure_ascii=False))
           PY
