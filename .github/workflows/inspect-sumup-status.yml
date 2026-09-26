@@ -1,0 +1,51 @@
+name: Inspect SumUp Status
+
+on:
+  push:
+    branches: [fix/mindbody-sumup-reconciliation]
+    paths:
+      - ".github/workflows/inspect-sumup-status.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Inspect production SumUp status read only
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          import json, os, urllib.request
+          from sqlalchemy import select
+          import main as core
+
+          refs={"CP-89C1CF84","CP-3187483E"}
+          token=os.getenv("SUMUPAPIKEY","").strip()
+          with core.SessionLocal() as db:
+              orders=list(db.scalars(select(core.PaymentOrder).where(core.PaymentOrder.booking_reference.in_(refs))).all())
+          for order in orders:
+              provider=str(order.provider_payment_id or "")
+              status="missing_provider_id"
+              if provider and token:
+                  req=urllib.request.Request(
+                      f"https://api.sumup.com/v0.1/checkouts/{provider}",
+                      headers={"Authorization":f"Bearer {token}","Accept":"application/json"},
+                  )
+                  with urllib.request.urlopen(req,timeout=15) as res:
+                      payload=json.load(res)
+                  status=str(payload.get("status") or "")
+              print(json.dumps({
+                  "booking_reference":order.booking_reference,
+                  "local_order_status":order.status,
+                  "sumup_status":status,
+                  "amount_cents":int(order.amount_cents or 0),
+              },sort_keys=True))
+          PY
