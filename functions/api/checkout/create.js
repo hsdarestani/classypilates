@@ -1,4 +1,4 @@
-const CATALOG={single:{name:'1 Class',price:2800,credits:1},five:{name:'5 Classes',price:11900,credits:5},ten:{name:'10 Classes',price:21900,credits:10},twenty:{name:'20 Classes',price:39900,credits:20}};
+const CATALOG={single:{name:'1 Class',price:2800,credits:1},five:{name:'5 Classes',price:11900,credits:5},ten:{name:'10 Classes',price:21900,credits:10},special10:{name:'10 Classes · Special Offer',price:17900,credits:10},twenty:{name:'20 Classes',price:39900,credits:20}};
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const validEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||''));
 
