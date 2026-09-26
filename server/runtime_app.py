@@ -123,11 +123,11 @@ def _cancel_local_booking_hardened(booking_id: int) -> None:
 
 mindbody_sync.cancel_local_booking = _cancel_local_booking_hardened
 
-_original_retry_pending = mindbody_sync.retry_pending
+_base_retry_pending = mindbody_sync.retry_pending
 
 
 def _retry_pending_hardened() -> int:
-    retried = _original_retry_pending()
+    retried = _base_retry_pending()
     with core.SessionLocal() as db:
         cancellation_ids = list(
             db.scalars(
@@ -508,11 +508,11 @@ def _cleanup_stale_booking_holds() -> int:
     return released
 
 
-_original_retry_pending = mindbody_sync.retry_pending
+_retry_pending_before_hold_cleanup = mindbody_sync.retry_pending
 
 
 def _retry_pending_with_hold_cleanup() -> int:
-    retried = _original_retry_pending()
+    retried = _retry_pending_before_hold_cleanup()
     released = _cleanup_stale_booking_holds()
     if released:
         print(f"Released {released} abandoned SumUp booking hold(s)", flush=True)
