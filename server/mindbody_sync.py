@@ -24,6 +24,10 @@ from mindbody_api import MindbodyClient, MindbodyConfig, MindbodyError, _extract
 SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
+# Mindbody's standard "Other" payment method is exposed to CheckoutShoppingCart
+# as Custom payment metadata ID 9. It was validated against the live Classy site
+# with Test=true before enabling the production write path.
+MINDBODY_EXTERNAL_PAYMENT_METHOD_ID = int(os.getenv("MINDBODY_EXTERNAL_PAYMENT_METHOD_ID", "9") or "9")
 _worker_started = False
 _worker_guard = threading.Lock()
 _client_worker_started = False
@@ -248,6 +252,72 @@ class WriteClient(MindbodyClient):
         return self._authorized_get(
             "class/classvisits",
             {"request.classID": int(class_id)},
+        )
+
+    def get_sale_services_for_class(self, class_id: str, location_id: str) -> list[dict[str, Any]]:
+        """Return active online pricing options that Mindbody allows for one class."""
+        payload = self._authorized_get(
+            "sale/services",
+            {
+                "request.classId": int(class_id),
+                "request.locationId": int(location_id),
+                "request.sellOnline": True,
+                "request.includeDiscontinued": False,
+                "request.limit": 200,
+                "request.offset": 0,
+            },
+        )
+        return [
+            row for row in _extract_list(payload, ("Services", "services", "Items"))
+            if isinstance(row, dict)
+        ]
+
+    def checkout_external_class_payment(
+        self,
+        *,
+        client_id: str,
+        class_id: str,
+        location_id: str,
+        service_id: str,
+        amount_cents: int,
+    ) -> dict[str, Any]:
+        """Reconcile an externally collected SumUp payment with an unpaid Mindbody visit.
+
+        The live Classy site exposes payment type "Other" as Custom ID 9. The
+        CheckoutShoppingCart request uses the existing class ID so Mindbody
+        reconciles the unpaid visit instead of creating a parallel reservation.
+        """
+        amount = round(int(amount_cents) / 100, 2)
+        if amount <= 0:
+            raise MindbodyError("mindbody_external_payment_amount_invalid")
+        return self._write(
+            "sale/checkoutshoppingcart",
+            {
+                "ClientId": int(client_id) if str(client_id).isdigit() else client_id,
+                "LocationId": int(location_id),
+                "InStore": True,
+                "SendEmail": False,
+                "Test": False,
+                "Items": [
+                    {
+                        "Item": {
+                            "Type": "Service",
+                            "Metadata": {"Id": str(service_id)},
+                        },
+                        "Quantity": 1,
+                        "ClassIds": [int(class_id)],
+                    }
+                ],
+                "Payments": [
+                    {
+                        "Type": "Custom",
+                        "Metadata": {
+                            "Amount": amount,
+                            "Id": MINDBODY_EXTERNAL_PAYMENT_METHOD_ID,
+                        },
+                    }
+                ],
+            },
         )
 
     def get_classes(
@@ -1305,6 +1375,331 @@ def hold_local_booking(booking_id: int) -> None:
 
 def sync_local_booking(booking_id: int) -> None:
     _sync_or_hold_local_booking(booking_id, allow_pending=False)
+
+
+def _visit_matches_booking(visit: dict[str, Any], *, visit_id: str, client_id: str) -> bool:
+    cancelled = bool(_value(
+        visit,
+        "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled",
+        default=False,
+    ))
+    if str(_value(visit, "Status", "status", default="") or "").strip().casefold() == "cancelled":
+        cancelled = True
+    if cancelled:
+        return False
+    remote_visit_id = str(_value(visit, "Id", "ID", "VisitId", "VisitID", default="") or "")
+    client_data = visit.get("Client") or visit.get("client") or {}
+    remote_client_id = str(_value(
+        visit,
+        "ClientId", "ClientID",
+        default=_value(client_data, "Id", "ID", default=""),
+    ) or "")
+    return bool(
+        (visit_id and remote_visit_id == visit_id)
+        or (client_id and remote_client_id == client_id)
+    )
+
+
+def _visit_service_identity(visit: dict[str, Any]) -> tuple[str, str]:
+    service = visit.get("Service") or visit.get("service") or {}
+    name = str(_value(
+        visit,
+        "ServiceName", "serviceName",
+        default=_value(service, "Name", "name", default=""),
+    ) or "").strip()
+    service_id = str(_value(
+        visit,
+        "ProductId", "ProductID", "ServiceId", "ServiceID",
+        default=_value(service, "Id", "ID", "ProductId", default=""),
+    ) or "").strip()
+    return name, service_id
+
+
+def _provider_visit_service(
+    client: WriteClient,
+    *,
+    class_id: str,
+    visit_id: str,
+    client_id: str,
+) -> tuple[str, str]:
+    payload = client.get_class_visits(class_id)
+    for visit in _extract_class_visits(payload):
+        if _visit_matches_booking(visit, visit_id=visit_id, client_id=client_id):
+            return _visit_service_identity(visit)
+    return "", ""
+
+
+def _service_price_cents(row: dict[str, Any]) -> int:
+    value = _value(row, "OnlinePrice", "onlinePrice", default=None)
+    if value is None:
+        value = _value(row, "Price", "price", default=0)
+    try:
+        return int(round(float(value or 0) * 100))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pick_single_class_service(
+    rows: list[dict[str, Any]],
+    *,
+    amount_cents: int,
+) -> dict[str, Any]:
+    """Choose the canonical one-class pricing option without touching packs."""
+    candidates = []
+    for row in rows:
+        raw_name = str(_value(row, "Name", "name", default="") or "")
+        normalized_name = " ".join(raw_name.split()).casefold()
+        count = int(_value(row, "Count", "count", default=0) or 0)
+        service_type = str(_value(row, "Type", "type", default="") or "").casefold()
+        if (
+            normalized_name == "1 class"
+            and count == 1
+            and service_type in {"", "dropin"}
+            and _service_price_cents(row) == int(amount_cents)
+        ):
+            candidates.append(row)
+
+    # The Classy catalog contains a historical "1 Class " duplicate. Prefer the
+    # canonical exact label ("1 Class"), which is also the service used by current
+    # native Mindbody bookings. Never guess if the provider catalog becomes ambiguous.
+    canonical = [
+        row for row in candidates
+        if str(_value(row, "Name", "name", default="") or "") == "1 Class"
+    ]
+    if len(canonical) == 1:
+        return canonical[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    raise MindbodyError(f"mindbody_single_class_service_ambiguous:{len(candidates)}")
+
+
+def _set_mindbody_sale_state(
+    order_id: int,
+    status: str,
+    *,
+    sale_id: str = "",
+    service_id: str = "",
+    error: str = "",
+) -> None:
+    with core.SessionLocal() as db:
+        order = db.get(core.PaymentOrder, order_id)
+        if not order:
+            return
+        order.mindbody_sale_status = status
+        if sale_id:
+            order.mindbody_sale_id = sale_id
+        if service_id:
+            order.mindbody_service_id = service_id
+        order.mindbody_sale_error = str(error or "")[:1500]
+        db.commit()
+
+
+def reconcile_paid_booking_sale(order_id: int) -> bool:
+    """Attach a confirmed external SumUp class payment to the existing Mindbody visit.
+
+    This is intentionally separate from the seat-hold path. The seat is held before
+    redirecting to SumUp, while the Mindbody sale is created only after SumUp reports
+    PAID. A roster read is performed before every retry so a lost HTTP response can
+    never create a duplicate sale.
+    """
+    with core.SessionLocal() as db:
+        order = db.scalar(
+            select(core.PaymentOrder)
+            .where(core.PaymentOrder.id == order_id)
+            .with_for_update()
+        )
+        if not order or not order.booking_reference:
+            return False
+        if order.mindbody_sale_status == "synced":
+            return True
+        if order.mindbody_sale_status == "syncing":
+            # Another worker already owns the provider write. Stale claims are
+            # recovered by retry_pending only after a timeout and a provider read.
+            return False
+        if order.mindbody_sale_status not in {"pending", "failed"}:
+            return False
+        if order.status != "paid":
+            return False
+
+        booking = db.scalar(
+            select(core.Booking)
+            .where(core.Booking.reference == order.booking_reference)
+            .with_for_update()
+        )
+        if not booking:
+            order.mindbody_sale_status = "failed"
+            order.mindbody_sale_error = "booking_not_found"
+            db.commit()
+            return False
+
+        # This reconciliation is only for a direct external SumUp class payment.
+        # Local class credits and provider-origin bookings retain their existing flow.
+        if (
+            booking.source != "website"
+            or booking.payment_method != "sumup"
+            or booking.payment_status != "paid"
+            or int(booking.amount_cents or 0) <= 0
+        ):
+            order.mindbody_sale_status = "not_required"
+            order.mindbody_sale_error = ""
+            db.commit()
+            return False
+
+        if booking.status != "reserved":
+            order.mindbody_sale_status = "skipped_cancelled"
+            order.mindbody_sale_error = "booking_not_reserved"
+            db.commit()
+            return False
+
+        if not booking.klass.mindbody_class_id:
+            order.mindbody_sale_status = "failed"
+            order.mindbody_sale_error = "mindbody_class_not_linked"
+            db.commit()
+            return False
+
+        snapshot = {
+            "booking_id": booking.id,
+            "class_id": str(booking.klass.mindbody_class_id),
+            "studio_id": booking.klass.studio_id,
+            "title": booking.klass.title,
+            "visit_id": str(booking.mindbody_visit_id or ""),
+            "client_id": str(booking.mindbody_client_id or ""),
+            "amount_cents": int(order.amount_cents or 0),
+        }
+
+        # Claim the provider write while holding the row lock. This prevents two
+        # simultaneous SumUp callbacks / status polls from creating two Mindbody
+        # sales for the same booking.
+        order.mindbody_sale_status = "syncing"
+        order.mindbody_sale_error = ""
+        db.commit()
+
+    # Payment can complete very quickly after the booking endpoint returns. If the
+    # asynchronous pre-payment seat hold is still finishing, give it a bounded chance
+    # to complete; the regular retry loop will pick it up later if Mindbody is slow.
+    for attempt in range(4):
+        with core.SessionLocal() as db:
+            booking = db.get(core.Booking, snapshot["booking_id"])
+            ready = bool(
+                booking
+                and booking.status == "reserved"
+                and booking.mindbody_sync_status == "synced"
+                and booking.mindbody_client_id
+                and booking.klass.mindbody_class_id
+            )
+            if ready:
+                snapshot["visit_id"] = str(booking.mindbody_visit_id or "")
+                snapshot["client_id"] = str(booking.mindbody_client_id or "")
+                break
+        sync_local_booking(snapshot["booking_id"])
+        if attempt < 3:
+            time.sleep(0.5 * (attempt + 1))
+    else:
+        _set_mindbody_sale_state(
+            order_id,
+            "failed",
+            error="mindbody_reservation_not_ready",
+        )
+        return False
+
+    client = WriteClient.from_env(timeout=15.0)
+    try:
+        # Idempotency guard: if a previous attempt reached Mindbody but its HTTP
+        # response was lost, detect the paid service on the visit before retrying.
+        current_service, current_service_id = _provider_visit_service(
+            client,
+            class_id=snapshot["class_id"],
+            visit_id=snapshot["visit_id"],
+            client_id=snapshot["client_id"],
+        )
+        normalized_current = " ".join(current_service.split()).casefold()
+        if normalized_current == "1 class":
+            _set_mindbody_sale_state(
+                order_id,
+                "synced",
+                service_id=current_service_id,
+            )
+            return True
+        if current_service:
+            _set_mindbody_sale_state(
+                order_id,
+                "manual_review",
+                service_id=current_service_id,
+                error=f"visit_already_has_service:{current_service}",
+            )
+            return False
+
+        location = _resolve_location(client, snapshot["studio_id"], snapshot["title"])
+        location_id = str(_value(location, "Id", "ID", "LocationId", default="") or "").strip()
+        if not location_id:
+            raise MindbodyError("mindbody_location_mapping_failed")
+
+        service = _pick_single_class_service(
+            client.get_sale_services_for_class(snapshot["class_id"], location_id),
+            amount_cents=snapshot["amount_cents"],
+        )
+        service_id = str(_value(service, "Id", "ID", "ProductId", default="") or "").strip()
+        if not service_id:
+            raise MindbodyError("mindbody_single_class_service_missing_id")
+
+        # Re-check the local reservation immediately before the irreversible
+        # provider sale. A concurrent cancellation must win over reconciliation.
+        with core.SessionLocal() as db:
+            order = db.get(core.PaymentOrder, order_id)
+            booking = db.get(core.Booking, snapshot["booking_id"])
+            if (
+                not order
+                or order.status != "paid"
+                or order.mindbody_sale_status != "syncing"
+                or not booking
+                or booking.status != "reserved"
+                or booking.payment_status != "paid"
+                or booking.payment_method != "sumup"
+            ):
+                if order and order.mindbody_sale_status == "syncing":
+                    order.mindbody_sale_status = "skipped_cancelled"
+                    order.mindbody_sale_error = "booking_changed_before_provider_sale"
+                    db.commit()
+                return False
+            order.mindbody_service_id = service_id
+            db.commit()
+
+        result = client.checkout_external_class_payment(
+            client_id=snapshot["client_id"],
+            class_id=snapshot["class_id"],
+            location_id=location_id,
+            service_id=service_id,
+            amount_cents=snapshot["amount_cents"],
+        )
+        cart = result.get("ShoppingCart") or result.get("shoppingCart") or {}
+        sale = result.get("Sale") or result.get("sale") or {}
+        sale_id = str(
+            _value(
+                result,
+                "SaleId", "SaleID",
+                default=_value(sale, "Id", "ID", default=_value(cart, "Id", "ID", default="")),
+            )
+            or ""
+        )
+        _set_mindbody_sale_state(
+            order_id,
+            "synced",
+            sale_id=sale_id,
+            service_id=service_id,
+        )
+        return True
+    except Exception as exc:
+        _set_mindbody_sale_state(
+            order_id,
+            "failed",
+            error=f"{type(exc).__name__}: {str(exc)[:1200]}",
+        )
+        print(
+            f"Mindbody paid booking reconciliation failed: order_id={order_id} "
+            f"{type(exc).__name__}: {str(exc)[:300]}",
+            flush=True,
+        )
+        return False
 
 
 def _waitlist_entry_id(row: dict[str, Any]) -> str:
@@ -3483,11 +3878,39 @@ def retry_pending() -> int:
                 core.Booking.mindbody_sync_status == "cancel_failed",
             ).limit(100)
         ))
+        paid_sale_ids = list(db.scalars(
+            select(core.PaymentOrder.id).where(
+                core.PaymentOrder.booking_reference.is_not(None),
+                core.PaymentOrder.status == "paid",
+                core.PaymentOrder.mindbody_sale_status.in_(["pending", "failed"]),
+            ).limit(50)
+        ))
+        stale_claim_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        stale_sale_ids = list(db.scalars(
+            select(core.PaymentOrder.id).where(
+                core.PaymentOrder.booking_reference.is_not(None),
+                core.PaymentOrder.status == "paid",
+                core.PaymentOrder.mindbody_sale_status == "syncing",
+                core.PaymentOrder.updated_at < stale_claim_cutoff,
+            ).limit(25)
+        ))
     for booking_id in ids:
         sync_local_booking(booking_id)
     for booking_id in cancel_ids:
         cancel_local_booking(booking_id)
-    return len(ids) + len(cancel_ids)
+    for order_id in stale_sale_ids:
+        # A crashed worker may have completed the remote sale before losing its
+        # response. Move the claim back to retryable; reconcile_paid_booking_sale
+        # checks the live class visit first and will not sell again if Mindbody
+        # already attached the 1 Class service.
+        _set_mindbody_sale_state(
+            order_id,
+            "failed",
+            error="stale_sync_claim_recheck",
+        )
+    for order_id in [*paid_sale_ids, *stale_sale_ids]:
+        reconcile_paid_booking_sale(order_id)
+    return len(ids) + len(cancel_ids) + len(paid_sale_ids) + len(stale_sale_ids)
 
 
 def _client_directory_loop():

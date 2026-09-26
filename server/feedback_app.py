@@ -238,6 +238,7 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
     status = str(checkout.get("status", "")).upper()
     email_job = None
     booking_id_to_sync = None
+    order_id_to_reconcile = None
     first_order_paid_transition = order.status != "paid"
     if status == "PAID":
         order.status = "paid"
@@ -260,6 +261,9 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                 booking.payment_status = "paid_cancelled"
                 booking.payment_method = "sumup_refund_required"
                 order.credited = False
+                if order.mindbody_sale_status not in {"synced", "manual_review"}:
+                    order.mindbody_sale_status = "skipped_cancelled"
+                    order.mindbody_sale_error = "booking_not_reserved"
                 db.commit()
                 return order
 
@@ -267,6 +271,19 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
             booking.payment_status = "paid"
             booking.payment_method = "sumup"
             order.credited = True
+
+            # Keep the pre-payment Mindbody seat hold, but only convert its
+            # "Unpaid" visit into a paid 1 Class service after SumUp has
+            # independently confirmed PAID. Repeated callbacks stay idempotent.
+            if (
+                booking.klass.mindbody_class_id
+                and int(order.amount_cents or 0) > 0
+                and order.mindbody_sale_status in {"", "pending", "failed"}
+            ):
+                order.mindbody_sale_status = "pending"
+                order.mindbody_sale_error = ""
+                order_id_to_reconcile = order.id
+
             if first_paid_transition:
                 email_job = core.booking_email_data(booking)
                 booking_id_to_sync = booking.id
@@ -310,6 +327,13 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
             if booking_id_to_sync is not None:
                 from mindbody_sync import sync_local_booking
                 sync_local_booking(booking_id_to_sync)
+
+    if order_id_to_reconcile is not None:
+        from mindbody_sync import reconcile_paid_booking_sale
+        if background_tasks is not None:
+            background_tasks.add_task(reconcile_paid_booking_sale, order_id_to_reconcile)
+        else:
+            reconcile_paid_booking_sale(order_id_to_reconcile)
     return order
 
 
