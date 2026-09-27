@@ -217,6 +217,7 @@ class Coach(Base):
     display_name: Mapped[str] = mapped_column(String(160))
     photo_url: Mapped[str] = mapped_column(String(500), default="")
     bio: Mapped[str] = mapped_column(Text, default="")
+    languages: Mapped[str] = mapped_column(String(40), default="de")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     user: Mapped[Optional[User]] = relationship(back_populates="coach")
 
@@ -367,6 +368,13 @@ def migrate_schema():
         for name, sql_type in class_additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE classes ADD COLUMN {name} {sql_type}"))
+
+    inspector = inspect(engine)
+    if inspector.has_table("coaches"):
+        coach_columns = {column["name"] for column in inspector.get_columns("coaches")}
+        if "languages" not in coach_columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE coaches ADD COLUMN languages VARCHAR(40) NOT NULL DEFAULT 'de'"))
 
     booking_columns = {column["name"] for column in inspect(engine).get_columns("bookings")}
     booking_additions = {
@@ -615,13 +623,35 @@ def require(permission: str):
         return user
     return dep
 
+COACH_LANGUAGE_CODES = ("de", "en")
+
+def normalize_coach_languages(values) -> list[str]:
+    if values is None:
+        values = []
+    if isinstance(values, str):
+        values = values.split(",")
+    normalized = []
+    for value in values:
+        code = str(value or "").strip().lower()
+        if code in COACH_LANGUAGE_CODES and code not in normalized:
+            normalized.append(code)
+    return normalized or ["de"]
+
+def coach_languages(coach: Coach) -> list[str]:
+    return normalize_coach_languages(coach.languages)
+
 def user_dict(user: User):
     return {
         "id": user.id, "email": user.email, "first_name": user.first_name, "last_name": user.last_name,
         "is_active": user.is_active,
         "roles": [{"id": r.id, "name": r.name, "permissions": r.permissions} for r in user.roles],
         "permissions": sorted(user_permissions(user)),
-        "coach": None if not user.coach else {"id": user.coach.id, "display_name": user.coach.display_name, "photo_url": user.coach.photo_url},
+        "coach": None if not user.coach else {
+            "id": user.coach.id,
+            "display_name": user.coach.display_name,
+            "photo_url": user.coach.photo_url,
+            "languages": coach_languages(user.coach),
+        },
         "portal": portal_for(user)
     }
 
@@ -631,6 +661,7 @@ def coach_dict(coach: Coach):
         "display_name": coach.display_name,
         "photo_url": coach.photo_url,
         "bio": coach.bio,
+        "languages": coach_languages(coach),
         "active": coach.active,
         "email": coach.user.email if coach.user else "",
     }
@@ -751,6 +782,7 @@ class StaffIn(BaseModel):
     role_ids: list[int] = []
     coach_name: str = ""
     coach_photo: str = ""
+    coach_languages: list[str] = ["de"]
 
 class StaffUpdate(BaseModel):
     first_name: Optional[str] = None
@@ -761,6 +793,7 @@ class StaffUpdate(BaseModel):
 class CoachProfileIn(BaseModel):
     display_name: str
     bio: str = ""
+    languages: Optional[list[str]] = None
     active: Optional[bool] = None
 
 class CustomerProfileIn(BaseModel):
@@ -1668,7 +1701,12 @@ def create_staff(data: StaffIn, user: User = Depends(require("users.manage")), d
     except Exception: db.rollback(); raise HTTPException(409, "email_exists")
     coach = None
     if data.coach_name:
-        coach = Coach(user_id=u.id, display_name=data.coach_name, photo_url=data.coach_photo)
+        coach = Coach(
+            user_id=u.id,
+            display_name=data.coach_name,
+            photo_url=data.coach_photo,
+            languages=",".join(normalize_coach_languages(data.coach_languages)),
+        )
         db.add(coach)
         db.flush()
     db.commit(); db.refresh(u)
@@ -1766,6 +1804,8 @@ def update_coach_profile(data: CoachProfileIn, user: User = Depends(current_user
         raise HTTPException(400, "coach_name_required")
     user.coach.display_name = display_name
     user.coach.bio = data.bio.strip()[:2000]
+    if data.languages is not None:
+        user.coach.languages = ",".join(normalize_coach_languages(data.languages))
     db.commit()
     from mindbody_sync import mark_local_change
     mark_local_change("coach", user.coach.id)
@@ -1799,6 +1839,8 @@ def update_coach(coach_id: int, data: CoachProfileIn, user: User = Depends(requi
         raise HTTPException(400, "coach_name_required")
     coach.display_name = display_name
     coach.bio = data.bio.strip()[:2000]
+    if data.languages is not None:
+        coach.languages = ",".join(normalize_coach_languages(data.languages))
     if data.active is not None:
         coach.active = data.active
     db.commit()
@@ -2071,6 +2113,7 @@ def public_coaches(db: Session = Depends(db_session)):
         "display_name": coach.display_name,
         "photo_url": coach.photo_url,
         "bio": coach.bio,
+        "languages": coach_languages(coach),
         "sessions": int(session_counts.get(coach.id, 0)),
         "bookings": int(booking_counts.get(coach.id, 0)),
         "studios": sorted(coach_studios.get(coach.id, set())),
