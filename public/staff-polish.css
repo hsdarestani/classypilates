@@ -460,3 +460,20 @@ body.staff-menu-open .staff-nav-scrim{opacity:1;pointer-events:auto}
     pointer-events:none!important;
   }
 }
+
+
+/* Coach language editing */
+.coach-language-badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+.coach-language-badge{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:22px;padding:0 7px;border:1px solid #ded6ca;border-radius:999px;background:#f4efe7;color:#6e5a42;font-size:7px;font-weight:800;letter-spacing:.08em}
+.coach-language-field{display:grid;gap:8px;margin-top:14px}
+.coach-language-field>span{color:#777067;font-size:8px;font-weight:700;letter-spacing:.11em}
+.coach-language-field>small{color:#958d82;font-size:8px;line-height:1.4}
+.coach-language-options{display:flex;gap:8px;flex-wrap:wrap}
+.coach-language-options label{display:flex!important;align-items:center;gap:8px;min-width:132px;margin:0!important;padding:10px 12px;border:1px solid #dfd8cd;border-radius:10px;background:#fcfbf8;color:#171713!important;cursor:pointer;letter-spacing:0!important}
+.coach-language-options input{width:16px!important;height:16px!important;min-height:0!important;margin:0;accent-color:#171713}
+.coach-language-options b{font-size:10px}
+.coach-language-options small{margin-left:auto;color:#847b70;font-size:9px;font-weight:500}
+@media(max-width:760px){
+  .coach-language-options{display:grid;grid-template-columns:1fr 1fr}
+  .coach-language-options label{min-width:0}
+}
