@@ -80,7 +80,9 @@
       avatar=`<div class="coach-real-avatar" data-coach-photo-frame><span class="coach-real-initials">${esc(initials(coach.display_name))}</span></div>`;
     }
 
-    return `<article class="coach-real-card" data-coach-card>${avatar}<div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div class="coach-real-stats"><span><b>${count(coach.sessions)}</b><small>Sessions</small></span><span><b>${count(coach.bookings)}</b><small>Bookings</small></span></div></div></article>`;
+    const languages=(Array.isArray(coach.languages)?coach.languages:['de']).filter(code=>code==='de'||code==='en');
+    const languageBadges=(languages.length?languages:['de']).map(code=>`<small class="coach-real-language">${code.toUpperCase()}</small>`).join('');
+    return `<article class="coach-real-card" data-coach-card>${avatar}<div class="coach-real-copy"><p>CLASSY COACH</p><h3>${esc(coach.display_name)}</h3><span>${esc(studios)}</span><div class="coach-real-languages" aria-label="Coach languages">${languageBadges}</div><div class="coach-real-stats"><span><b>${count(coach.sessions)}</b><small>Sessions</small></span><span><b>${count(coach.bookings)}</b><small>Bookings</small></span></div></div></article>`;
   }
 
   function prepareCoachPhotoFrames(grid){
