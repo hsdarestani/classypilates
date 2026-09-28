@@ -4300,7 +4300,7 @@ def _repair_recent_paid_duplicates_once() -> None:
     # duplicates created before the September 2026 fix, including recent past classes.
     time.sleep(8)
     try:
-        result = repair_recent_paid_booking_duplicates(days_back=7, days_forward=14)
+        result = repair_recent_paid_booking_duplicates(days_back=30, days_forward=30, limit=1000)
         print(
             "Mindbody recent paid duplicate repair: "
             f"checked={result.get('checked', 0)} "
