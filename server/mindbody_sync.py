@@ -1876,23 +1876,42 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
 
     client = WriteClient.from_env(timeout=15.0)
     try:
-        # Idempotency guard: if a previous attempt reached Mindbody but its HTTP
-        # response was lost, detect the paid service on the visit before retrying.
-        current_service, current_service_id = _provider_visit_service(
+        # Idempotency guard: CheckoutShoppingCart can create a separate paid visit
+        # while the earlier AddClientToClass seat hold remains unpaid. Inspect every
+        # active visit for this client/class, not just the first roster match.
+        active_visits = _active_client_visits(
             client,
             class_id=snapshot["class_id"],
-            visit_id=snapshot["visit_id"],
             client_id=snapshot["client_id"],
         )
-        normalized_current = " ".join(current_service.split()).casefold()
-        if normalized_current == "1 class":
+        paid_visits = [
+            visit for visit in active_visits
+            if _normalized_service_name(visit) == "1 class"
+        ]
+        if len(paid_visits) == 1:
+            _, current_service_id = _visit_service_identity(paid_visits[0])
             _set_mindbody_sale_state(
                 order_id,
                 "synced",
                 service_id=current_service_id,
             )
+            repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
             return True
-        if current_service:
+        if len(paid_visits) > 1:
+            _set_mindbody_sale_state(
+                order_id,
+                "manual_review",
+                error=f"multiple_paid_class_visits:{len(paid_visits)}",
+            )
+            return False
+
+        other_services = [
+            _visit_service_identity(visit)
+            for visit in active_visits
+            if any(_visit_service_identity(visit))
+        ]
+        if other_services:
+            current_service, current_service_id = other_services[0]
             _set_mindbody_sale_state(
                 order_id,
                 "manual_review",
@@ -1959,6 +1978,10 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             sale_id=sale_id,
             service_id=service_id,
         )
+        # Mindbody's current CheckoutShoppingCart behavior creates the paid class
+        # visit as part of the sale. Remove only the older unpaid hold VisitId so
+        # one customer consumes exactly one class spot.
+        repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
         return True
     except Exception as exc:
         _set_mindbody_sale_state(
