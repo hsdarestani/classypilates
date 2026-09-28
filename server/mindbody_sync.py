@@ -4253,6 +4253,27 @@ def _loop():
         time.sleep(SYNC_INTERVAL)
 
 
+def _repair_recent_paid_duplicates_once() -> None:
+    # Run out of band so deploy/startup latency is unchanged. This also heals
+    # duplicates created before the September 2026 fix, including recent past classes.
+    time.sleep(8)
+    try:
+        result = repair_recent_paid_booking_duplicates(days_back=7, days_forward=14)
+        print(
+            "Mindbody recent paid duplicate repair: "
+            f"checked={result.get('checked', 0)} "
+            f"removed={result.get('removed', 0)} "
+            f"errors={result.get('errors', 0)}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"Mindbody recent paid duplicate repair failed: "
+            f"{type(exc).__name__}: {str(exc)[:300]}",
+            flush=True,
+        )
+
+
 @core.app.on_event("startup")
 def start_worker():
     global _worker_started, _client_worker_started
@@ -4299,6 +4320,11 @@ def start_worker():
 
         _worker_started = True
         threading.Thread(target=_loop, name="mindbody-mirror", daemon=True).start()
+        threading.Thread(
+            target=_repair_recent_paid_duplicates_once,
+            name="mindbody-paid-duplicate-repair",
+            daemon=True,
+        ).start()
 
         with _client_worker_guard:
             if not _client_worker_started:
