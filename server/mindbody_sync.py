@@ -565,6 +565,20 @@ class WriteClient(MindbodyClient):
     def remove_from_class(self, client_id: str, class_id: str) -> dict[str, Any]:
         return self._write("class/removeclientfromclass", {"ClientId": client_id, "ClassId": int(class_id), "LateCancel": False})
 
+    def remove_visit_from_class(self, client_id: str, class_id: str, visit_id: str) -> dict[str, Any]:
+        """Remove one exact visit without touching another booking for the same client/class."""
+        payload: dict[str, Any] = {
+            "ClientId": client_id,
+            "ClassId": int(class_id),
+            "LateCancel": False,
+            "SendEmail": False,
+        }
+        if str(visit_id).isdigit():
+            payload["VisitId"] = int(visit_id)
+        else:
+            raise MindbodyError("mindbody_visit_id_required")
+        return self._write("class/removeclientfromclass", payload)
+
 
 def _value(row: dict[str, Any], *names: str, default=None):
     for name in names:
@@ -1375,6 +1389,58 @@ def hold_local_booking(booking_id: int) -> None:
 
 def sync_local_booking(booking_id: int) -> None:
     _sync_or_hold_local_booking(booking_id, allow_pending=False)
+
+
+def _visit_is_cancelled(visit: dict[str, Any]) -> bool:
+    if bool(_value(
+        visit,
+        "Cancelled", "IsCancelled", "LateCancelled", "EarlyCancelled",
+        default=False,
+    )):
+        return True
+    return str(_value(visit, "Status", "status", default="") or "").strip().casefold() == "cancelled"
+
+
+def _visit_id(visit: dict[str, Any]) -> str:
+    return str(_value(visit, "Id", "ID", "VisitId", "VisitID", default="") or "").strip()
+
+
+def _visit_client_id(visit: dict[str, Any]) -> str:
+    client_data = visit.get("Client") or visit.get("client") or {}
+    return str(_value(
+        visit,
+        "ClientId", "ClientID",
+        default=_value(client_data, "Id", "ID", default=""),
+    ) or "").strip()
+
+
+def _active_client_visits(
+    client: WriteClient,
+    *,
+    class_id: str,
+    client_id: str,
+) -> list[dict[str, Any]]:
+    if not class_id or not client_id:
+        return []
+    payload = client.get_class_visits(class_id)
+    return [
+        visit for visit in _extract_class_visits(payload)
+        if not _visit_is_cancelled(visit) and _visit_client_id(visit) == str(client_id)
+    ]
+
+
+def _pick_existing_client_visit(
+    client: WriteClient,
+    *,
+    class_id: str,
+    client_id: str,
+) -> dict[str, Any] | None:
+    """Prefer a paid/service-backed visit, otherwise reuse the existing unpaid hold."""
+    visits = _active_client_visits(client, class_id=class_id, client_id=client_id)
+    if not visits:
+        return None
+    paid = [visit for visit in visits if any(_visit_service_identity(visit))]
+    return paid[0] if paid else visits[0]
 
 
 def _visit_matches_booking(visit: dict[str, Any], *, visit_id: str, client_id: str) -> bool:
