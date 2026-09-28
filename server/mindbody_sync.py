@@ -3311,6 +3311,48 @@ def _reconcile_class_roster(
 
     payload = client.get_class_visits(remote_id)
     visits = _extract_class_visits(payload)
+
+    # Heal the exact duplicate shape created by the old Classy payment flow:
+    # one service-backed "1 Class" visit plus one unpaid visit for the same client.
+    # Never guess when there are multiple paid visits or another service type.
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for visit in visits:
+        if _visit_is_cancelled(visit):
+            continue
+        cid = _visit_client_id(visit)
+        if cid:
+            grouped.setdefault(cid, []).append(visit)
+
+    removed_duplicate_ids: set[str] = set()
+    for cid, group in grouped.items():
+        if len(group) < 2:
+            continue
+        paid = [visit for visit in group if _normalized_service_name(visit) == "1 class"]
+        unpaid = [visit for visit in group if not any(_visit_service_identity(visit))]
+        if len(paid) != 1 or len(paid) + len(unpaid) != len(group):
+            continue
+        for duplicate in unpaid:
+            duplicate_id = _visit_id(duplicate)
+            if not duplicate_id or not duplicate_id.isdigit():
+                continue
+            try:
+                client.remove_visit_from_class(cid, remote_id, duplicate_id)
+                removed_duplicate_ids.add(duplicate_id)
+            except Exception as exc:
+                print(
+                    f"Mindbody roster duplicate cleanup failed: class_id={remote_id} "
+                    f"client_id={cid} visit_id={duplicate_id} "
+                    f"{type(exc).__name__}: {str(exc)[:240]}",
+                    flush=True,
+                )
+
+    if removed_duplicate_ids:
+        visits = [
+            visit for visit in visits
+            if _visit_id(visit) not in removed_duplicate_ids
+        ]
+        counts["deduped"] = len(removed_duplicate_ids)
+
     active_ids: set[str] = set()
     for visit in visits:
         visit_id = str(_value(visit, "Id", "ID", "VisitId", default="") or "")
