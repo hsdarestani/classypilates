@@ -1247,7 +1247,10 @@ def refresh_class_availability_strict(class_id: int) -> dict[str, int | bool]:
 
 
 def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None:
-    """Create/confirm the provider reservation without holding a DB connection during provider I/O."""
+    """Create or recover exactly one provider reservation for a Classy booking."""
+    client: WriteClient | None = None
+    resolved_client_id = ""
+    resolved_class_id = ""
     try:
         with core.SessionLocal() as db:
             booking = db.scalar(
@@ -1294,12 +1297,12 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
                 "klass": klass,
                 "synced_at": klass.mindbody_synced_at,
             }
+            resolved_class_id = snapshot["class_id"]
             booking.mindbody_sync_status = "syncing"
             booking.mindbody_sync_error = ""
             db.commit()
 
-        # Important: no SQLAlchemy Session is kept open across these network calls.
-        # A slow Mindbody response must never consume the app's DB connection pool.
+        # Important: no SQLAlchemy Session is held across provider I/O.
         client = WriteClient.from_env(timeout=10.0)
         remote = None
         synced_at = snapshot["synced_at"]
@@ -1317,6 +1320,60 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
         if bool(_value(remote, "IsCanceled", "IsCancelled", "Cancelled", "isCanceled", default=False)):
             raise MindbodyError("Mindbody class is cancelled")
 
+        resolved_client_id = snapshot["client_id"]
+        if not resolved_client_id:
+            candidates = client.find_clients(snapshot["email"])
+            match = next(
+                (
+                    x for x in candidates
+                    if str(x.get("Email", "")).casefold() == snapshot["email"].casefold()
+                ),
+                None,
+            )
+            resolved_client_id = str(_value(match or {}, "Id", "ID", default="") or "")
+            if not resolved_client_id:
+                parts = snapshot["customer_name"].strip().split(None, 1)
+                resolved_client_id = client.add_client_details(
+                    email=snapshot["email"],
+                    first_name=parts[0] if parts else "Classy",
+                    last_name=parts[1] if len(parts) > 1 else "Client",
+                    phone=snapshot["phone"],
+                )
+
+        with core.SessionLocal() as db:
+            current = db.get(core.Booking, booking_id)
+            if not current or current.status != "reserved":
+                return
+            current.mindbody_client_id = resolved_client_id
+            current.mindbody_sync_status = "syncing"
+            db.commit()
+
+        # Idempotency guard. AddClientToClass may have succeeded even if a previous
+        # HTTP response was lost. Reuse the live visit before checking "full" or
+        # issuing another write, otherwise a retry can create a second unpaid visit.
+        existing_visit = _pick_existing_client_visit(
+            client,
+            class_id=resolved_class_id,
+            client_id=resolved_client_id,
+        )
+        if existing_visit:
+            visit_id = _visit_id(existing_visit) or f"client:{resolved_client_id}:class:{resolved_class_id}"
+            with core.SessionLocal() as db:
+                current = db.scalar(
+                    select(core.Booking)
+                    .where(core.Booking.id == booking_id)
+                    .with_for_update()
+                )
+                if not current:
+                    return
+                current.mindbody_client_id = resolved_client_id
+                current.mindbody_visit_id = visit_id
+                current.mindbody_sync_status = "synced"
+                current.mindbody_sync_error = ""
+                current.mindbody_synced_at = datetime.now(timezone.utc)
+                db.commit()
+            return
+
         cap = _value(remote, "MaxCapacity", "Capacity", default=None)
         booked = _value(remote, "TotalBooked", "TotalClients", default=None)
         web_cap = _value(remote, "WebCapacity", default=None)
@@ -1329,37 +1386,9 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
         if web_cap is not None and web_booked is not None and int(web_booked) >= int(web_cap):
             raise MindbodyError("Mindbody online booking capacity is full")
 
-        client_id = snapshot["client_id"]
-        if not client_id:
-            candidates = client.find_clients(snapshot["email"])
-            match = next(
-                (
-                    x for x in candidates
-                    if str(x.get("Email", "")).casefold() == snapshot["email"].casefold()
-                ),
-                None,
-            )
-            client_id = str(_value(match or {}, "Id", "ID", default="") or "")
-            if not client_id:
-                parts = snapshot["customer_name"].strip().split(None, 1)
-                client_id = client.add_client_details(
-                    email=snapshot["email"],
-                    first_name=parts[0] if parts else "Classy",
-                    last_name=parts[1] if len(parts) > 1 else "Client",
-                    phone=snapshot["phone"],
-                )
-
-        with core.SessionLocal() as db:
-            current = db.get(core.Booking, booking_id)
-            if not current or current.status != "reserved":
-                return
-            current.mindbody_client_id = client_id
-            current.mindbody_sync_status = "syncing"
-            db.commit()
-
-        result = client.add_to_class(client_id, snapshot["class_id"])
+        result = client.add_to_class(resolved_client_id, resolved_class_id)
         visit = _extract_visit(result)
-        visit_id = str(_value(visit, "Id", "ID", "VisitId", default="")) or f"client:{client_id}:class:{snapshot['class_id']}"
+        visit_id = _visit_id(visit) or f"client:{resolved_client_id}:class:{resolved_class_id}"
 
         with core.SessionLocal() as db:
             current = db.scalar(
@@ -1369,13 +1398,41 @@ def _sync_or_hold_local_booking(booking_id: int, *, allow_pending: bool) -> None
             )
             if not current:
                 return
-            current.mindbody_client_id = client_id
+            current.mindbody_client_id = resolved_client_id
             current.mindbody_visit_id = visit_id
             current.mindbody_sync_status = "synced"
             current.mindbody_sync_error = ""
             current.mindbody_synced_at = datetime.now(timezone.utc)
             db.commit()
     except Exception as exc:
+        # Ambiguous provider writes are recovered by reading the roster before
+        # marking the booking failed. This makes retries idempotent across timeouts.
+        if client is not None and resolved_client_id and resolved_class_id:
+            try:
+                recovered = _pick_existing_client_visit(
+                    client,
+                    class_id=resolved_class_id,
+                    client_id=resolved_client_id,
+                )
+                if recovered:
+                    recovered_id = _visit_id(recovered) or f"client:{resolved_client_id}:class:{resolved_class_id}"
+                    with core.SessionLocal() as db:
+                        current = db.scalar(
+                            select(core.Booking)
+                            .where(core.Booking.id == booking_id)
+                            .with_for_update()
+                        )
+                        if current and current.status == "reserved":
+                            current.mindbody_client_id = resolved_client_id
+                            current.mindbody_visit_id = recovered_id
+                            current.mindbody_sync_status = "synced"
+                            current.mindbody_sync_error = ""
+                            current.mindbody_synced_at = datetime.now(timezone.utc)
+                            db.commit()
+                            return
+            except Exception:
+                pass
+
         with core.SessionLocal() as db:
             current = db.get(core.Booking, booking_id)
             if current and current.mindbody_sync_status != "synced":
