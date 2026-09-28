@@ -1538,6 +1538,155 @@ def _visit_service_identity(visit: dict[str, Any]) -> tuple[str, str]:
     return name, service_id
 
 
+def _normalized_service_name(visit: dict[str, Any]) -> str:
+    name, _ = _visit_service_identity(visit)
+    return " ".join(name.split()).casefold()
+
+
+def repair_paid_booking_duplicate_visits(
+    booking_id: int,
+    *,
+    client: WriteClient | None = None,
+) -> dict[str, int | str]:
+    """Collapse the old unpaid seat-hold plus paid CheckoutShoppingCart duplicate.
+
+    Since Mindbody's July 2026 behavior change, CheckoutShoppingCart with ClassIds
+    creates the paid class visit together with the sale. If Classy already held the
+    seat through AddClientToClass, the provider can therefore contain two active
+    visits for the same client/class: one paid "1 Class" visit and one unpaid visit.
+    Only the exact unpaid VisitId is removed, and only when exactly one canonical
+    paid "1 Class" visit exists.
+    """
+    with core.SessionLocal() as db:
+        booking = db.get(core.Booking, booking_id)
+        if (
+            not booking
+            or booking.source != "website"
+            or booking.payment_method != "sumup"
+            or booking.payment_status != "paid"
+            or not booking.mindbody_client_id
+            or not booking.klass.mindbody_class_id
+        ):
+            return {"removed": 0, "status": "not_applicable"}
+        client_id = str(booking.mindbody_client_id)
+        class_id = str(booking.klass.mindbody_class_id)
+
+    client = client or WriteClient.from_env(timeout=15.0)
+    visits = _active_client_visits(client, class_id=class_id, client_id=client_id)
+    paid = [visit for visit in visits if _normalized_service_name(visit) == "1 class"]
+    if len(paid) != 1:
+        return {
+            "removed": 0,
+            "status": "no_unique_paid_visit",
+            "active": len(visits),
+            "paid": len(paid),
+        }
+
+    canonical = paid[0]
+    canonical_id = _visit_id(canonical)
+    if not canonical_id:
+        return {"removed": 0, "status": "paid_visit_missing_id"}
+
+    unpaid = [
+        visit for visit in visits
+        if _visit_id(visit) != canonical_id and not any(_visit_service_identity(visit))
+    ]
+    removed_ids: list[str] = []
+    for visit in unpaid:
+        duplicate_id = _visit_id(visit)
+        if not duplicate_id or not duplicate_id.isdigit():
+            continue
+        try:
+            client.remove_visit_from_class(client_id, class_id, duplicate_id)
+            removed_ids.append(duplicate_id)
+        except Exception as exc:
+            print(
+                f"Mindbody duplicate unpaid visit cleanup failed: "
+                f"booking_id={booking_id} visit_id={duplicate_id} "
+                f"{type(exc).__name__}: {str(exc)[:240]}",
+                flush=True,
+            )
+
+    with core.SessionLocal() as db:
+        booking = db.get(core.Booking, booking_id)
+        if booking and booking.status == "reserved":
+            booking.mindbody_visit_id = canonical_id
+            booking.mindbody_sync_status = "synced"
+            booking.mindbody_sync_error = ""
+            booking.mindbody_synced_at = datetime.now(timezone.utc)
+
+        if removed_ids:
+            mirrored = db.scalars(
+                select(core.Booking).where(
+                    core.Booking.class_id == (booking.class_id if booking else -1),
+                    core.Booking.source == "mindbody",
+                    core.Booking.status == "reserved",
+                    core.Booking.mindbody_visit_id.in_(removed_ids),
+                )
+            ).all()
+            for row in mirrored:
+                row.status = "cancelled"
+                row.mindbody_sync_status = "cancelled_remote"
+                row.mindbody_sync_error = ""
+                row.mindbody_synced_at = datetime.now(timezone.utc)
+        db.commit()
+
+    if removed_ids:
+        print(
+            f"Mindbody duplicate paid/unpaid visit repaired: "
+            f"booking_id={booking_id} kept={canonical_id} removed={','.join(removed_ids)}",
+            flush=True,
+        )
+    return {
+        "removed": len(removed_ids),
+        "status": "repaired" if removed_ids else "already_clean",
+        "visit_id": canonical_id,
+    }
+
+
+def repair_recent_paid_booking_duplicates(
+    *,
+    days_back: int = 7,
+    days_forward: int = 14,
+    limit: int = 250,
+) -> dict[str, int]:
+    """Repair safe paid/unpaid duplicates around the current booking window."""
+    now = datetime.now(timezone.utc)
+    with core.SessionLocal() as db:
+        booking_ids = list(db.scalars(
+            select(core.Booking.id)
+            .join(core.ClassSession, core.Booking.class_id == core.ClassSession.id)
+            .where(
+                core.Booking.source == "website",
+                core.Booking.payment_method == "sumup",
+                core.Booking.payment_status == "paid",
+                core.Booking.status == "reserved",
+                core.Booking.mindbody_client_id.is_not(None),
+                core.ClassSession.mindbody_class_id.is_not(None),
+                core.ClassSession.starts_at >= now - timedelta(days=max(1, int(days_back))),
+                core.ClassSession.starts_at < now + timedelta(days=max(1, int(days_forward))),
+            )
+            .order_by(core.ClassSession.starts_at.desc())
+            .limit(max(1, min(1000, int(limit))))
+        ))
+
+    client = WriteClient.from_env(timeout=15.0)
+    result = {"checked": 0, "removed": 0, "errors": 0}
+    for booking_id in booking_ids:
+        try:
+            repaired = repair_paid_booking_duplicate_visits(booking_id, client=client)
+            result["checked"] += 1
+            result["removed"] += int(repaired.get("removed", 0))
+        except Exception as exc:
+            result["errors"] += 1
+            print(
+                f"Mindbody recent duplicate repair failed: booking_id={booking_id} "
+                f"{type(exc).__name__}: {str(exc)[:240]}",
+                flush=True,
+            )
+    return result
+
+
 def _provider_visit_service(
     client: WriteClient,
     *,
