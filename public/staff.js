@@ -11,7 +11,7 @@
   const coachLanguages=coach=>{const values=Array.isArray(coach?.languages)?coach.languages:[];const clean=values.map(value=>String(value||'').toLowerCase()).filter(value=>value==='de'||value==='en');return clean.length?[...new Set(clean)]:['de']};
   const coachLanguageBadges=coach=>coachLanguages(coach).map(code=>`<span class="coach-language-badge">${code.toUpperCase()}</span>`).join('');
   const coachLanguagePicker=(name,coach={languages:['de']})=>{const selected=coachLanguages(coach);return `<div class="coach-language-field"><span>COACH LANGUAGES</span><div class="coach-language-options"><label><input type="checkbox" name="${esc(name)}" value="de" ${selected.includes('de')?'checked':''}><b>DE</b><small>Deutsch</small></label><label><input type="checkbox" name="${esc(name)}" value="en" ${selected.includes('en')?'checked':''}><b>EN</b><small>English</small></label></div><small>Select at least one language.</small></div>`};
-  const selectedCoachLanguages=(name,root=document)=>{const values=$(`input[name="${name}"]:checked`,root).map(input=>input.value);return values.length?values:['de']};
+  const selectedCoachLanguages=(name,root=document)=>{const values=$$(`input[name="${name}"]:checked`,root).map(input=>input.value);return values.length?values:['de']};
   const locale=()=>document.documentElement.lang==='de'?'de-DE':'en-GB';
   const money=c=>new Intl.NumberFormat(locale(),{style:'currency',currency:'EUR'}).format((Number(c)||0)/100);
   const dt=v=>{try{return new Intl.DateTimeFormat(locale(),{dateStyle:'medium',timeStyle:'short'}).format(new Date(v))}catch(_){return v}};
