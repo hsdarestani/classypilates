@@ -729,7 +729,7 @@ def class_dict(c: ClassSession, db: Session):
     return {
         "id": c.id, "studio": c.studio_id, "studio_name": c.studio.name if c.studio else c.studio_id,
         "name": c.title, "description": c.description or "", "type": c.class_type, "coach": c.coach.display_name if c.coach else "Classy Coach",
-        "coach_id": c.coach_id, "starts_at": starts_at.isoformat(), "duration": c.duration,
+        "coach_id": c.coach_id, "coach_languages": coach_languages(c.coach) if c.coach else ["de"], "starts_at": starts_at.isoformat(), "duration": c.duration,
         "capacity": c.capacity, "reserved": reserved, "imported_reserved": imported_reserved,
         "source_bookings_total": int(c.source_bookings_total or 0),
         "mindbody_managed": bool(c.mindbody_class_id), "mindbody_class_id": c.mindbody_class_id,
@@ -2161,7 +2161,7 @@ def public_schedule(
     response.headers["Expires"] = "0"
     try:
         start = berlin_day(from_) if from_ else datetime.now(ZoneInfo("Europe/Berlin")).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = berlin_day(to, end=True) if to else start + timedelta(days=14)
+        end = berlin_day(to, end=True) if to else start + timedelta(days=30)
     except ValueError:
         raise HTTPException(422, "invalid_date_range")
     if end <= start or end - start > timedelta(days=45):

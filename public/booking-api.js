@@ -9,12 +9,12 @@
   const rememberEmail=e=>{try{localStorage.setItem('cpLastEmail',e)}catch(_){}};const lastEmail=()=>{try{return localStorage.getItem('cpLastEmail')||''}catch(_){return''}};
   const frankfurtDate=d=>{const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d).map(x=>[x.type,x.value]));return`${parts.year}-${parts.month}-${parts.day}`};
   const frankfurtTime=d=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Berlin',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(d);
-  function mapRemote(row){const d=new Date(row.starts_at),date=frankfurtDate(d),type=row.type==='Mat Pilates'?'Mat':row.type;return{id:row.id,date,dateObj:new Date(`${date}T12:00:00`),time:frankfurtTime(d),startsAt:row.starts_at,duration:Number(row.duration)||50,studio:row.studio,type,name:row.name,description:row.description||'',coach:row.coach||'Classy Coach',spots:Math.max(0,Number(row.spots)||0),capacity:Number(row.capacity)||10,reserved:Math.max(0,Number(row.reserved)||0),importedReserved:Math.max(0,Number(row.imported_reserved)||0)}}
+  function mapRemote(row){const d=new Date(row.starts_at),date=frankfurtDate(d),type=row.type==='Mat Pilates'?'Mat':row.type;return{id:row.id,date,dateObj:new Date(`${date}T12:00:00`),time:frankfurtTime(d),startsAt:row.starts_at,duration:Number(row.duration)||50,studio:row.studio,type,name:row.name,description:row.description||'',coach:row.coach||'Classy Coach',coachLanguages:Array.isArray(row.coach_languages)?row.coach_languages.map(code=>String(code||'').toLowerCase()).filter(code=>code==='de'||code==='en'):['de'],spots:Math.max(0,Number(row.spots)||0),capacity:Number(row.capacity)||10,reserved:Math.max(0,Number(row.reserved)||0),importedReserved:Math.max(0,Number(row.imported_reserved)||0)}}
   function remoteForSelectedDay(){if(!remoteClasses)return null;const target=isoDate(dateAt(state.selectedDay));return remoteClasses.filter(r=>r.date===target).sort((a,b)=>a.time.localeCompare(b.time)||a.studio.localeCompare(b.studio))}
   generateSchedule=function(){const rows=remoteForSelectedDay();return rows===null?[]:rows};
-  const scheduleSignature=rows=>JSON.stringify(rows.map(r=>[r.id,r.date,r.time,r.studio,r.name,r.coach,r.spots,r.capacity,r.reserved]));
+  const scheduleSignature=rows=>JSON.stringify(rows.map(r=>[r.id,r.date,r.time,r.studio,r.name,r.coach,(r.coachLanguages||[]).join(','),r.spots,r.capacity,r.reserved]));
   async function refreshRemoteSchedule(){
-    const from=isoDate(dateAt(0)),to=isoDate(dateAt(13)),range=from+'|'+to;
+    const from=isoDate(dateAt(0)),to=isoDate(dateAt(29)),range=from+'|'+to;
     if(range===lastRange&&remoteClasses)return;
     lastRange=range;
     const source=$('#scheduleSource'),hadData=Array.isArray(remoteClasses);

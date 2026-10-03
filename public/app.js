@@ -25,6 +25,7 @@ const PASSES={
 };
 const BUY_URL='https://classypilates.de/buy-classes/';
 const LIVE_DATA_ONLY=true;
+const BOOKING_WINDOW_DAYS=30;
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -50,6 +51,8 @@ function isoDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart
 function seedFor(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return Math.abs(h)}
 function studioById(id){return studios.find(s=>s.id===id)}
 function formatFullDate(d){return new Intl.DateTimeFormat(document.documentElement.lang==='de'?'de-DE':'en-GB',{weekday:'long',day:'2-digit',month:'long'}).format(d)}
+function coachLanguages(r){const values=Array.isArray(r?.coachLanguages)?r.coachLanguages:[];const clean=values.map(code=>String(code||'').toLowerCase()).filter(code=>code==='de'||code==='en');return clean.length?[...new Set(clean)]:['de']}
+function coachLanguageNames(r){const de=document.documentElement.lang==='de';return coachLanguages(r).map(code=>code==='de'?(de?'Deutsch':'German'):'English').join(' · ')}
 function bookingRef(){return 'CP-'+cryptoSafeToken(6)}
 function cryptoSafeToken(len){
   const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -80,7 +83,7 @@ function renderStudios(){
 }
 function renderDates(){
   const strip=$('#dateStrip'); if(!strip)return;
-  strip.innerHTML=Array.from({length:7},(_,i)=>{const d=dateAt(i);const today=isoDate(d)===isoDate(new Date());return `<button class="date-btn ${i===state.selectedDay?'active':''}" type="button" data-day="${i}"><span class="dow">${today?'TODAY':dayNames[d.getDay()]}</span><b>${String(d.getDate()).padStart(2,'0')}</b><small>${monthNames[d.getMonth()]}</small></button>`}).join('');
+  strip.innerHTML=Array.from({length:BOOKING_WINDOW_DAYS},(_,i)=>{const d=dateAt(i);const today=isoDate(d)===isoDate(new Date());return `<button class="date-btn ${i===state.selectedDay?'active':''}" type="button" data-day="${i}"><span class="dow">${today?'TODAY':dayNames[d.getDay()]}</span><b>${String(d.getDate()).padStart(2,'0')}</b><small>${monthNames[d.getMonth()]}</small></button>`}).join('');
   $$('.date-btn').forEach(btn=>btn.addEventListener('click',()=>{state.selectedDay=Number(btn.dataset.day);renderDates();renderSchedule()}));
 }
 function generateSchedule(){
@@ -110,7 +113,7 @@ function renderSchedule(){
   list.innerHTML=rows.map(r=>{
     const studio=studioById(r.studio);
     const availability=r.spots===0?{label:'Sold out',cls:'full',btn:'Waitlist',bcls:'waitlist'}:r.spots<=3?{label:`Only ${r.spots} spots`,cls:'low',btn:'Reserve',bcls:''}:{label:`${r.spots} spots`,cls:'',btn:'Reserve',bcls:''};
-    return `<article class="class-row"><div class="class-time"><b>${r.time}</b><small>${r.duration} MIN</small></div><div class="class-name"><b>${esc(r.name)}</b><span>${esc(r.type.toUpperCase())} · ALL LEVELS</span></div><div class="class-coach"><span>COACH</span><b>${esc(r.coach)}</b></div><div class="class-location"><span>STUDIO</span><b>${esc(studio.short)}</b></div><div class="reserve-wrap"><span class="spots ${availability.cls}">${availability.label}</span><button class="reserve-btn ${availability.bcls}" data-reserve="${r.id}" type="button">${availability.btn}</button></div></article>`
+    return `<article class="class-row"><div class="class-time"><b>${r.time}</b><small>${r.duration} MIN</small></div><div class="class-name"><b>${esc(r.name)}</b><span>${esc(r.type.toUpperCase())} · ALL LEVELS</span></div><div class="class-coach"><span>COACH</span><b>${esc(r.coach)}</b><small class="coach-language-tags" aria-label="Coach languages">${coachLanguages(r).map(code=>`<i>${esc(code.toUpperCase())}</i>`).join('')}</small></div><div class="class-location"><span>STUDIO</span><b>${esc(studio.short)}</b></div><div class="reserve-wrap"><span class="spots ${availability.cls}">${availability.label}</span><button class="reserve-btn ${availability.bcls}" data-reserve="${r.id}" type="button">${availability.btn}</button></div></article>`
   }).join('');
   $$('[data-reserve]').forEach(btn=>btn.addEventListener('click',()=>{const item=all.find(r=>String(r.id)===btn.dataset.reserve);if(item)openClass(item)}));
 }
@@ -121,7 +124,7 @@ function openDrawer(){
 function closeDrawer(){
   $('#drawerBackdrop')?.classList.remove('open');$('#bookingDrawer')?.classList.remove('open');$('#bookingDrawer')?.setAttribute('aria-hidden','true');document.body.style.overflow='';
 }
-function selectedSummary(r){const s=studioById(r.studio);return `<div class="selected-class"><div class="line"><span>Class</span><b>${esc(r.name)}</b></div>${r.description?`<div class="line"><span>Description</span><b>${esc(r.description)}</b></div>`:''}<div class="line"><span>Wann</span><b>${esc(formatFullDate(r.dateObj))} · ${r.time}</b></div><div class="line"><span>Studio</span><b>${esc(s.name)}</b></div><div class="line"><span>Coach</span><b>${esc(r.coach)}</b></div></div>`}
+function selectedSummary(r){const s=studioById(r.studio);return `<div class="selected-class"><div class="line"><span>Class</span><b>${esc(r.name)}</b></div>${r.description?`<div class="line"><span>Description</span><b>${esc(r.description)}</b></div>`:''}<div class="line"><span>Wann</span><b>${esc(formatFullDate(r.dateObj))} · ${r.time}</b></div><div class="line"><span>Studio</span><b>${esc(s.name)}</b></div><div class="line"><span>Coach</span><b>${esc(r.coach)}</b></div><div class="line"><span>${document.documentElement.lang==='de'?'Sprache':'Language'}</span><b>${esc(coachLanguageNames(r))}</b></div></div>`}
 function openClass(r){
   state.selectedClass=r;const full=r.spots===0;$('#drawerTitle').textContent=full?'Join the waitlist':'Reserve your spot';
   if(full){
@@ -201,8 +204,8 @@ function initEvents(){
   $('#timeFilter')?.addEventListener('change',e=>{state.time=e.target.value;renderSchedule()});
   $('#resetFilters')?.addEventListener('click',()=>{state.location='all';state.classType='all';state.time='all';$('#locationFilter').value='all';$('#classFilter').value='all';$('#timeFilter').value='all';renderSchedule()});
   $('#focusLocation')?.addEventListener('click',()=>$('#locationFilter')?.focus());
-  $('#datePrev')?.addEventListener('click',()=>{state.dateOffset-=7;renderDates();renderSchedule()});
-  $('#dateNext')?.addEventListener('click',()=>{state.dateOffset+=7;renderDates();renderSchedule()});
+  $('#datePrev')?.addEventListener('click',()=>{const strip=$('#dateStrip');strip?.scrollBy({left:-Math.max(320,strip.clientWidth*.8),behavior:'smooth'})});
+  $('#dateNext')?.addEventListener('click',()=>{const strip=$('#dateStrip');strip?.scrollBy({left:Math.max(320,strip.clientWidth*.8),behavior:'smooth'})});
   $$('.booking-tab').forEach(btn=>btn.addEventListener('click',()=>{$$('.booking-tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.mode=btn.dataset.mode;showToast(state.mode==='first'?'First class':'Returning client',state.mode==='first'?'New customer flow active.':'Returning customer flow active.')}));
   $$('[data-class-jump]').forEach(a=>a.addEventListener('click',()=>{state.classType=a.dataset.classJump;$('#classFilter').value=state.classType;renderSchedule()}));
   $$('[data-pass]').forEach(btn=>btn.addEventListener('click',()=>openPass(btn.dataset.pass)));
