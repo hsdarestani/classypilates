@@ -3768,7 +3768,7 @@ def _hide_nonpublic_mindbody_classes(
     return hidden
 
 
-def sync_cancelled_classes_window(*, days: int = 45) -> dict[str, int]:
+def sync_cancelled_classes_window(*, days: int = 90) -> dict[str, int]:
     """Apply true Mindbody cancellations without creating hidden phantom classes.
 
     This uses the staff-authenticated lifecycle feed only to update exact provider
@@ -3777,7 +3777,7 @@ def sync_cancelled_classes_window(*, days: int = 45) -> dict[str, int]:
     client = WriteClient.from_env()
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=2)
-    end = now + timedelta(days=max(1, min(45, int(days))))
+    end = now + timedelta(days=max(1, min(90, int(days))))
     rows: list[dict[str, Any]] = []
     offset = 0
     while True:
@@ -3863,12 +3863,12 @@ def sync_schedule_availability_fast() -> dict[str, int]:
 
     This deliberately skips staff-directory writes and roster identity reconciliation.
     It updates/creates class instances, cancellation state, and public bookability for
-    the full 45-day window so the website never boots with stale spot counts after a
+    the full 90-day window so the website never boots with stale spot counts after a
     deployment or process restart.
     """
     client = WriteClient.from_env()
     now = datetime.now(timezone.utc)
-    end = now + timedelta(days=45)
+    end = now + timedelta(days=90)
     classes: list[dict[str, Any]] = []
     offset = 0
     while True:
@@ -3988,7 +3988,7 @@ def sync_staff_and_assignments() -> dict[str, int]:
     """
     client = WriteClient.from_env()
     now = datetime.now(timezone.utc)
-    end = now + timedelta(days=45)
+    end = now + timedelta(days=90)
     classes: list[dict[str, Any]] = []
     offset = 0
     while True:

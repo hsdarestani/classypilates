@@ -2161,10 +2161,10 @@ def public_schedule(
     response.headers["Expires"] = "0"
     try:
         start = berlin_day(from_) if from_ else datetime.now(ZoneInfo("Europe/Berlin")).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = berlin_day(to, end=True) if to else start + timedelta(days=30)
+        end = berlin_day(to, end=True) if to else start + timedelta(days=90)
     except ValueError:
         raise HTTPException(422, "invalid_date_range")
-    if end <= start or end - start > timedelta(days=45):
+    if end <= start or end - start > timedelta(days=90):
         raise HTTPException(422, "invalid_date_range")
     now = datetime.now(timezone.utc)
     visible_from = max(as_utc(start), now)

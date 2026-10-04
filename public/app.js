@@ -25,7 +25,7 @@ const PASSES={
 };
 const BUY_URL='https://classypilates.de/buy-classes/';
 const LIVE_DATA_ONLY=true;
-const BOOKING_WINDOW_DAYS=30;
+const BOOKING_WINDOW_DAYS=90;
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];

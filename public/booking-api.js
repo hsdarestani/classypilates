@@ -14,7 +14,7 @@
   generateSchedule=function(){const rows=remoteForSelectedDay();return rows===null?[]:rows};
   const scheduleSignature=rows=>JSON.stringify(rows.map(r=>[r.id,r.date,r.time,r.studio,r.name,r.coach,(r.coachLanguages||[]).join(','),r.spots,r.capacity,r.reserved]));
   async function refreshRemoteSchedule(){
-    const from=isoDate(dateAt(0)),to=isoDate(dateAt(29)),range=from+'|'+to;
+    const from=isoDate(dateAt(0)),to=isoDate(dateAt(89)),range=from+'|'+to;
     if(range===lastRange&&remoteClasses)return;
     lastRange=range;
     const source=$('#scheduleSource'),hadData=Array.isArray(remoteClasses);
