@@ -30,6 +30,7 @@ END_DATE = os.getenv(
     (datetime.now(timezone.utc) + timedelta(days=365)).date().isoformat(),
 )
 COST_PER_CALL = 0.002
+EMERGENCY_EXPORT_PAUSED = True
 
 OUT.mkdir(parents=True, exist_ok=True)
 OUT.chmod(0o700)
@@ -505,6 +506,9 @@ def write_manifest(status: str) -> None:
 
 
 def main() -> int:
+    if EMERGENCY_EXPORT_PAUSED:
+        print(json.dumps({"ok": True, "status": "paused", "message": "Emergency Mindbody API export is paused to prevent further billable calls."}), flush=True)
+        return 0
     try:
         # Site/catalog level data. Some optional endpoints can be disabled by the
         # account; failures are recorded without aborting the rest of the export.
