@@ -27,6 +27,10 @@ jobs:
           export SSHPASS="$PASS"
           sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
+          # Emergency stop: Mindbody exporter must not continue generating billable calls.
+          cd /opt/classypilates
+          docker compose exec -T api sh -lc 'pkill -f mindbody_emergency_backup.py || true' 2>/dev/null || true
+          echo "Emergency Mindbody exporter stopped."
           FILE=/etc/nginx/snippets/classy-routes.conf
           test -f "$FILE"
           test -f /opt/classypilates/public/wp-content/uploads/2026/05/Ladies_02-scaled.jpg
