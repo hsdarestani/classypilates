@@ -611,7 +611,11 @@ def _roster_loop() -> None:
 @core.app.on_event("startup")
 def _start_roster_worker() -> None:
     global _roster_worker_started
-    if not mindbody_sync.SYNC_ENABLED or not mindbody_sync.capability_status()["configured"]:
+    if (
+        not mindbody_sync.SYNC_ENABLED
+        or not mindbody_sync.BACKGROUND_SYNC_ENABLED
+        or not mindbody_sync.capability_status()["configured"]
+    ):
         return
     with _roster_worker_guard:
         if _roster_worker_started:

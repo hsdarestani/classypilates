@@ -86,7 +86,7 @@ jobs:
             } > .env
             chmod 600 .env
           fi
-          sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d;/^MINDBODY_API_KEY=/d;/^MINDBODY_SITE_ID=/d;/^MINDBODY_STAFF_USERNAME=/d;/^MINDBODY_STAFF_PASSWORD=/d;/^SUMUPAPIKEY=/d;/^SUMUPMERCHANT=/d' .env
+          sed -i '/^SMTP_HOST=/d;/^SMTP_PORT=/d;/^SMTP_USER=/d;/^SMTP_PASS=/d;/^SMTP_FROM=/d;/^SMTP_SSL=/d;/^SMTP_STARTTLS=/d;/^MINDBODY_API_KEY=/d;/^MINDBODY_SITE_ID=/d;/^MINDBODY_STAFF_USERNAME=/d;/^MINDBODY_STAFF_PASSWORD=/d;/^MINDBODY_BACKGROUND_SYNC_ENABLED=/d;/^SUMUPAPIKEY=/d;/^SUMUPMERCHANT=/d' .env
           {
             printf '%s\n' 'SMTP_HOST=host267.alfahosting-server.de'
             printf '%s\n' 'SMTP_PORT=465'
@@ -99,6 +99,7 @@ jobs:
             printf 'MINDBODY_SITE_ID=%s\n' "$MINDBODY_SITE_ID_VALUE"
             printf 'MINDBODY_STAFF_USERNAME=%s\n' "$MINDBODY_STAFF_USERNAME_VALUE"
             printf 'MINDBODY_STAFF_PASSWORD=%s\n' "$MINDBODY_STAFF_PASSWORD_VALUE"
+            printf '%s\n' 'MINDBODY_BACKGROUND_SYNC_ENABLED=false'
             printf 'SUMUPAPIKEY=%s\n' "$SUMUPAPIKEY_VALUE"
             printf 'SUMUPMERCHANT=%s\n' "$SUMUPMERCHANT_VALUE"
           } >> .env
@@ -422,11 +423,11 @@ jobs:
               grep -q '"status":"Active"' /tmp/classy-webhook-activate.json
               echo 'Mindbody webhook subscription: Active'
             else
-              echo 'WARNING: Mindbody webhook activation unavailable; 3-minute polling fallback remains active.' >&2
+              echo 'WARNING: Mindbody webhook activation unavailable; bulk polling fallback is intentionally disabled.' >&2
               cat /tmp/classy-webhook-activate.err >&2 || true
             fi
           else
-            echo 'WARNING: Mindbody webhook provisioning unavailable; 3-minute polling fallback remains active.' >&2
+            echo 'WARNING: Mindbody webhook provisioning unavailable; bulk polling fallback is intentionally disabled.' >&2
             cat /tmp/classy-webhook-prepare.err >&2 || true
           fi
           rm -f /tmp/classy-webhook-prepare.err /tmp/classy-webhook-activate.err /tmp/classy-webhook-activate.json
@@ -588,30 +589,10 @@ jobs:
           LIMIT 8;
           SQL
 
-          echo "Refreshing Mindbody mirror before final audit..."
-          docker compose exec -T api python - <<'PY'
-          import mindbody_sync
-          print(mindbody_sync.sync_from_mindbody())
-          PY
-
-          echo "Running live Mindbody/Classy availability audit..."
-          set +e
-          docker compose exec -T api python mindbody_audit.py
-          AUDIT_STATUS=$?
-          set -e
-
-          # Deployment diagnostics run in separate Python processes and can issue
-          # another Mindbody staff token. Restart the live API after diagnostics so
-          # its in-memory token cache cannot remain invalidated by those checks.
-          echo "Restarting API after Mindbody diagnostics..."
-          docker compose restart api >/dev/null
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
-              break
-            fi
-            sleep 2
-          done
+          # Cost guard: do not run bulk Mindbody reconciliation or live provider
+          # audits on every deployment. Webhooks and direct booking/cancellation
+          # operations remain active and are verified through normal application health.
+          echo "Skipping billable bulk Mindbody sync/audit during deployment."
           curl -fsS http://127.0.0.1:8787/api/health
-          exit "$AUDIT_STATUS"
 
           REMOTE

@@ -22,6 +22,9 @@ import main as core
 from mindbody_api import MindbodyClient, MindbodyConfig, MindbodyError, _extract_list
 
 SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+# Cost guard: keep direct booking/cancellation writes and webhook handling enabled,
+# but disable recurring bulk polling unless it is explicitly opted back in.
+BACKGROUND_SYNC_ENABLED = os.getenv("MINDBODY_BACKGROUND_SYNC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
 # Mindbody's standard "Other" payment method is exposed to CheckoutShoppingCart
@@ -47,6 +50,7 @@ def capability_status() -> dict[str, Any]:
     return {
         "configured": configured,
         "enabled": SYNC_ENABLED,
+        "background_sync_enabled": BACKGROUND_SYNC_ENABLED,
         "interval_seconds": SYNC_INTERVAL,
         "initial_delay_seconds": INITIAL_SYNC_DELAY,
     }
@@ -4319,7 +4323,7 @@ def _repair_recent_paid_duplicates_once() -> None:
 @core.app.on_event("startup")
 def start_worker():
     global _worker_started, _client_worker_started
-    if not SYNC_ENABLED or not capability_status()["configured"]:
+    if not SYNC_ENABLED or not BACKGROUND_SYNC_ENABLED or not capability_status()["configured"]:
         return
     with _worker_guard:
         if _worker_started:
