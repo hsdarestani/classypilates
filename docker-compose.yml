@@ -46,6 +46,7 @@ services:
       MINDBODY_WEBHOOK_SUBSCRIPTION_ID: ${MINDBODY_WEBHOOK_SUBSCRIPTION_ID:-}
     volumes:
       - classy_uploads:/data/uploads
+      - /var/backups/classypilates:/data/backups
     depends_on:
       db:
         condition: service_healthy

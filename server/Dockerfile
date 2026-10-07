@@ -16,6 +16,7 @@ COPY mindbody_availability.py .
 COPY mindbody_sync.py .
 COPY mindbody_webhooks.py .
 COPY mindbody_audit.py .
+COPY mindbody_emergency_backup.py .
 COPY data ./data
 RUN mkdir -p /data/uploads
 EXPOSE 8000

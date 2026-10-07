@@ -129,6 +129,8 @@ jobs:
             fi
           fi
 
+          mkdir -p /var/backups/classypilates
+          chmod 700 /var/backups/classypilates
           docker compose up -d --build --remove-orphans
 
           for i in $(seq 1 30); do
@@ -137,6 +139,60 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8787/api/health
           curl -fsS http://127.0.0.1:8787/api/checkout/create | grep -q '"provider":"sumup"'
+
+          # Emergency one-shot provider snapshot requested on 2026-10-08.
+          # The marker prevents future deployments from repeating billable API reads.
+          EMERGENCY_BACKUP_DIR='/var/backups/classypilates/mindbody/emergency-2026-10-08'
+          EMERGENCY_BACKUP_MARKER="$EMERGENCY_BACKUP_DIR/.attempted"
+          mkdir -p "$EMERGENCY_BACKUP_DIR"
+          chmod 700 "$EMERGENCY_BACKUP_DIR"
+          if [ ! -f "$EMERGENCY_BACKUP_MARKER" ]; then
+            echo "Creating local Classy database and upload snapshots..."
+            docker compose exec -T db sh -lc 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip -9 > "$EMERGENCY_BACKUP_DIR/classy_postgres.sql.gz"
+            chmod 600 "$EMERGENCY_BACKUP_DIR/classy_postgres.sql.gz"
+            docker compose exec -T api python - <<'PY'
+          import os, tarfile
+          target="/data/backups/mindbody/emergency-2026-10-08/classy_uploads.tar.gz"
+          with tarfile.open(target, "w:gz") as tf:
+              tf.add("/data/uploads", arcname="uploads")
+          os.chmod(target, 0o600)
+          print("Uploads snapshot:", target)
+          PY
+
+            # Touch before the API export so an unrelated future deployment never
+            # restarts a potentially billable full export automatically. The exporter
+            # itself is resumable from checkpoint.json when intentionally rerun.
+            touch "$EMERGENCY_BACKUP_MARKER"
+            chmod 600 "$EMERGENCY_BACKUP_MARKER"
+            echo "Starting bounded Mindbody emergency export (max 25,000 logical API calls)..."
+            set +e
+            docker compose exec -T \
+              -e MINDBODY_BACKUP_DIR=/data/backups/mindbody/emergency-2026-10-08 \
+              -e MINDBODY_BACKUP_CALL_BUDGET=25000 \
+              -e MINDBODY_BACKUP_START_DATE=2010-01-01 \
+              api python mindbody_emergency_backup.py
+            BACKUP_STATUS=$?
+            set -e
+            echo "Mindbody emergency export exit status: $BACKUP_STATUS"
+
+            # The export process can issue a fresh staff token. Restart the API so
+            # live booking traffic cannot retain a token invalidated by the exporter.
+            docker compose restart api >/dev/null
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
+              sleep 2
+            done
+            curl -fsS http://127.0.0.1:8787/api/health >/dev/null
+
+            echo "Emergency backup files:"
+            find "$EMERGENCY_BACKUP_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
+            if [ -f "$EMERGENCY_BACKUP_DIR/manifest.json" ]; then
+              echo "Emergency backup manifest:"
+              cat "$EMERGENCY_BACKUP_DIR/manifest.json"
+            fi
+          else
+            echo "Emergency Mindbody backup already attempted; skipping billable export."
+          fi
 
           # Do not issue a second Mindbody staff token from a separate deploy
           # process after the API has started. Mindbody can invalidate the token
