@@ -67,6 +67,9 @@ jobs:
           set -euo pipefail
           cd /opt/classypilates
 
+          echo "Stopping any running emergency Mindbody exporter..."
+          docker compose exec -T api sh -lc 'pkill -f mindbody_emergency_backup.py || true' 2>/dev/null || true
+
           SMTP_PASSWORD="$(printf '%s' "$SMTP_PASS_B64" | base64 -d)"
           MINDBODY_API_KEY_VALUE="$(printf '%s' "$MINDBODY_API_KEY_B64" | base64 -d)"
           MINDBODY_SITE_ID_VALUE="$(printf '%s' "$MINDBODY_SITE_ID_B64" | base64 -d)"
@@ -147,6 +150,9 @@ jobs:
           mkdir -p "$EMERGENCY_BACKUP_DIR"
           chmod 700 "$EMERGENCY_BACKUP_DIR"
           if [ ! -f "$EMERGENCY_BACKUP_MARKER" ]; then
+            echo "Emergency Mindbody API export is paused to prevent further billable calls."
+            touch "$EMERGENCY_BACKUP_MARKER"
+            chmod 600 "$EMERGENCY_BACKUP_MARKER"
             echo "Creating local Classy database and upload snapshots..."
             docker compose exec -T db sh -lc 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip -9 > "$EMERGENCY_BACKUP_DIR/classy_postgres.sql.gz"
             chmod 600 "$EMERGENCY_BACKUP_DIR/classy_postgres.sql.gz"
@@ -164,16 +170,8 @@ jobs:
             # itself is resumable from checkpoint.json when intentionally rerun.
             touch "$EMERGENCY_BACKUP_MARKER"
             chmod 600 "$EMERGENCY_BACKUP_MARKER"
-            echo "Starting bounded Mindbody emergency export (max 25,000 logical API calls)..."
-            set +e
-            docker compose exec -T \
-              -e MINDBODY_BACKUP_DIR=/data/backups/mindbody/emergency-2026-10-08 \
-              -e MINDBODY_BACKUP_CALL_BUDGET=25000 \
-              -e MINDBODY_BACKUP_START_DATE=2010-01-01 \
-              api python mindbody_emergency_backup.py
-            BACKUP_STATUS=$?
-            set -e
-            echo "Mindbody emergency export exit status: $BACKUP_STATUS"
+            echo "Skipping Mindbody API export to prevent further billable calls."
+            BACKUP_STATUS=0
 
             # The export process can issue a fresh staff token. Restart the API so
             # live booking traffic cannot retain a token invalidated by the exporter.
