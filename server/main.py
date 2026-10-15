@@ -138,6 +138,8 @@ def cancellation_email_data(booking: "Booking") -> tuple[str, str, str, list[str
         )
     elif booking.payment_method == "class_credit_refunded":
         credit_text = "Der für diese Buchung verwendete Class Credit wurde deinem Classy Konto wieder gutgeschrieben."
+    elif booking.payment_method == "hour_pass_refunded":
+        credit_text = "Die verwendeten Kursminuten wurden deinem Stundenpaket gutgeschrieben. Das ursprüngliche Ablaufdatum bleibt bestehen."
     else:
         credit_text = "Die Stornierung wurde erfolgreich bestätigt."
     return (

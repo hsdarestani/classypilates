@@ -111,15 +111,17 @@ def active_hour_minutes(email: str, db: Session) -> int:
     return sum(max(0, p.total_minutes - p.used_minutes) for p in rows)
 
 
-def reserve_hour_minutes(email: str, duration: int, db: Session) -> list[tuple[int, int]]:
+def reserve_hour_minutes(email: str, duration: int, starts_at: datetime, db: Session) -> list[tuple[int, int]]:
     """Lock passes, then allocate exact class minutes, atomically with the booking."""
     if duration <= 0:
         raise HTTPException(400, "invalid_class_duration")
     now = datetime.now(timezone.utc)
+    class_start = core.as_utc(starts_at)
     rows = db.scalars(select(HourPass).where(
         HourPass.email == email.strip().lower(),
         HourPass.status == "active",
         HourPass.expires_at > now,
+        HourPass.expires_at > class_start,
     ).order_by(HourPass.expires_at, HourPass.id).with_for_update()).all()
     if sum(max(0, p.total_minutes - p.used_minutes) for p in rows) < duration:
         raise HTTPException(409, "hour_pass_unavailable")
@@ -1280,7 +1282,7 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
             booking_phone = (profile.phone or "").strip()
         credit_allowed = data.useCredit is not False
         if data.paymentMethod == "hour_pass" and credit_allowed:
-            hour_allocations = reserve_hour_minutes(user.email, int(c.duration), db)
+            hour_allocations = reserve_hour_minutes(user.email, int(c.duration), c.starts_at, db)
             use_hour_pass = True
         elif profile and profile.credits > 0 and credit_allowed:
             profile.credits -= 1
