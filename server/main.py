@@ -1023,9 +1023,11 @@ def customer_dashboard(user: User = Depends(customer_only), db: Session = Depend
     booking_rows = [customer_booking_dict(b) for b in rows]
     upcoming = [b for b in booking_rows if as_utc(date_parser.parse(b["starts_at"])) >= now and b["status"] == "reserved"]
     waitlist_count = db.scalar(select(func.count(CustomerWaitlistLink.waitlist_id)).where(CustomerWaitlistLink.user_id == user.id)) or 0
+    from feedback_app import active_hour_minutes
     return {
         "profile": {"first_name": user.first_name, "last_name": user.last_name, "email": user.email},
         "credits": profile.credits,
+        "hour_pass_minutes": active_hour_minutes(user.email, db),
         "upcoming_count": len(upcoming),
         "total_bookings": len(booking_rows),
         "waitlist_count": waitlist_count,
@@ -1060,6 +1062,10 @@ def credit_refund_for_cancelled_booking(booking: "Booking", db: Session, user_id
     """Convert an eligible cancelled booking payment back into Classy credits once."""
     method = str(booking.payment_method or "").strip().lower()
     if method.endswith("_refunded"):
+        return 0
+    if method == "hour_pass":
+        from feedback_app import refund_hour_minutes
+        refund_hour_minutes(booking, db)
         return 0
 
     credits = 0
@@ -1171,10 +1177,12 @@ def customer_leave_waitlist(waitlist_id: int, user: User = Depends(customer_only
 @app.get("/api/customer/profile")
 def customer_profile(user: User = Depends(customer_only), db: Session = Depends(db_session)):
     profile = get_customer_profile(user, db)
+    from feedback_app import active_hour_minutes
     return {
         "first_name": user.first_name,
         "last_name": user.last_name,
         "email": user.email,
+        "hour_pass_minutes": active_hour_minutes(user.email, db),
         "phone": profile.phone,
         "birth_date": profile.birth_date,
         "emergency_contact": profile.emergency_contact,
