@@ -535,10 +535,10 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         booking_reference=booking_reference,
     )
     db.add(order)
-    db.flush()
-    if not booking_reference and data.items and data.items[0].id == "hour50":
-        db.add(HourPass(order_id=order.id, email=email, total_minutes=3000, used_minutes=0))
     try:
+        db.flush()
+        if not booking_reference and data.items and data.items[0].id == "hour50":
+            db.add(HourPass(order_id=order.id, email=email, total_minutes=3000, used_minutes=0))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
