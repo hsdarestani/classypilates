@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError
 from urllib.request import Request as UrlRequest, urlopen
 from datetime import date, datetime, timedelta, timezone
+from dateutil.relativedelta import relativedelta
 from email.message import EmailMessage
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -15,7 +16,7 @@ from zoneinfo import ZoneInfo
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, select, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -35,6 +36,7 @@ SHOP_PRODUCTS = {
     "ten": {"name": "10 Classes", "price": 21900, "credits": 10},
     "special10": {"name": "10 Classes · Special Offer", "price": 17900, "credits": 10},
     "twenty": {"name": "20 Classes", "price": 39900, "credits": 20},
+    "hour50": {"name": "50 Stunden · 12 Monate", "price": 69900, "credits": 0, "minutes": 3000},
 }
 
 
@@ -75,6 +77,82 @@ class ClassNotification(core.Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class HourPass(core.Base):
+    """Real time based credit: one purchase grants 3000 minutes for 12 calendar months."""
+    __tablename__ = "hour_passes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("payment_orders.id", ondelete="RESTRICT"), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    total_minutes: Mapped[int] = mapped_column(Integer, default=3000)
+    used_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(25), default="pending")
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class HourPassUsage(core.Base):
+    __tablename__ = "hour_pass_usages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pass_id: Mapped[int] = mapped_column(ForeignKey("hour_passes.id", ondelete="RESTRICT"), index=True)
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"), index=True)
+    minutes: Mapped[int] = mapped_column(Integer)
+    refunded: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+def active_hour_minutes(email: str, db: Session) -> int:
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(select(HourPass).where(
+        HourPass.email == str(email).strip().lower(),
+        HourPass.status == "active",
+        HourPass.expires_at > now,
+    )).all()
+    return sum(max(0, p.total_minutes - p.used_minutes) for p in rows)
+
+
+def reserve_hour_minutes(email: str, duration: int, db: Session) -> list[tuple[int, int]]:
+    """Lock passes, then allocate exact class minutes, atomically with the booking."""
+    if duration <= 0:
+        raise HTTPException(400, "invalid_class_duration")
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(select(HourPass).where(
+        HourPass.email == email.strip().lower(),
+        HourPass.status == "active",
+        HourPass.expires_at > now,
+    ).order_by(HourPass.expires_at, HourPass.id).with_for_update()).all()
+    if sum(max(0, p.total_minutes - p.used_minutes) for p in rows) < duration:
+        raise HTTPException(409, "hour_pass_unavailable")
+    allocations = []
+    remaining = duration
+    for row in rows:
+        qty = min(remaining, max(0, row.total_minutes - row.used_minutes))
+        if qty:
+            row.used_minutes += qty
+            allocations.append((row.id, qty))
+            remaining -= qty
+        if remaining == 0:
+            break
+    return allocations
+
+
+def refund_hour_minutes(booking: core.Booking, db: Session) -> int:
+    """Restore exactly what this booking deducted, once, without renewing expiry."""
+    if booking.payment_method != "hour_pass":
+        return 0
+    usages = db.scalars(select(HourPassUsage).where(
+        HourPassUsage.booking_id == booking.id,
+        HourPassUsage.refunded.is_(False),
+    ).order_by(HourPassUsage.pass_id).with_for_update()).all()
+    refunded = 0
+    for usage in usages:
+        p = db.scalar(select(HourPass).where(HourPass.id == usage.pass_id).with_for_update())
+        if p:
+            p.used_minutes = max(0, p.used_minutes - usage.minutes)
+        usage.refunded = True
+        refunded += usage.minutes
+    booking.payment_method = "hour_pass_refunded"
+    return refunded
 
 
 core.Base.metadata.create_all(core.engine)
@@ -194,14 +272,15 @@ def _sumup_amount_cents(checkout: dict) -> int:
 
 def _shop_purchase_email_data(order: core.PaymentOrder) -> tuple[str, str, str, list[str]]:
     credits = max(0, int(order.credits or 0))
-    credit_label = "1 Class Credit" if credits == 1 else f"{credits} Class Credits"
+    hour_purchase = order.amount_cents == 69900 and credits == 0
+    credit_label = "50 Stunden Trainingsguthaben" if hour_purchase else ("1 Class Credit" if credits == 1 else f"{credits} Class Credits")
     amount = f"{int(order.amount_cents or 0) / 100:.2f}".replace(".", ",") + " €"
     first_name = str(order.first_name or "").strip()
     greeting = f"Hallo {first_name}," if first_name else "Hallo,"
     availability = (
-        f"{credit_label} wurde deinem Kundenkonto gutgeschrieben."
+        (f"{credit_label} wurden für 12 Monate ab Zahlung aktiviert." if hour_purchase else f"{credit_label} wurde deinem Kundenkonto gutgeschrieben.")
         if order.credited
-        else f"{credit_label} ist bezahlt und wird deinem Kundenkonto gutgeschrieben, sobald du dich mit dieser E Mail Adresse registrierst."
+        else (f"{credit_label} wurden bezahlt und können nach Anmeldung mit dieser E Mail Adresse verwendet werden." if hour_purchase else f"{credit_label} ist bezahlt und wird deinem Kundenkonto gutgeschrieben, sobald du dich mit dieser E Mail Adresse registrierst.")
     )
     return (
         order.email,
@@ -212,7 +291,7 @@ def _shop_purchase_email_data(order: core.PaymentOrder) -> tuple[str, str, str, 
             f"deine Zahlung über {amount} wurde erfolgreich bestätigt.",
             availability,
             f"Bestellnummer: {order.reference}",
-            "Du kannst deinen Class Credit jetzt für deine nächste Buchung verwenden.",
+            ("Für Buchungen werden die tatsächlichen Kursminuten von deinem Stundenpaket abgezogen." if hour_purchase else "Du kannst deinen Class Credit jetzt für deine nächste Buchung verwenden."),
         ],
     )
 
@@ -288,15 +367,24 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                 email_job = core.booking_email_data(booking)
                 booking_id_to_sync = booking.id
         elif not order.credited:
-            user = db.scalar(select(core.User).where(func.lower(core.User.email) == order.email.lower()))
-            if user:
-                profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
-                if not profile:
-                    profile = core.CustomerProfile(user_id=user.id)
-                    db.add(profile)
-                    db.flush()
-                profile.credits += order.credits
+            hour_pass = db.scalar(select(HourPass).where(HourPass.order_id == order.id).with_for_update())
+            if hour_pass:
+                if hour_pass.status != "active":
+                    activated = datetime.now(timezone.utc)
+                    hour_pass.status = "active"
+                    hour_pass.activated_at = activated
+                    hour_pass.expires_at = activated + relativedelta(months=12)
                 order.credited = True
+            else:
+                user = db.scalar(select(core.User).where(func.lower(core.User.email) == order.email.lower()))
+                if user:
+                    profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
+                    if not profile:
+                        profile = core.CustomerProfile(user_id=user.id)
+                        db.add(profile)
+                        db.flush()
+                    profile.credits += order.credits
+                    order.credited = True
         if not order.booking_reference and first_order_paid_transition:
             email_job = _shop_purchase_email_data(order)
     elif status in {"FAILED", "EXPIRED", "CANCELLED", "CANCELED"} and order.status != "paid":
@@ -371,6 +459,10 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
     else:
         if not data.items:
             raise HTTPException(400, "invalid_checkout")
+        if any(item.id == "hour50" for item in data.items) and (
+            len(data.items) != 1 or data.items[0].quantity != 1
+        ):
+            raise HTTPException(400, "hour_pass_one_per_order")
         for item in data.items:
             product = SHOP_PRODUCTS.get(item.id)
             quantity = min(10, max(1, item.quantity))
@@ -443,6 +535,9 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         booking_reference=booking_reference,
     )
     db.add(order)
+    db.flush()
+    if not booking_reference and data.items and data.items[0].id == "hour50":
+        db.add(HourPass(order_id=order.id, email=email, total_minutes=3000, used_minutes=0))
     try:
         db.commit()
     except IntegrityError as exc:
@@ -916,6 +1011,9 @@ def delete_class_v2(class_id: int, background_tasks: BackgroundTasks, user: core
             booking.mindbody_sync_status = "cancelled"
             booking.mindbody_sync_error = ""
             booking.mindbody_synced_at = datetime.now(timezone.utc)
+        if booking.payment_method == "hour_pass":
+            refund_hour_minutes(booking, db)
+            refunded.add(booking.id)
         if booking.payment_method == "class_credit":
             link = db.scalar(select(core.CustomerBookingLink).where(core.CustomerBookingLink.booking_id == booking.id))
             if link:
@@ -1007,11 +1105,13 @@ def _hold_booking_background(booking_id: int) -> None:
         if not booking:
             return
         if booking.mindbody_sync_status == "synced":
-            if booking.payment_status == "paid" and booking.payment_method == "class_credit":
+            if booking.payment_status == "paid" and booking.payment_method in {"class_credit", "hour_pass"}:
                 email_job = core.booking_email_data(booking)
             db.commit()
         else:
             booking.status = "cancelled"
+            if booking.payment_method == "hour_pass":
+                refund_hour_minutes(booking, db)
             if booking.payment_method == "class_credit":
                 link = db.scalar(
                     select(core.CustomerBookingLink)
@@ -1026,7 +1126,7 @@ def _hold_booking_background(booking_id: int) -> None:
                     if profile:
                         profile.credits += 1
                 booking.payment_method = "class_credit_refunded"
-            if booking.payment_status != "paid" or booking.payment_method == "class_credit_refunded":
+            if booking.payment_status != "paid" or booking.payment_method in {"class_credit_refunded", "hour_pass_refunded"}:
                 booking.payment_status = "failed"
             db.commit()
     elapsed = time.monotonic() - started
@@ -1072,7 +1172,7 @@ def public_booking_sync_status(
         "sync_status": booking.mindbody_sync_status,
         "booking_status": booking.status,
         "payment_status": booking.payment_status,
-        "credit_used": booking.payment_method.startswith("class_credit"),
+        "credit_used": booking.payment_method in {"class_credit", "hour_pass"},
         "ready": ready,
         "failed": failed,
         "error": _mindbody_booking_error_code(booking.mindbody_sync_error) if failed else "",
@@ -1117,7 +1217,7 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
             return {
                 "booking": {"reference": duplicate.reference},
                 "payment_status": duplicate.payment_status,
-                "credit_used": duplicate.payment_method.startswith("class_credit"),
+                "credit_used": duplicate.payment_method in {"class_credit", "hour_pass"},
                 "credits_remaining": None,
                 "sync_status": duplicate.mindbody_sync_status,
                 "resumed": True,
@@ -1162,6 +1262,8 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
 
     ref = "CP-" + os.urandom(4).hex().upper()
     use_credit = False
+    use_hour_pass = False
+    hour_allocations = []
     profile = None
     first_name = data.firstName.strip()
     last_name = data.lastName.strip()
@@ -1177,7 +1279,10 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         if not booking_phone and profile:
             booking_phone = (profile.phone or "").strip()
         credit_allowed = data.useCredit is not False
-        if profile and profile.credits > 0 and credit_allowed:
+        if data.paymentMethod == "hour_pass" and credit_allowed:
+            hour_allocations = reserve_hour_minutes(user.email, int(c.duration), db)
+            use_hour_pass = True
+        elif profile and profile.credits > 0 and credit_allowed:
             profile.credits -= 1
             use_credit = True
         elif data.useCredit is True:
@@ -1190,13 +1295,15 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         email=data.email.lower(),
         phone=booking_phone,
         spot_number=data.spot,
-        payment_method="class_credit" if use_credit else "sumup",
-        payment_status="paid" if use_credit else "pending",
-        amount_cents=0 if use_credit else 2800,
+        payment_method="hour_pass" if use_hour_pass else ("class_credit" if use_credit else "sumup"),
+        payment_status="paid" if (use_credit or use_hour_pass) else "pending",
+        amount_cents=0 if (use_credit or use_hour_pass) else 2800,
         mindbody_sync_status="pending" if c.mindbody_class_id else "local",
     )
     db.add(booking)
     db.flush()
+    for pass_id, minutes in hour_allocations:
+        db.add(HourPassUsage(pass_id=pass_id, booking_id=booking.id, minutes=minutes))
     if user and core.portal_for(user) == "/account" and user.email.lower() == data.email.lower():
         db.add(core.CustomerBookingLink(booking_id=booking.id, user_id=user.id))
 
@@ -1218,14 +1325,15 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         # which made the browser hit its checkout timeout while Mindbody was still
         # working. Submit to a dedicated executor so /api/bookings returns immediately.
         BOOKING_HOLD_EXECUTOR.submit(_hold_booking_background, booking.id)
-    elif use_credit:
+    elif use_credit or use_hour_pass:
         background_tasks.add_task(core.send_transactional_email, *core.booking_email_data(booking))
 
     return {
         "booking": {"reference": ref},
         "payment_status": booking.payment_status,
-        "credit_used": use_credit,
+        "credit_used": use_credit or use_hour_pass,
         "credits_remaining": profile.credits if profile else None,
+        "hour_minutes_remaining": active_hour_minutes(user.email, db) if user else 0,
         "language": language,
         "sync_status": booking.mindbody_sync_status,
     }
