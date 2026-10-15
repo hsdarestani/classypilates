@@ -47,7 +47,7 @@
   }
   function customerDraft(){const value=read('cpWizardCustomer',{});if(!value||typeof value!=='object')return{};const {password,...draft}=value;if(password)write('cpWizardCustomer',draft);return draft}
 
-  function startWizard(r){wizard={class:r,spot:null,payment:'sumup',paymentChoiceMade:false,credits:null,details:customerDraft(),mode:state.mode==='first'?'register':'login',authUser:null,sessionChecked:false};renderClassStep()}
+  function startWizard(r){wizard={class:r,spot:null,payment:'sumup',paymentChoiceMade:false,credits:null,hourMinutes:0,details:customerDraft(),mode:state.mode==='first'?'register':'login',authUser:null,sessionChecked:false};renderClassStep()}
   function renderClassStep(){const r=wizard.class;const available=Math.max(0,Number(r.spots)||0);const nextCopy=SPOT_SELECTION_ENABLED?'Review the coach, studio and time. Next, choose your preferred spot in the studio.':'Review the coach, studio and time. Your place will be assigned automatically while Mindbody sync is active.';const nextLabel=SPOT_SELECTION_ENABLED?'Continue · Choose spot':'Continue · Details';setDrawer('Reserve your class',`${classSummary(r)}<div class="wizard-panel"><div class="wizard-kicker">YOUR SESSION</div><h4>Your class is selected.</h4><p>${nextCopy}</p><div class="class-facts"><div><span>LEVEL</span><b>All Levels</b></div><div><span>AVAILABLE</span><b>${available} spots</b></div><div><span>ARRIVE</span><b>10 min early</b></div></div><button class="drawer-action" id="goSpot">${nextLabel}</button><button class="drawer-action secondary" id="cancelV2">Cancel</button></div>`,1);$('#goSpot')?.addEventListener('click',()=>SPOT_SELECTION_ENABLED?renderSpotStep():prepareDetailsStep());$('#cancelV2')?.addEventListener('click',closeDrawer)}
 
   function seatState(index,r){const occupied=Math.min(Number(r.capacity)||0,Math.max(0,Number(r.reserved)||0));if(index<=occupied)return'taken';if(index===Math.min((Number(r.capacity)||1),occupied+1))return'recommended';return'available'}
@@ -59,7 +59,7 @@
   }
 
   async function prepareDetailsStep(){
-    if(!wizard.sessionChecked){wizard.sessionChecked=true;try{const response=await fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'});if(response.ok){const user=await response.json();if(user.portal==='/account'){wizard.authUser=user;wizard.mode='authenticated';let profile={};try{const profileResponse=await fetch('/api/customer/profile',{credentials:'same-origin',cache:'no-store'});if(profileResponse.ok)profile=await profileResponse.json()}catch(_){}const saved=wizard.details||{};wizard.credits=Math.max(0,Number(profile.credits)||0);wizard.details={...saved,email:user.email,firstName:user.first_name||saved.firstName||'',lastName:user.last_name||saved.lastName||'',phone:profile.phone||saved.phone||'',birth:profile.birth_date||saved.birth||'',emergency:profile.emergency_contact||saved.emergency||'',news:profile.marketing_opt_in??saved.news??false}}}}catch(_){}}
+    if(!wizard.sessionChecked){wizard.sessionChecked=true;try{const response=await fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'});if(response.ok){const user=await response.json();if(user.portal==='/account'){wizard.authUser=user;wizard.mode='authenticated';let profile={};try{const profileResponse=await fetch('/api/customer/profile',{credentials:'same-origin',cache:'no-store'});if(profileResponse.ok)profile=await profileResponse.json()}catch(_){}const saved=wizard.details||{};wizard.credits=Math.max(0,Number(profile.credits)||0);wizard.hourMinutes=Math.max(0,Number(profile.hour_pass_minutes)||0);wizard.details={...saved,email:user.email,firstName:user.first_name||saved.firstName||'',lastName:user.last_name||saved.lastName||'',phone:profile.phone||saved.phone||'',birth:profile.birth_date||saved.birth||'',emergency:profile.emergency_contact||saved.emergency||'',news:profile.marketing_opt_in??saved.news??false}}}}catch(_){}}
     renderDetailsStep()
   }
 
@@ -67,7 +67,7 @@
     const button=mode==='register'?$('#newAccount'):$('#changeAccount');
     if(button){button.disabled=true;button.textContent=mode==='register'?'Preparing new customer…':'Switching account…'}
     try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin',cache:'no-store'})}catch(_){}
-    wizard.authUser=null;wizard.credits=0;wizard.payment='sumup';wizard.paymentChoiceMade=false;wizard.sessionChecked=true;wizard.details={};
+    wizard.authUser=null;wizard.credits=0;wizard.hourMinutes=0;wizard.payment='sumup';wizard.paymentChoiceMade=false;wizard.sessionChecked=true;wizard.details={};
     try{localStorage.removeItem('cpWizardCustomer')}catch(_){}
     wizard.mode=mode;
     renderDetailsStep();
@@ -99,6 +99,7 @@
       if(response.ok){
         const profile=await response.json();
         wizard.credits=Math.max(0,Number(profile.credits)||0);
+        wizard.hourMinutes=Math.max(0,Number(profile.hour_pass_minutes)||0);
         return wizard.credits
       }
     }catch(_){}
@@ -118,37 +119,46 @@
       showToast('Account check failed',message,'error');
       return
     }
-    if((Number(wizard.credits)||0)>0&&!wizard.paymentChoiceMade)wizard.payment='class_credit';
-    if((Number(wizard.credits)||0)<=0)wizard.payment='sumup';
+    const hoursAvailable=(Number(wizard.hourMinutes)||0)>=(Number(wizard.class?.duration)||50);
+    if(!wizard.paymentChoiceMade)wizard.payment=(Number(wizard.credits)||0)>0?'class_credit':(hoursAvailable?'hour_pass':'sumup');
+    if(wizard.payment==='class_credit'&&(Number(wizard.credits)||0)<=0)wizard.payment=hoursAvailable?'hour_pass':'sumup';
+    if(wizard.payment==='hour_pass'&&!hoursAvailable)wizard.payment=(Number(wizard.credits)||0)>0?'class_credit':'sumup';
     renderPaymentStep()
   }
 
   function renderPaymentStep(){
     const r=wizard.class;
     const credits=Math.max(0,Number(wizard.credits)||0);
-    if(credits<=0)wizard.payment='sumup';
+    const hourMinutes=Math.max(0,Number(wizard.hourMinutes)||0);
+    const duration=Math.max(15,Number(r.duration)||50);
+    const hoursAvailable=hourMinutes>=duration;
+    if(wizard.payment==='class_credit'&&credits<=0)wizard.payment=hoursAvailable?'hour_pass':'sumup';
+    if(wizard.payment==='hour_pass'&&!hoursAvailable)wizard.payment=credits>0?'class_credit':'sumup';
     const when=`${safe(formatFullDate(r.dateObj))} · ${safe(r.time)}`;
     const studio=safe(studioName(r));
     const selectedCredit=wizard.payment==='class_credit';
-    const review=`<div class="payment-review-card"><div class="payment-review-session"><span>YOUR CLASS</span><b>${safe(r.name)}</b><small>${when}<br>${studio}</small></div><div class="payment-review-price"><span>PAYMENT</span><b>${selectedCredit?'1 Class Credit':'28,00 €'}</b><small>${credits>0?`${credits} Class Credit${credits===1?'':'s'} available`:'Secure payment with SumUp'}</small></div></div>`;
+    const selectedHours=wizard.payment==='hour_pass';
+    const useBalance=selectedCredit||selectedHours;
+    const review=`<div class="payment-review-card"><div class="payment-review-session"><span>YOUR CLASS</span><b>${safe(r.name)}</b><small>${when}<br>${studio}</small></div><div class="payment-review-price"><span>PAYMENT</span><b>${selectedHours?duration+' Minuten Guthaben':(selectedCredit?'1 Class Credit':'28,00 €')}</b><small>${hourMinutes>0?`${(hourMinutes/60).toLocaleString('de-DE',{maximumFractionDigits:2})} Stunden verfügbar`:(credits>0?`${credits} Class Credits available`:'Secure payment with SumUp')}</small></div></div>`;
     const creditOption=credits>0?`<button type="button" class="wizard-pay ${selectedCredit?'active':''}" data-wpay="class_credit"><span class="pay-mark">1×</span><span><b>Use 1 Class Credit</b><small>You have ${credits} available. No new payment is needed.</small></span><i>${selectedCredit?'✓':''}</i></button>`:'';
-    const paymentOptions=creditOption+payMethods.map(m=>`<button type="button" class="wizard-pay ${wizard.payment===m.id?'active':''}" data-wpay="${m.id}"><span class="pay-mark">${safe(m.mark)}</span><span><b>${safe(m.name)}</b><small>${safe(m.detail)}</small></span><i>${wizard.payment===m.id?'✓':''}</i></button>`).join('');
-    const intro=credits>0?'You already have Class Credit available. You can use one for this booking instead of making a new payment.':'No Class Credit is currently available on this account, so this booking will continue with SumUp.';
-    const action=selectedCredit?'Use 1 Class Credit':'Continue to SumUp';
-    setDrawer('Checkout',`${review}<div class="wizard-panel payment-panel"><div class="wizard-kicker">SECURE CHECKOUT</div><h4>Ready to confirm.</h4><p>${intro}</p><div class="wizard-payment-grid">${paymentOptions}</div><div class="payment-security-note"><span>✓</span><p>${selectedCredit?'Your existing credit is only deducted after the booking is created successfully.':'No payment is marked as successful until SumUp confirms it.'}</p></div><div class="wizard-sticky-actions"><button class="drawer-action secondary" id="backDetails">Back</button><button class="drawer-action" id="finishPayment">${action}</button></div></div>`,4);
+    const hourOption=hoursAvailable?`<button type="button" class="wizard-pay ${selectedHours?'active':''}" data-wpay="hour_pass"><span class="pay-mark">50h</span><span><b>Stundenpaket verwenden</b><small>${(hourMinutes/60).toLocaleString('de-DE',{maximumFractionDigits:2})} Stunden verfügbar. Es werden ${duration} Minuten abgezogen.</small></span><i>${selectedHours?'✓':''}</i></button>`:'';
+    const paymentOptions=creditOption+hourOption+payMethods.map(m=>`<button type="button" class="wizard-pay ${wizard.payment===m.id?'active':''}" data-wpay="${m.id}"><span class="pay-mark">${safe(m.mark)}</span><span><b>${safe(m.name)}</b><small>${safe(m.detail)}</small></span><i>${wizard.payment===m.id?'✓':''}</i></button>`).join('');
+    const intro=credits>0||hoursAvailable?'You can pay with your existing Class Credits or available hour package without a new payment.':'No Class Credit or sufficient hour package balance is available, so this booking will continue with SumUp.';
+    const action=selectedHours?'Stundenpaket verwenden':selectedCredit?'Use 1 Class Credit':'Continue to SumUp';
+    setDrawer('Checkout',`${review}<div class="wizard-panel payment-panel"><div class="wizard-kicker">SECURE CHECKOUT</div><h4>Ready to confirm.</h4><p>${intro}</p><div class="wizard-payment-grid">${paymentOptions}</div><div class="payment-security-note"><span>✓</span><p>${useBalance?'Your existing credit or hour balance is only deducted when a booking is created.':'No payment is marked as successful until SumUp confirms it.'}</p></div><div class="wizard-sticky-actions"><button class="drawer-action secondary" id="backDetails">Back</button><button class="drawer-action" id="finishPayment">${action}</button></div></div>`,4);
     document.querySelectorAll('[data-wpay]').forEach(b=>b.addEventListener('click',()=>{wizard.payment=b.dataset.wpay;wizard.paymentChoiceMade=true;renderPaymentStep()}));$('#backDetails')?.addEventListener('click',renderDetailsStep);$('#finishPayment')?.addEventListener('click',processPayment)
   }
   function resetPaymentButton(){
     const btn=$('#finishPayment');if(!btn)return;
     btn.disabled=false;
-    btn.innerHTML=wizard.payment==='class_credit'?'Use 1 Class Credit':'Continue to SumUp'
+    btn.innerHTML=wizard.payment==='hour_pass'?'Stundenpaket verwenden':wizard.payment==='class_credit'?'Use 1 Class Credit':'Continue to SumUp'
   }
-  function processPayment(){const btn=$('#finishPayment');if(btn){btn.disabled=true;btn.innerHTML=wizard.payment==='class_credit'?'<span class="button-spinner"></span> Using Class Credit…':'<span class="button-spinner"></span> Preparing secure payment…'}completeBookingPayment()}
+  function processPayment(){const btn=$('#finishPayment');if(btn){btn.disabled=true;btn.innerHTML=wizard.payment==='hour_pass'?'<span class="button-spinner"></span> Reserviere mit Stundenpaket…':wizard.payment==='class_credit'?'<span class="button-spinner"></span> Using Class Credit…':'<span class="button-spinner"></span> Preparing secure payment…'}completeBookingPayment()}
   function bookingRefV2(){return 'CP-'+(cryptoSafeToken?cryptoSafeToken(8):Math.random().toString(36).slice(2,10).toUpperCase())}
   function checkoutRefV2(){return 'CP-BOOKPAY-'+(cryptoSafeToken?cryptoSafeToken(10):Math.random().toString(36).slice(2,12).toUpperCase())}
   async function accountRequest(path,body){let response;try{response=await timedFetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify(body)},12000)}catch(error){if(error.message==='request_timeout')throw new Error('auth_timeout');throw error}let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'request_failed');return data}
   async function authenticateCustomer(){const details=wizard.details;if(wizard.mode==='authenticated'&&wizard.authUser){const response=await fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'});let user={};try{user=await response.json()}catch(_){}if(response.status===401)throw new Error('session_expired');if(!response.ok)throw new Error(user.detail||'request_failed');if(user.portal!=='/account')throw new Error('customer_account_required');wizard.authUser=user;return user}let result;if(wizard.mode==='register'){try{result=await accountRequest('/api/auth/register',{email:details.email,password:details.password,first_name:details.firstName,last_name:details.lastName,phone:details.phone,birth_date:details.birth,emergency_contact:details.emergency,marketing_opt_in:details.news})}catch(error){if(error.message!=='email_exists')throw error;result=await accountRequest('/api/auth/login',{email:details.email,password:details.password})}}else{result=await accountRequest('/api/auth/login',{email:details.email,password:details.password})}if(result.user?.portal!=='/account')throw new Error('customer_account_required');wizard.authUser=result.user;wizard.mode='authenticated';return result.user}
-  async function createServerBooking(r,user){const startsAt=r.startsAt||new Date(`${r.date}T${r.time}:00`).toISOString();const classId=Number.isInteger(Number(r.id))?Number(r.id):String(r.id);let response;try{response=await timedFetch('/api/bookings',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({classId,email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||'',spot:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod:wizard.payment==='class_credit'?'class_credit':'sumup',useCredit:wizard.payment==='class_credit',studioId:r.studio,title:r.name,classType:r.type,startsAt,duration:r.duration,capacity:r.capacity,coachName:r.coach,language:document.documentElement.lang==='de'?'de':'en'})},12000)}catch(error){if(error.message==='request_timeout')throw new Error('booking_create_timeout');throw error}let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'booking_failed');return data}
+  async function createServerBooking(r,user){const startsAt=r.startsAt||new Date(`${r.date}T${r.time}:00`).toISOString();const classId=Number.isInteger(Number(r.id))?Number(r.id):String(r.id);let response;try{response=await timedFetch('/api/bookings',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({classId,email:user.email,firstName:user.first_name||wizard.details.firstName||'',lastName:user.last_name||wizard.details.lastName||'',phone:wizard.details.phone||'',spot:SPOT_SELECTION_ENABLED?wizard.spot:null,paymentMethod:wizard.payment==='hour_pass'?'hour_pass':wizard.payment==='class_credit'?'class_credit':'sumup',useCredit:wizard.payment==='hour_pass'||wizard.payment==='class_credit',studioId:r.studio,title:r.name,classType:r.type,startsAt,duration:r.duration,capacity:r.capacity,coachName:r.coach,language:document.documentElement.lang==='de'?'de':'en'})},12000)}catch(error){if(error.message==='request_timeout')throw new Error('booking_create_timeout');throw error}let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||'booking_failed');return data}
   const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   function paymentProgress(text){const btn=$('#finishPayment');if(btn){btn.disabled=true;btn.innerHTML=`<span class="button-spinner"></span> ${safe(text)}`}}
   async function waitForBookingSync(reference){
@@ -202,7 +212,8 @@
       booking_checkout_already_active:'A payment session is already active for this booking. Tap continue again to resume it.',
       booking_already_paid:'This booking is already paid.',
       checkout_failed:'Secure payment could not be started.',
-      class_credit_unavailable:'Your Class Credit is no longer available. Please choose SumUp or refresh your account.'
+      class_credit_unavailable:'Your Class Credit is no longer available. Please choose SumUp or refresh your account.',
+      hour_pass_unavailable:'Not enough valid hour package minutes are available. Please refresh your account or choose SumUp.'
     };
     const message=messages[code]||'We could not start the payment. No payment was confirmed. Please try again.';
     renderPaymentStep();
@@ -232,7 +243,7 @@
       const creditUsed=Boolean(sync.credit_used??result.credit_used);
       const paymentStatus=sync.payment_status||result.payment_status;
       if(creditUsed||paymentStatus==='paid'){
-        wizard.payment=creditUsed?'class_credit':'sumup';
+        wizard.payment=creditUsed?(wizard.payment==='hour_pass'?'hour_pass':'class_credit'):'sumup';
         saveLocalBooking(r,email,ref,'paid',wizard.payment);
         renderSchedule();
         renderSuccess(ref);
@@ -250,7 +261,8 @@
         return
       }
       console.warn('Classy checkout failed:',error.message);
-      if(error.message==='class_credit_unavailable'){wizard.credits=0;wizard.payment='sumup';wizard.paymentChoiceMade=true;renderPaymentStep()}
+      if(error.message==='hour_pass_unavailable'){wizard.hourMinutes=0;wizard.payment='sumup';wizard.paymentChoiceMade=true;renderPaymentStep()}
+      else if(error.message==='class_credit_unavailable'){wizard.credits=0;wizard.payment='sumup';wizard.paymentChoiceMade=true;renderPaymentStep()}
       else resetPaymentButton();
       showPaymentFailure(error.message)
     }
