@@ -35,13 +35,13 @@ payment = source_of("_sync_sumup_order")
 for marker in ("status == \"PAID\"", 'hour_pass.status = "active"', "activated + relativedelta(months=12)", "order.credited = True"):
     assert marker in payment, marker
 spend = source_of("reserve_hour_minutes")
-for marker in ("with_for_update()", "p.total_minutes - p.used_minutes", "row.used_minutes += qty"):
+for marker in ("with_for_update()", "p.total_minutes - p.used_minutes", "row.used_minutes += qty", "HourPass.expires_at > class_start"):
     assert marker in spend, marker
 refund = source_of("refund_hour_minutes")
 for marker in ("HourPassUsage.refunded.is_(False)", "p.used_minutes - usage.minutes", "usage.refunded = True"):
     assert marker in refund, marker
 book = source_of("public_booking_v2")
-for marker in ("reserve_hour_minutes(user.email, int(c.duration), db)", "HourPassUsage(pass_id=pass_id, booking_id=booking.id, minutes=minutes)", 'payment_method="hour_pass"'):
+for marker in ("reserve_hour_minutes(user.email, int(c.duration), c.starts_at, db)", "HourPassUsage(pass_id=pass_id, booking_id=booking.id, minutes=minutes)", 'payment_method="hour_pass"'):
     assert marker in book, marker
 assert "refund_hour_minutes(booking, db)" in source_of("_hold_booking_background")
 assert "refund_hour_minutes(booking, db)" in source_of("delete_class_v2")
