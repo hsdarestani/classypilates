@@ -3,6 +3,7 @@ const PRODUCTS={
   five:{id:'five',name:'5 Classes',eyebrow:'FLEXIBLE',price:11900,description:'Five classes for a flexible training rhythm.'},
   ten:{id:'ten',name:'10 Classes',eyebrow:'MOST POPULAR',price:21900,description:'€21.90 per class — ideal for a consistent routine.',featured:true},
   special10:{id:'special10',name:'10 Classes · Special Offer',eyebrow:'SPECIAL OFFER',price:17900,description:'10 Class Credits · special campaign price.',hidden:true},
+  hour50:{id:'hour50',name:'50 Stunden · 12 Monate',eyebrow:'SPECIAL PACKAGE',price:69900,description:'3.000 Trainingsminuten · alle Studios · 12 Monate ab Zahlung.',hidden:true},
   twenty:{id:'twenty',name:'20 Classes',eyebrow:'COMMITTED',price:39900,description:'€19.95 per class — for regular training.'}
 };
 const PAYMENT_METHODS=[
