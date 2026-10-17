@@ -13,7 +13,10 @@ classy.smarbiz.sbs {
   redir /studio-rules.html /studio-rules permanent
   redir /shop.html /shop permanent
   redir /special-offer.html /special-offer permanent
-  redir /50-stunden.html /50-stunden permanent
+  redir /50-stunden.html /50-kurse/ permanent
+  redir /50-stunden /50-kurse/ permanent
+  redir /50-stunden/ /50-kurse/ permanent
+  redir /50-kurse /50-kurse/ permanent
   redir /classfit.html /classfit permanent
   redir /login.html /login permanent
   redir /account.html /account permanent
@@ -26,7 +29,7 @@ classy.smarbiz.sbs {
   rewrite /studio-rules /studio-rules.html
   rewrite /shop /shop.html
   rewrite /special-offer /special-offer.html
-  rewrite /50-stunden /50-stunden.html
+  rewrite /50-kurse/ /50-kurse.html
   rewrite /classfit /classfit.html
   rewrite /login /login.html
   rewrite /account /account.html
