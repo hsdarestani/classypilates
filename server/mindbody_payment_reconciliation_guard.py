@@ -86,7 +86,7 @@ services = ast.get_source_segment(SOURCE, methods["get_sale_services_for_class"]
 required_checkout_fragments = [
     '"sale/checkoutshoppingcart"',
     '"Type": "Service"',
-    '"ClassIds": [int(class_id)]',
+    '"VisitIds": [int(visit_id)]',
     '"Type": "Custom"',
     '"Amount": amount',
     '"Id": MINDBODY_EXTERNAL_PAYMENT_METHOD_ID',
@@ -112,6 +112,9 @@ assert 'booking.payment_method != "sumup"' in SOURCE
 assert 'booking.payment_status != "paid"' in SOURCE
 assert 'booking.source != "website"' in SOURCE
 assert 'order.mindbody_sale_status == "synced"' in SOURCE
+assert '"ClassIds": [int(class_id)]' not in checkout, "Do not generate a second visit for a paid seat"
+assert '"existing_visit_id_mismatch"' in SOURCE
+assert '"existing_visit_payment_not_confirmed"' in SOURCE
 
 # The runtime composes two retry wrappers. They must capture different base
 # functions; reusing one global capture name previously made the mirror recurse
