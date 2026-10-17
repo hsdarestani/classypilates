@@ -18,7 +18,8 @@ assert "retry_pending(" not in worker
 assert "reconcile_paid_booking_sale(order_id)" in worker
 assert "MAX_ATTEMPTS_PER_DAY = 2" in worker
 assert "MAX_ATTEMPTS_PER_ORDER = 2" in worker
-assert "POLL_HOURS = 6" in worker
+assert "LOCAL_SCAN_SECONDS = 900" in worker
+assert "time.sleep(LOCAL_SCAN_SECONDS)" in worker
 assert "MIN_RETRY_HOURS = 6" in worker
 for paid_constraint in (
     "po.status='paid'", "po.provider='sumup'",
