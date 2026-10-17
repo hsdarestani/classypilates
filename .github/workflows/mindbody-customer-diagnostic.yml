@@ -1,4 +1,4 @@
-name: Classy Local Payment Diagnostic (No Provider Calls)
+name: Classy Paid Visit Status Check
 
 on:
   push:
