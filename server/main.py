@@ -140,6 +140,8 @@ def cancellation_email_data(booking: "Booking") -> tuple[str, str, str, list[str
         credit_text = "Der für diese Buchung verwendete Class Credit wurde deinem Classy Konto wieder gutgeschrieben."
     elif booking.payment_method == "hour_pass_refunded":
         credit_text = "Die verwendeten Kursminuten wurden deinem Stundenpaket gutgeschrieben. Das ursprüngliche Ablaufdatum bleibt bestehen."
+    elif booking.payment_method == "class_pack50_refunded":
+        credit_text = "Ein Kurs wurde deinem 50 Kurse Paket gutgeschrieben. Das ursprüngliche Ablaufdatum bleibt bestehen."
     else:
         credit_text = "Die Stornierung wurde erfolgreich bestätigt."
     return (
@@ -1025,11 +1027,12 @@ def customer_dashboard(user: User = Depends(customer_only), db: Session = Depend
     booking_rows = [customer_booking_dict(b) for b in rows]
     upcoming = [b for b in booking_rows if as_utc(date_parser.parse(b["starts_at"])) >= now and b["status"] == "reserved"]
     waitlist_count = db.scalar(select(func.count(CustomerWaitlistLink.waitlist_id)).where(CustomerWaitlistLink.user_id == user.id)) or 0
-    from feedback_app import active_hour_minutes
+    from feedback_app import active_hour_minutes, active_class_pack_credits
     return {
         "profile": {"first_name": user.first_name, "last_name": user.last_name, "email": user.email},
         "credits": profile.credits,
         "hour_pass_minutes": active_hour_minutes(user.email, db),
+        "class_pack_credits": active_class_pack_credits(user.email, db),
         "upcoming_count": len(upcoming),
         "total_bookings": len(booking_rows),
         "waitlist_count": waitlist_count,
@@ -1069,6 +1072,10 @@ def credit_refund_for_cancelled_booking(booking: "Booking", db: Session, user_id
         from feedback_app import refund_hour_minutes
         refund_hour_minutes(booking, db)
         return 0
+    if method == "class_pack50":
+        from feedback_app import refund_class_pack_credit
+        refund_class_pack_credit(booking, db)
+        return 1
 
     credits = 0
     refunded_method = method
@@ -1179,12 +1186,13 @@ def customer_leave_waitlist(waitlist_id: int, user: User = Depends(customer_only
 @app.get("/api/customer/profile")
 def customer_profile(user: User = Depends(customer_only), db: Session = Depends(db_session)):
     profile = get_customer_profile(user, db)
-    from feedback_app import active_hour_minutes
+    from feedback_app import active_hour_minutes, active_class_pack_credits
     return {
         "first_name": user.first_name,
         "last_name": user.last_name,
         "email": user.email,
         "hour_pass_minutes": active_hour_minutes(user.email, db),
+        "class_pack_credits": active_class_pack_credits(user.email, db),
         "phone": profile.phone,
         "birth_date": profile.birth_date,
         "emergency_contact": profile.emergency_contact,

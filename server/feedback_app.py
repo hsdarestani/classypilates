@@ -37,6 +37,7 @@ SHOP_PRODUCTS = {
     "special10": {"name": "10 Classes · Special Offer", "price": 17900, "credits": 10},
     "twenty": {"name": "20 Classes", "price": 39900, "credits": 20},
     "hour50": {"name": "50 Stunden · 12 Monate", "price": 69900, "credits": 0, "minutes": 3000},
+    "class50": {"name": "50 Kurse · 12 Monate", "price": 69900, "credits": 0, "classes": 50},
 }
 
 
@@ -77,6 +78,72 @@ class ClassNotification(core.Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ClassPack(core.Base):
+    """Fifty course bookings, valid for 12 months after payment."""
+    __tablename__ = "class_packs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("payment_orders.id", ondelete="RESTRICT"), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    total_classes: Mapped[int] = mapped_column(Integer, default=50)
+    used_classes: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(25), default="pending")
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ClassPackUsage(core.Base):
+    __tablename__ = "class_pack_usages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pass_id: Mapped[int] = mapped_column(ForeignKey("class_packs.id", ondelete="RESTRICT"), index=True)
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"), unique=True, index=True)
+    refunded: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+def active_class_pack_credits(email: str, db: Session) -> int:
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(select(ClassPack).where(
+        ClassPack.email == str(email).strip().lower(),
+        ClassPack.status == "active",
+        ClassPack.expires_at > now,
+    )).all()
+    return sum(max(0, p.total_classes - p.used_classes) for p in rows)
+
+
+def reserve_class_pack_credit(email: str, starts_at: datetime, db: Session) -> int:
+    """Lock an unexpired pack and reserve one course atomically."""
+    now = datetime.now(timezone.utc)
+    class_start = core.as_utc(starts_at)
+    rows = db.scalars(select(ClassPack).where(
+        ClassPack.email == str(email).strip().lower(),
+        ClassPack.status == "active",
+        ClassPack.expires_at > now,
+        ClassPack.expires_at > class_start,
+    ).order_by(ClassPack.expires_at, ClassPack.id).with_for_update()).all()
+    for row in rows:
+        if row.used_classes < row.total_classes:
+            row.used_classes += 1
+            return row.id
+    raise HTTPException(409, "class_pack_unavailable")
+
+
+def refund_class_pack_credit(booking: core.Booking, db: Session) -> int:
+    """Return one cancelled course once, never extending the expiration."""
+    if booking.payment_method != "class_pack50":
+        return 0
+    usage = db.scalar(select(ClassPackUsage).where(
+        ClassPackUsage.booking_id == booking.id,
+        ClassPackUsage.refunded.is_(False),
+    ).with_for_update())
+    if not usage:
+        return 0
+    pack = db.scalar(select(ClassPack).where(ClassPack.id == usage.pass_id).with_for_update())
+    if pack:
+        pack.used_classes = max(0, pack.used_classes - 1)
+    usage.refunded = True
+    booking.payment_method = "class_pack50_refunded"
+    return 1
 
 
 class HourPass(core.Base):
@@ -272,17 +339,18 @@ def _sumup_amount_cents(checkout: dict) -> int:
     return int(amount * 100)
 
 
-def _shop_purchase_email_data(order: core.PaymentOrder) -> tuple[str, str, str, list[str]]:
+def _shop_purchase_email_data(order: core.PaymentOrder, db: Session) -> tuple[str, str, str, list[str]]:
     credits = max(0, int(order.credits or 0))
-    hour_purchase = order.amount_cents == 69900 and credits == 0
-    credit_label = "50 Stunden Trainingsguthaben" if hour_purchase else ("1 Class Credit" if credits == 1 else f"{credits} Class Credits")
+    class_purchase = db.scalar(select(ClassPack.id).where(ClassPack.order_id == order.id)) is not None
+    hour_purchase = order.amount_cents == 69900 and credits == 0 and not class_purchase
+    credit_label = "50 Kurse" if class_purchase else ("50 Stunden Trainingsguthaben" if hour_purchase else ("1 Class Credit" if credits == 1 else f"{credits} Class Credits"))
     amount = f"{int(order.amount_cents or 0) / 100:.2f}".replace(".", ",") + " €"
     first_name = str(order.first_name or "").strip()
     greeting = f"Hallo {first_name}," if first_name else "Hallo,"
     availability = (
-        (f"{credit_label} wurden für 12 Monate ab Zahlung aktiviert." if hour_purchase else f"{credit_label} wurde deinem Kundenkonto gutgeschrieben.")
+        (f"{credit_label} wurden für 12 Monate ab Zahlung aktiviert." if hour_purchase or class_purchase else f"{credit_label} wurde deinem Kundenkonto gutgeschrieben.")
         if order.credited
-        else (f"{credit_label} wurden bezahlt und können nach Anmeldung mit dieser E Mail Adresse verwendet werden." if hour_purchase else f"{credit_label} ist bezahlt und wird deinem Kundenkonto gutgeschrieben, sobald du dich mit dieser E Mail Adresse registrierst.")
+        else (f"{credit_label} wurden bezahlt und können nach Anmeldung mit dieser E Mail Adresse verwendet werden." if hour_purchase or class_purchase else f"{credit_label} ist bezahlt und wird deinem Kundenkonto gutgeschrieben, sobald du dich mit dieser E Mail Adresse registrierst.")
     )
     return (
         order.email,
@@ -293,7 +361,7 @@ def _shop_purchase_email_data(order: core.PaymentOrder) -> tuple[str, str, str, 
             f"deine Zahlung über {amount} wurde erfolgreich bestätigt.",
             availability,
             f"Bestellnummer: {order.reference}",
-            ("Für Buchungen werden die tatsächlichen Kursminuten von deinem Stundenpaket abgezogen." if hour_purchase else "Du kannst deinen Class Credit jetzt für deine nächste Buchung verwenden."),
+            ("Jede Kursbuchung verbraucht eine der 50 Einheiten, unabhängig von der Kursdauer." if class_purchase else ("Für Buchungen werden die tatsächlichen Kursminuten von deinem Stundenpaket abgezogen." if hour_purchase else "Du kannst deinen Class Credit jetzt für deine nächste Buchung verwenden.")),
         ],
     )
 
@@ -369,15 +437,23 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                 email_job = core.booking_email_data(booking)
                 booking_id_to_sync = booking.id
         elif not order.credited:
+            class_pack = db.scalar(select(ClassPack).where(ClassPack.order_id == order.id).with_for_update())
+            if class_pack:
+                if class_pack.status != "active":
+                    activated = datetime.now(timezone.utc)
+                    class_pack.status = "active"
+                    class_pack.activated_at = activated
+                    class_pack.expires_at = activated + relativedelta(months=12)
+                order.credited = True
             hour_pass = db.scalar(select(HourPass).where(HourPass.order_id == order.id).with_for_update())
-            if hour_pass:
+            if not class_pack and hour_pass:
                 if hour_pass.status != "active":
                     activated = datetime.now(timezone.utc)
                     hour_pass.status = "active"
                     hour_pass.activated_at = activated
                     hour_pass.expires_at = activated + relativedelta(months=12)
                 order.credited = True
-            else:
+            elif not class_pack:
                 user = db.scalar(select(core.User).where(func.lower(core.User.email) == order.email.lower()))
                 if user:
                     profile = db.scalar(select(core.CustomerProfile).where(core.CustomerProfile.user_id == user.id).with_for_update())
@@ -388,7 +464,7 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
                     profile.credits += order.credits
                     order.credited = True
         if not order.booking_reference and first_order_paid_transition:
-            email_job = _shop_purchase_email_data(order)
+            email_job = _shop_purchase_email_data(order, db)
     elif status in {"FAILED", "EXPIRED", "CANCELLED", "CANCELED"} and order.status != "paid":
         order.status = "failed" if status == "FAILED" else "cancelled"
         if order.booking_reference:
@@ -461,7 +537,7 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
     else:
         if not data.items:
             raise HTTPException(400, "invalid_checkout")
-        if any(item.id == "hour50" for item in data.items) and (
+        if any(item.id in {"hour50", "class50"} for item in data.items) and (
             len(data.items) != 1 or data.items[0].quantity != 1
         ):
             raise HTTPException(400, "hour_pass_one_per_order")
@@ -541,6 +617,8 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         db.flush()
         if not booking_reference and data.items and data.items[0].id == "hour50":
             db.add(HourPass(order_id=order.id, email=email, total_minutes=3000, used_minutes=0))
+        if not booking_reference and data.items and data.items[0].id == "class50":
+            db.add(ClassPack(order_id=order.id, email=email, total_classes=50, used_classes=0))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -1016,6 +1094,9 @@ def delete_class_v2(class_id: int, background_tasks: BackgroundTasks, user: core
         if booking.payment_method == "hour_pass":
             refund_hour_minutes(booking, db)
             refunded.add(booking.id)
+        if booking.payment_method == "class_pack50":
+            refund_class_pack_credit(booking, db)
+            refunded.add(booking.id)
         if booking.payment_method == "class_credit":
             link = db.scalar(select(core.CustomerBookingLink).where(core.CustomerBookingLink.booking_id == booking.id))
             if link:
@@ -1107,13 +1188,15 @@ def _hold_booking_background(booking_id: int) -> None:
         if not booking:
             return
         if booking.mindbody_sync_status == "synced":
-            if booking.payment_status == "paid" and booking.payment_method in {"class_credit", "hour_pass"}:
+            if booking.payment_status == "paid" and booking.payment_method in {"class_credit", "hour_pass", "class_pack50"}:
                 email_job = core.booking_email_data(booking)
             db.commit()
         else:
             booking.status = "cancelled"
             if booking.payment_method == "hour_pass":
                 refund_hour_minutes(booking, db)
+            if booking.payment_method == "class_pack50":
+                refund_class_pack_credit(booking, db)
             if booking.payment_method == "class_credit":
                 link = db.scalar(
                     select(core.CustomerBookingLink)
@@ -1128,7 +1211,7 @@ def _hold_booking_background(booking_id: int) -> None:
                     if profile:
                         profile.credits += 1
                 booking.payment_method = "class_credit_refunded"
-            if booking.payment_status != "paid" or booking.payment_method in {"class_credit_refunded", "hour_pass_refunded"}:
+            if booking.payment_status != "paid" or booking.payment_method in {"class_credit_refunded", "hour_pass_refunded", "class_pack50_refunded"}:
                 booking.payment_status = "failed"
             db.commit()
     elapsed = time.monotonic() - started
@@ -1174,7 +1257,7 @@ def public_booking_sync_status(
         "sync_status": booking.mindbody_sync_status,
         "booking_status": booking.status,
         "payment_status": booking.payment_status,
-        "credit_used": booking.payment_method in {"class_credit", "hour_pass"},
+        "credit_used": booking.payment_method in {"class_credit", "hour_pass", "class_pack50"},
         "ready": ready,
         "failed": failed,
         "error": _mindbody_booking_error_code(booking.mindbody_sync_error) if failed else "",
@@ -1265,6 +1348,8 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
     ref = "CP-" + os.urandom(4).hex().upper()
     use_credit = False
     use_hour_pass = False
+    use_class_pack = False
+    class_pack_id = None
     hour_allocations = []
     profile = None
     first_name = data.firstName.strip()
@@ -1284,7 +1369,10 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         if data.paymentMethod == "hour_pass" and credit_allowed:
             hour_allocations = reserve_hour_minutes(user.email, int(c.duration), c.starts_at, db)
             use_hour_pass = True
-        elif profile and profile.credits > 0 and credit_allowed:
+        elif data.paymentMethod == "class_pack50" and credit_allowed:
+            class_pack_id = reserve_class_pack_credit(user.email, c.starts_at, db)
+            use_class_pack = True
+        elif data.paymentMethod == "class_credit" and profile and profile.credits > 0 and credit_allowed:
             profile.credits -= 1
             use_credit = True
         elif data.useCredit is True:
@@ -1297,15 +1385,17 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         email=data.email.lower(),
         phone=booking_phone,
         spot_number=data.spot,
-        payment_method="hour_pass" if use_hour_pass else ("class_credit" if use_credit else "sumup"),
-        payment_status="paid" if (use_credit or use_hour_pass) else "pending",
-        amount_cents=0 if (use_credit or use_hour_pass) else 2800,
+        payment_method="class_pack50" if use_class_pack else ("hour_pass" if use_hour_pass else ("class_credit" if use_credit else "sumup")),
+        payment_status="paid" if (use_credit or use_hour_pass or use_class_pack) else "pending",
+        amount_cents=0 if (use_credit or use_hour_pass or use_class_pack) else 2800,
         mindbody_sync_status="pending" if c.mindbody_class_id else "local",
     )
     db.add(booking)
     db.flush()
     for pass_id, minutes in hour_allocations:
         db.add(HourPassUsage(pass_id=pass_id, booking_id=booking.id, minutes=minutes))
+    if class_pack_id is not None:
+        db.add(ClassPackUsage(pass_id=class_pack_id, booking_id=booking.id))
     if user and core.portal_for(user) == "/account" and user.email.lower() == data.email.lower():
         db.add(core.CustomerBookingLink(booking_id=booking.id, user_id=user.id))
 
@@ -1327,15 +1417,16 @@ def public_booking_v2(data: PublicBookingInV2, background_tasks: BackgroundTasks
         # which made the browser hit its checkout timeout while Mindbody was still
         # working. Submit to a dedicated executor so /api/bookings returns immediately.
         BOOKING_HOLD_EXECUTOR.submit(_hold_booking_background, booking.id)
-    elif use_credit or use_hour_pass:
+    elif use_credit or use_hour_pass or use_class_pack:
         background_tasks.add_task(core.send_transactional_email, *core.booking_email_data(booking))
 
     return {
         "booking": {"reference": ref},
         "payment_status": booking.payment_status,
-        "credit_used": use_credit or use_hour_pass,
+        "credit_used": use_credit or use_hour_pass or use_class_pack,
         "credits_remaining": profile.credits if profile else None,
         "hour_minutes_remaining": active_hour_minutes(user.email, db) if user else 0,
+        "class_pack_credits_remaining": active_class_pack_credits(user.email, db) if user else 0,
         "language": language,
         "sync_status": booking.mindbody_sync_status,
     }
