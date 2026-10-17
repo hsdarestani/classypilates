@@ -116,10 +116,16 @@ def _cancel_local_booking_hardened(booking_id: int) -> None:
             booking.mindbody_sync_error = ""
             booking.mindbody_synced_at = datetime.now(timezone.utc)
         except Exception as exc:
-            booking.mindbody_sync_status = "cancel_failed"
-            booking.mindbody_sync_error = str(exc)[:1500]
+            # The provider may say no class visit exists when a prior cancel
+            # already succeeded. This is an idempotent success, not a failure.
+            if "no class visit found for clientid:" in str(exc).casefold():
+                booking.mindbody_sync_status = "cancelled"
+                booking.mindbody_sync_error = ""
+                booking.mindbody_synced_at = datetime.now(timezone.utc)
+            else:
+                booking.mindbody_sync_status = "cancel_failed"
+                booking.mindbody_sync_error = str(exc)[:1500]
         db.commit()
-
 
 mindbody_sync.cancel_local_booking = _cancel_local_booking_hardened
 
@@ -684,3 +690,28 @@ def capabilities():
 # Mindbody. Runs entirely from local SQL when idle and never restarts bulk sync.
 from mindbody_paid_recovery import start_worker as _start_paid_sale_recovery
 app.add_event_handler("startup", _start_paid_sale_recovery)
+
+
+def _repair_confirmed_absent_cancellations_on_startup() -> None:
+    """Clear stale failures only when Mindbody explicitly reported no visit.
+
+    This touches local database rows only. It does not change refunds,
+    payments, or submit additional provider requests.
+    """
+    from sqlalchemy import text
+    with core.engine.begin() as conn:
+        result = conn.execute(text("""
+            UPDATE bookings
+               SET mindbody_sync_status='cancelled',
+                   mindbody_sync_error='',
+                   mindbody_synced_at=now()
+             WHERE source='website'
+               AND status='cancelled'
+               AND mindbody_sync_status='cancel_failed'
+               AND lower(mindbody_sync_error) LIKE 'no class visit found for clientid:%'
+        """))
+        if result.rowcount:
+            print(f"Confirmed absent Mindbody cancellation repaired locally: {result.rowcount}", flush=True)
+
+
+app.add_event_handler("startup", _repair_confirmed_absent_cancellations_on_startup)
