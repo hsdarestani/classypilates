@@ -280,16 +280,16 @@ class WriteClient(MindbodyClient):
         self,
         *,
         client_id: str,
-        class_id: str,
+        visit_id: str,
         location_id: str,
         service_id: str,
         amount_cents: int,
     ) -> dict[str, Any]:
-        """Reconcile an externally collected SumUp payment with an unpaid Mindbody visit.
+        """Pay for an existing unpaid Mindbody VisitId without adding a second seat.
 
-        The live Classy site exposes payment type "Other" as Custom ID 9. The
-        CheckoutShoppingCart request uses the existing class ID so Mindbody
-        reconciles the unpaid visit instead of creating a parallel reservation.
+        Since June 2026, CheckoutShoppingCart with ClassIds creates a NEW visit.
+        Reconcile the existing reserved VisitId instead: this also works when the
+        class is already full and prevents duplicate paid/unpaid reservations.
         """
         amount = round(int(amount_cents) / 100, 2)
         if amount <= 0:
@@ -309,7 +309,7 @@ class WriteClient(MindbodyClient):
                             "Metadata": {"Id": str(service_id)},
                         },
                         "Quantity": 1,
-                        "ClassIds": [int(class_id)],
+                        "VisitIds": [int(visit_id)],
                     }
                 ],
                 "Payments": [
@@ -1936,6 +1936,28 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             )
             return False
 
+        # Do not pay for a class Id: Mindbody now treats that as a NEW booking.
+        # Require one and only one existing unpaid visit and reconcile by VisitId.
+        if len(active_visits) != 1:
+            _set_mindbody_sale_state(
+                order_id, "manual_review",
+                error=f"ambiguous_active_unpaid_visits:{len(active_visits)}",
+            )
+            return False
+        current_visit_id = _visit_id(active_visits[0])
+        if (
+            not current_visit_id.isdigit()
+            or (
+                snapshot["visit_id"].isdigit()
+                and snapshot["visit_id"] != current_visit_id
+            )
+        ):
+            _set_mindbody_sale_state(
+                order_id, "manual_review", error="existing_visit_id_mismatch",
+            )
+            return False
+        snapshot["visit_id"] = current_visit_id
+
         location = _resolve_location(client, snapshot["studio_id"], snapshot["title"])
         location_id = str(_value(location, "Id", "ID", "LocationId", default="") or "").strip()
         if not location_id:
@@ -1973,7 +1995,7 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
 
         result = client.checkout_external_class_payment(
             client_id=snapshot["client_id"],
-            class_id=snapshot["class_id"],
+            visit_id=snapshot["visit_id"],
             location_id=location_id,
             service_id=service_id,
             amount_cents=snapshot["amount_cents"],
@@ -1988,25 +2010,30 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             )
             or ""
         )
-        # The API can create a separate paid visit beside the original unpaid
-        # hold. Never report reconciliation as complete while a duplicate stays.
-        cleanup = repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
-        if cleanup.get("status") not in {"repaired", "already_clean"}:
-            _set_mindbody_sale_state(
-                order_id,
-                "manual_review",
-                sale_id=sale_id,
-                service_id=service_id,
-                error="duplicate_visit_cleanup_incomplete",
-            )
-            return False
+        # Verify the SAME visit is now paid. Never retry a possibly completed
+        # sale after a lost response or a failed verification; that could sell
+        # twice. Instead flag manual review with the sale identifier preserved.
+        updated_visits = _active_client_visits(
+            client,
+            class_id=snapshot["class_id"],
+            client_id=snapshot["client_id"],
+        )
+        matching = [
+            visit for visit in updated_visits
+            if _visit_id(visit) == snapshot["visit_id"]
+        ]
+        paid_on_existing = (
+            len(matching) == 1 and
+            _normalized_service_name(matching[0]) == "1 class"
+        )
         _set_mindbody_sale_state(
             order_id,
-            "synced",
+            "synced" if paid_on_existing else "manual_review",
             sale_id=sale_id,
             service_id=service_id,
+            error="" if paid_on_existing else "existing_visit_payment_not_confirmed",
         )
-        return True
+        return paid_on_existing
     except Exception as exc:
         _set_mindbody_sale_state(
             order_id,
