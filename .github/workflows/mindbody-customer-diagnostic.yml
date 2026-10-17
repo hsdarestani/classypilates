@@ -65,10 +65,12 @@ jobs:
                 '[[:alnum:]._%+]+@[[:alnum:].-]+', '[EMAIL]', 'g'),
                 '[[:digit:]]+', '#', 'g'),
                 '(?i)(anna|nuzzolo)', '[NAME]', 'g'), 380),
-            'recovery_table=' || (to_regclass('public.mindbody_paid_sale_recovery') IS NOT NULL)
+            'attempts=' || coalesce(r.attempts::text,'none'),
+            'last_attempt=' || coalesce(to_char(r.last_attempt_at AT TIME ZONE 'Europe/Berlin','YYYY-MM-DD HH24:MI'), 'none')
           )
           FROM bookings b JOIN classes c ON c.id=b.class_id
           JOIN payment_orders po ON po.booking_reference=b.reference
+          LEFT JOIN mindbody_paid_sale_recovery r ON r.order_id=po.id
           WHERE lower(b.customer_name) LIKE '%nuzzolo%'
             AND c.starts_at >= '2026-10-17' AND c.starts_at < '2026-10-20'
           ORDER BY b.id DESC LIMIT 3;
