@@ -27,7 +27,7 @@ MAX_ATTEMPTS_PER_DAY = 2
 MAX_ATTEMPTS_PER_ORDER = 2
 MIN_RETRY_HOURS = 6
 MIN_AGE_MINUTES = 10
-POLL_HOURS = 6
+LOCAL_SCAN_SECONDS = 900  # local SQL only; no extra provider calls beyond daily cap
 
 CREATE_REPAIR_TABLE = """
 CREATE TABLE IF NOT EXISTS mindbody_paid_sale_recovery (
@@ -138,7 +138,7 @@ def _worker() -> None:
             run_once()
         except Exception as exc:
             print("Mindbody payment recovery worker:", type(exc).__name__, flush=True)
-        time.sleep(POLL_HOURS * 3600)
+        time.sleep(LOCAL_SCAN_SECONDS)
 
 
 def start_worker() -> None:
