@@ -56,6 +56,35 @@ jobs:
           ORDER BY c.starts_at DESC
           LIMIT 25;
           SQL
+          echo "=== ANNA RECONCILIATION ERROR CATEGORY (redacted) ==="
+          docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT concat_ws(' | ',
+            'sale_error_redacted=' || left(
+              regexp_replace(regexp_replace(regexp_replace(
+                coalesce(po.mindbody_sale_error,''),
+                '[[:alnum:]._%+]+@[[:alnum:].-]+', '[EMAIL]', 'g'),
+                '[[:digit:]]+', '#', 'g'),
+                '(?i)(anna|nuzzolo)', '[NAME]', 'g'), 380),
+            'attempts=' || coalesce(r.attempts::text,'none'),
+            'last_attempt=' || coalesce(to_char(r.last_attempt_at AT TIME ZONE 'Europe/Berlin','YYYY-MM-DD HH24:MI'), 'none')
+          )
+          FROM bookings b JOIN classes c ON c.id=b.class_id
+          JOIN payment_orders po ON po.booking_reference=b.reference
+          LEFT JOIN mindbody_paid_sale_recovery r ON r.order_id=po.id
+          WHERE lower(b.customer_name) LIKE '%nuzzolo%'
+            AND c.starts_at >= '2026-10-17' AND c.starts_at < '2026-10-20'
+          ORDER BY b.id DESC LIMIT 3;
+          SQL
+          echo "=== FAILED CANCELLATION ERROR CATEGORY (redacted) ==="
+          docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT left(
+            regexp_replace(regexp_replace(coalesce(mindbody_sync_error,''),
+            '[[:alnum:]._%+]+@[[:alnum:].-]+', '[EMAIL]', 'g'),
+            '[[:digit:]]+', '#', 'g'),
+            280)
+          FROM bookings WHERE mindbody_sync_status='cancel_failed'
+          ORDER BY created_at DESC LIMIT 2;
+          SQL
           echo "=== FAILED LOCAL CANCELLATIONS ==="
           docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
           SELECT concat_ws(' | ',
