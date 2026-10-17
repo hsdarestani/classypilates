@@ -101,56 +101,6 @@ jobs:
           PY
           echo "=== PAYMENT RECOVERY LOGS (non-sensitive lines) ==="
           docker compose logs --since 35m api 2>&1 | grep -E 'payment recovery|payment reconciliation|Mindbody paid' | tail -12 | sed -E 's/[[:digit:]]{6,}/[ID]/g' || true
-          echo "=== VISIT-BASED SALE TEST (Test=true, no real sale) ==="
-          docker compose exec -T api python - <<'PY'
-          from sqlalchemy import select
-          from zoneinfo import ZoneInfo
-          import runtime_app
-          import mindbody_sync as mb
-          from mindbody_sync import core
-          with core.SessionLocal() as db:
-              rows=list(db.scalars(select(core.Booking).where(core.Booking.customer_name.ilike('%nuzzolo%'))))
-              matches=[b for b in rows if core.as_utc(b.klass.starts_at).astimezone(ZoneInfo('Europe/Berlin')).strftime('%Y-%m-%d %H:%M') == '2026-10-18 11:00']
-              if len(matches)!=1:
-                  raise SystemExit('Anna candidate match count differs from 1')
-              b=matches[0]
-              order=db.scalar(select(core.PaymentOrder).where(core.PaymentOrder.booking_reference==b.reference))
-              if not (b.status=='reserved' and b.payment_status=='paid' and b.payment_method=='sumup' and order and order.status=='paid' and order.provider_payment_id and order.mindbody_sale_status=='failed'):
-                  raise SystemExit('Anna confirmed payment or booking preconditions failed')
-              class_id=str(b.klass.mindbody_class_id)
-              client_id=str(b.mindbody_client_id)
-              local_visit_id=str(b.mindbody_visit_id or '')
-              studio_id=b.klass.studio_id
-              title=b.klass.title
-              amount=order.amount_cents
-          client=mb.WriteClient.from_env(timeout=14.0)
-          try:
-              active=mb._active_client_visits(client,class_id=class_id,client_id=client_id)
-              active_ids=[mb._visit_id(v) for v in active]
-              print({'active_matching_visits':len(active),'local_visit_linked_to_active':local_visit_id in active_ids,'numeric_visit_id':local_visit_id.isdigit(),'service_already_attached':any(mb._visit_service_identity(v)[0] for v in active)})
-              if len(active)!=1 or local_visit_id not in active_ids or not local_visit_id.isdigit() or mb._visit_service_identity(active[0])[0]:
-                  raise SystemExit('Unsafe to attempt reconciliation; no checkout submitted')
-              location=mb._resolve_location(client,studio_id,title)
-              location_id=str(mb._value(location,'Id','ID','LocationId',default='') or '').strip()
-              assert location_id.isdigit()
-              service=mb._pick_single_class_service(client.get_sale_services_for_class(class_id,location_id),amount_cents=amount)
-              service_id=str(mb._value(service,'Id','ID','ProductId',default='') or '')
-              assert service_id
-              result=client._write('sale/checkoutshoppingcart',{
-                  'ClientId':int(client_id) if client_id.isdigit() else client_id,
-                  'LocationId':int(location_id),
-                  'InStore':True, 'SendEmail':False,
-                  'Test':True,
-                  'Items':[{'Item':{'Type':'Service','Metadata':{'Id':service_id}},'Quantity':1,'VisitIds':[int(local_visit_id)]}],
-                  'Payments':[{'Type':'Custom','Metadata':{'Amount':round(int(amount)/100,2),'Id':mb.MINDBODY_EXTERNAL_PAYMENT_METHOD_ID}}],
-              })
-              print({'visit_reconciliation_test':'validated','provider_response_has_error':bool(result.get('Error') or result.get('error')),'no_real_checkout':True})
-          except Exception as exc:
-              message=str(exc).lower()
-              kind=next((word for word in ('full','visit','service','payment','sale','invalid','authorization','permission','timeout','price','option','required','not available') if word in message),'other')
-              print({'visit_reconciliation_test':'failed','type':type(exc).__name__,'error_kind':kind,'no_real_checkout':True})
-              raise
-          PY
           echo "=== FAILED LOCAL CANCELLATIONS ==="
           docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
           SELECT concat_ws(' | ',
