@@ -1,4 +1,4 @@
-name: Mindbody Customer Diagnostic
+name: Classy Local Payment Diagnostic (No Provider Calls)
 
 on:
   push:
@@ -10,32 +10,72 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  diagnose:
     runs-on: ubuntu-latest
+    timeout-minutes: 7
     steps:
       - name: Install SSH client
-        run: sudo apt-get update && sudo apt-get install -y sshpass
-      - name: Verify Mindbody customer and class reads
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+
+      - name: Examine local Anna reservation and failed cancellations only
         env:
           HOST: ${{ secrets.HOST }}
           PASS: ${{ secrets.PASS }}
         run: |
           set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
           export SSHPASS="$PASS"
-          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
-          from mindbody_sync import sync_client_directory, mindbody_class_catalog
-          clients = sync_client_directory(max_clients=20000)
-          catalog = mindbody_class_catalog()
-          print({
-              "clients_seen": int(clients.get("seen", 0)),
-              "clients_written": int(clients.get("written", 0)),
-              "bookings_enriched": int(clients.get("bookings_enriched", 0)),
-              "class_descriptions": len(catalog.get("class_descriptions", [])),
-              "locations": len(catalog.get("locations", [])),
-              "coaches": len(catalog.get("coaches", [])),
-          })
-          if int(clients.get("seen", 0)) <= 0:
-              raise SystemExit("no_mindbody_clients_returned")
-          if len(catalog.get("class_descriptions", [])) <= 0:
-              raise SystemExit("no_mindbody_class_descriptions")
-          PY
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          echo "=== ANNA LOCAL RESERVATIONS (no Mindbody API used) ==="
+          docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT concat_ws(' | ',
+            'class_date=' || to_char(c.starts_at AT TIME ZONE 'Europe/Berlin','YYYY-MM-DD HH24:MI'),
+            'source=' || coalesce(b.source,''),
+            'booking=' || coalesce(b.status,''),
+            'payment_method=' || coalesce(b.payment_method,''),
+            'payment=' || coalesce(b.payment_status,''),
+            'provider_hold=' || coalesce(b.mindbody_sync_status,''),
+            'visit_linked=' || (b.mindbody_visit_id IS NOT NULL),
+            'class_linked=' || (c.mindbody_class_id IS NOT NULL),
+            'order=' || coalesce(po.status,'none'),
+            'sumup_linked=' || (po.provider_payment_id IS NOT NULL),
+            'sale=' || coalesce(po.mindbody_sale_status,'none'),
+            'sale_error=' || (length(coalesce(po.mindbody_sale_error,'')) > 0),
+            'hold_error=' || (length(coalesce(b.mindbody_sync_error,'')) > 0)
+          )
+          FROM bookings b
+          JOIN classes c ON c.id = b.class_id
+          LEFT JOIN LATERAL (
+            SELECT po.* FROM payment_orders po
+            WHERE po.booking_reference=b.reference
+            ORDER BY po.id DESC LIMIT 1
+          ) po ON TRUE
+          WHERE lower(coalesce(b.customer_name,'')) LIKE '%nuzzolo%'
+          ORDER BY c.starts_at DESC
+          LIMIT 25;
+          SQL
+          echo "=== FAILED LOCAL CANCELLATIONS ==="
+          docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT concat_ws(' | ',
+            'age_days=' || floor(extract(epoch from (now() - b.created_at))/86400),
+            'source=' || coalesce(b.source,''),
+            'booking=' || coalesce(b.status,''),
+            'payment=' || coalesce(b.payment_status,''),
+            'linked=' || (b.mindbody_visit_id IS NOT NULL),
+            'class_date=' || to_char(c.starts_at AT TIME ZONE 'Europe/Berlin','YYYY-MM-DD HH24:MI'),
+            'error_kind=' || CASE
+              WHEN lower(b.mindbody_sync_error) LIKE '%invalid user token%' THEN 'token'
+              WHEN lower(b.mindbody_sync_error) LIKE '%not found%' THEN 'not_found'
+              WHEN lower(b.mindbody_sync_error) LIKE '%visit%' THEN 'visit'
+              WHEN lower(b.mindbody_sync_error) LIKE '%timeout%' THEN 'timeout'
+              WHEN lower(b.mindbody_sync_error) LIKE '%unauthorized%' THEN 'auth'
+              ELSE 'other' END
+          )
+          FROM bookings b JOIN classes c ON c.id=b.class_id
+          WHERE b.mindbody_sync_status='cancel_failed'
+          ORDER BY b.created_at DESC LIMIT 5;
+          SQL
+          echo "=== END LOCAL DIAGNOSTIC ==="
+          REMOTE
