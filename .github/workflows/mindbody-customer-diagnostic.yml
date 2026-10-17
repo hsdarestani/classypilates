@@ -65,12 +65,10 @@ jobs:
                 '[[:alnum:]._%+]+@[[:alnum:].-]+', '[EMAIL]', 'g'),
                 '[[:digit:]]+', '#', 'g'),
                 '(?i)(anna|nuzzolo)', '[NAME]', 'g'), 380),
-            'attempts=' || coalesce(r.attempts::text,'none'),
-            'last_attempt=' || coalesce(to_char(r.last_attempt_at AT TIME ZONE 'Europe/Berlin','YYYY-MM-DD HH24:MI'), 'none')
+            'recovery_table=' || (to_regclass('public.mindbody_paid_sale_recovery') IS NOT NULL)
           )
           FROM bookings b JOIN classes c ON c.id=b.class_id
           JOIN payment_orders po ON po.booking_reference=b.reference
-          LEFT JOIN mindbody_paid_sale_recovery r ON r.order_id=po.id
           WHERE lower(b.customer_name) LIKE '%nuzzolo%'
             AND c.starts_at >= '2026-10-17' AND c.starts_at < '2026-10-20'
           ORDER BY b.id DESC LIMIT 3;
@@ -85,6 +83,24 @@ jobs:
           FROM bookings WHERE mindbody_sync_status='cancel_failed'
           ORDER BY created_at DESC LIMIT 2;
           SQL
+          echo "=== PRODUCTION RECOVERY WORKER STATUS ==="
+          docker compose exec -T api python - <<'PY'
+          import os, threading
+          import mindbody_sync as mb
+          try:
+              import mindbody_paid_recovery as worker
+              print({
+                  "recovery_module_exists": True,
+                  "recovery_configured": worker._ready(),
+                  "sync_enabled": mb.SYNC_ENABLED,
+                  "bulk_sync_enabled": mb.BACKGROUND_SYNC_ENABLED,
+                  "worker_thread_exists": any(t.name=="mindbody-paid-recovery" for t in threading.enumerate()),
+              })
+          except Exception as e:
+              print({"recovery_module_exists": False, "error_type": type(e).__name__})
+          PY
+          echo "=== PAYMENT RECOVERY LOGS (non-sensitive lines) ==="
+          docker compose logs --since 35m api 2>&1 | grep -E 'payment recovery|payment reconciliation|Mindbody paid' | tail -12 | sed -E 's/[[:digit:]]{6,}/[ID]/g' || true
           echo "=== FAILED LOCAL CANCELLATIONS ==="
           docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
           SELECT concat_ws(' | ',
