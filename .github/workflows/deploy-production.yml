@@ -67,8 +67,10 @@ jobs:
           set -euo pipefail
           cd /opt/classypilates
 
-          echo "Stopping any running emergency Mindbody exporter..."
-          docker compose exec -T api sh -lc 'pkill -f mindbody_emergency_backup.py || true' 2>/dev/null || true
+          # The emergency provider exporter was permanently disabled in October.
+          # Never use pkill -f here: it matches the remote bash -s deployment
+          # command line itself, killing the deploy before docker compose up.
+          echo "Mindbody bulk exporter stays disabled (no API export launched)."
 
           SMTP_PASSWORD="$(printf '%s' "$SMTP_PASS_B64" | base64 -d)"
           MINDBODY_API_KEY_VALUE="$(printf '%s' "$MINDBODY_API_KEY_B64" | base64 -d)"
@@ -135,6 +137,16 @@ jobs:
           mkdir -p /var/backups/classypilates
           chmod 700 /var/backups/classypilates
           docker compose up -d --build --remove-orphans
+
+          # Refuse to report a successful deployment while the old API image is
+          # still running. This verification does not contact Mindbody.
+          docker compose exec -T api python - <<'PY'
+          import mindbody_sync as mb
+          import mindbody_paid_recovery
+          assert not mb.BACKGROUND_SYNC_ENABLED, "Unexpected bulk Mindbody sync enabled"
+          assert '"VisitIds": [int(visit_id)]' in open('/app/mindbody_sync.py').read(), "Old Mindbody checkout implementation"
+          print("New API image verified; bulk Mindbody polling disabled.")
+          PY
 
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then break; fi
