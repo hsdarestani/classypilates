@@ -64,6 +64,9 @@ jobs:
           UPLOAD_DIR: /tmp/classy-payment-reconciliation-uploads
         run: python server/mindbody_payment_reconciliation_guard.py
 
+      - name: Bounded paid Mindbody recovery regression guard
+        run: python server/mindbody_paid_recovery_guard.py
+
       - name: Production domain guard
         run: |
           grep -q 'new.classypilates.de' .github/workflows/deploy-production.yml
