@@ -50,7 +50,7 @@ assert "refund_hour_minutes(booking, db)" in source_of("_hold_booking_background
 assert "refund_hour_minutes(booking, db)" in source_of("delete_class_v2")
 assert '"hour_pass"' in core and "refund_hour_minutes(booking, db)" in core
 assert "active_hour_minutes(user.email, db)" in core
-assert "useCredit:wizard.payment==='hour_pass'||wizard.payment==='class_credit'" in booking
+assert "useCredit:wizard.payment===\'class_pack50\'||wizard.payment===\'hour_pass\'||wizard.payment===\'class_credit\'" in booking
 class_pack = source_of("reserve_class_pack_credit")
 for marker in ("with_for_update()", "p.used_classes", "ClassPack.expires_at > class_start"):
     assert marker.replace("p.used_classes", "row.used_classes") in class_pack, marker
