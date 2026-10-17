@@ -14,6 +14,7 @@ COPY import_mindbody_schedule.py .
 COPY mindbody_api.py .
 COPY mindbody_availability.py .
 COPY mindbody_sync.py .
+COPY mindbody_paid_recovery.py .
 COPY mindbody_webhooks.py .
 COPY mindbody_audit.py .
 COPY mindbody_emergency_backup.py .

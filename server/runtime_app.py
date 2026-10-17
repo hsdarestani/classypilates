@@ -679,3 +679,8 @@ def capabilities():
         'mindbody_mirror': mindbody_sync.capability_status(),
         'mindbody_webhook': mindbody_webhooks.webhook_status(),
     }
+
+# Reconcile only confirmed SumUp-paid orders which are still unresolved in
+# Mindbody. Runs entirely from local SQL when idle and never restarts bulk sync.
+from mindbody_paid_recovery import start_worker as _start_paid_sale_recovery
+app.add_event_handler("startup", _start_paid_sale_recovery)

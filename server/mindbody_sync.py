@@ -1643,7 +1643,7 @@ def repair_paid_booking_duplicate_visits(
         )
     return {
         "removed": len(removed_ids),
-        "status": "repaired" if removed_ids else "already_clean",
+        "status": "incomplete" if len(removed_ids) != len(unpaid) else ("repaired" if removed_ids else "already_clean"),
         "visit_id": canonical_id,
     }
 
@@ -1792,7 +1792,7 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             # Another worker already owns the provider write. Stale claims are
             # recovered by retry_pending only after a timeout and a provider read.
             return False
-        if order.mindbody_sale_status not in {"pending", "failed"}:
+        if order.mindbody_sale_status not in {"", "pending", "failed"}:
             return False
         if order.status != "paid":
             return False
@@ -1888,6 +1888,13 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             class_id=snapshot["class_id"],
             client_id=snapshot["client_id"],
         )
+        # CheckoutShoppingCart with ClassIds creates a fresh booking. Never
+        # create one if the original unpaid seat hold disappeared.
+        if not active_visits:
+            _set_mindbody_sale_state(
+                order_id, "manual_review", error="no_active_provider_reservation"
+            )
+            return False
         paid_visits = [
             visit for visit in active_visits
             if _normalized_service_name(visit) == "1 class"
@@ -1899,7 +1906,12 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
                 "synced",
                 service_id=current_service_id,
             )
-            repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
+            cleaned = repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
+            if cleaned.get("status") not in {"already_clean", "repaired"}:
+                _set_mindbody_sale_state(
+                    order_id, "manual_review", error="duplicate_visit_cleanup_incomplete"
+                )
+                return False
             return True
         if len(paid_visits) > 1:
             _set_mindbody_sale_state(
@@ -1976,16 +1988,24 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             )
             or ""
         )
+        # The API can create a separate paid visit beside the original unpaid
+        # hold. Never report reconciliation as complete while a duplicate stays.
+        cleanup = repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
+        if cleanup.get("status") not in {"repaired", "already_clean"}:
+            _set_mindbody_sale_state(
+                order_id,
+                "manual_review",
+                sale_id=sale_id,
+                service_id=service_id,
+                error="duplicate_visit_cleanup_incomplete",
+            )
+            return False
         _set_mindbody_sale_state(
             order_id,
             "synced",
             sale_id=sale_id,
             service_id=service_id,
         )
-        # Mindbody's current CheckoutShoppingCart behavior creates the paid class
-        # visit as part of the sale. Remove only the older unpaid hold VisitId so
-        # one customer consumes exactly one class spot.
-        repair_paid_booking_duplicate_visits(snapshot["booking_id"], client=client)
         return True
     except Exception as exc:
         _set_mindbody_sale_state(
