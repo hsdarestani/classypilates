@@ -32,7 +32,7 @@ jobs:
           from sqlalchemy import select
           from datetime import datetime
           import main as core
-          from mindbody_sync import WriteClient, _resolve_location, _value, _service_price_cents, _pick_single_class_service
+          from mindbody_sync import WriteClient, _resolve_location, _value, _service_price_cents, _pick_single_class_service, _extract_list
           with core.SessionLocal() as db:
               matches = list(db.scalars(select(core.ClassSession).join(core.Booking, core.Booking.class_id == core.ClassSession.id).where(
                   core.ClassSession.mindbody_class_id.is_not(None),
@@ -49,6 +49,39 @@ jobs:
           location_id = str(_value(location, 'Id', 'ID', 'LocationId', default=''))
           services = client.get_sale_services_for_class(class_id, location_id)
           print('provider_service_count=', len(services), 'class_location_resolved=', bool(location_id))
+          print('class_filtered_services=', [
+              {
+                  'name': str(_value(row, 'Name', 'name', default=''))[:70],
+                  'type': str(_value(row, 'Type', 'type', default=''))[:25],
+                  'count': _value(row, 'Count', 'count', default=None),
+                  'price': _service_price_cents(row),
+              } for row in services
+          ])
+          unfiltered = client._authorized_get('sale/services', {
+              'request.sellOnline': True,
+              'request.includeDiscontinued': False,
+              'request.limit': 200,
+              'request.offset': 0,
+          })
+          global_services = [x for x in _extract_list(unfiltered, ('Services','services','Items')) if isinstance(x, dict)]
+          print('global_services_count=', len(global_services))
+          print('global_single_class_candidates=', [
+              {'name': str(_value(row, 'Name', 'name', default=''))[:70],
+               'type': str(_value(row, 'Type', 'type', default=''))[:25],
+               'count': _value(row, 'Count', 'count', default=None),
+               'online_price': _value(row, 'OnlinePrice', 'onlinePrice', default=None),
+               'price': _value(row, 'Price', 'price', default=None),
+               'price_cents': _service_price_cents(row),
+               'id': str(_value(row, 'Id', 'ID', default=''))}
+              for row in global_services if
+              'class' in str(_value(row, 'Name', 'name', default='')).casefold()
+              or _service_price_cents(row) == 2800
+          ][:30])
+          try:
+              alt = _pick_single_class_service(global_services, amount_cents=2800)
+              print('global_picker_match=', str(_value(alt, 'Id', 'ID', default='')))
+          except Exception as exc:
+              print('global_picker_failure=', type(exc).__name__, str(exc)[:140])
           print('provider_service_sample=', [
               {
                   'name': str(_value(row, 'Name', 'name', default=''))[:70],
