@@ -115,6 +115,14 @@ assert 'order.mindbody_sale_status == "synced"' in SOURCE
 assert '"ClassIds": [int(class_id)]' not in checkout, "Do not generate a second visit for a paid seat"
 assert '"existing_visit_id_mismatch"' in SOURCE
 assert '"existing_visit_payment_not_confirmed"' in SOURCE
+assert '"pricing_option_not_enabled_for_class"' in SOURCE
+assert 'Do NOT fall back to a global item' in SOURCE
+assert 'class_services = client.get_sale_services_for_class(' in SOURCE
+# Mindbody can reject an otherwise valid global pricing option for a class.
+# Such a mismatch must require staff correction rather than a fabricated sale.
+main_source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+assert '"mindbody_payment_attention"' in main_source
+assert 'PaymentOrder.provider_payment_id.is_not(None)' in main_source
 
 # The runtime composes two retry wrappers. They must capture different base
 # functions; reusing one global capture name previously made the mirror recurse

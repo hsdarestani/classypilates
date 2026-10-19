@@ -1268,7 +1268,45 @@ def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Dep
     paid_cents = 0 if coach_scope else (db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0)
     pass_cents = 0 if coach_scope else (db.scalar(select(func.coalesce(func.sum(ClassPassSale.amount_cents), 0))) or 0)
     today_bookings = db.scalar(select(func.count(Booking.id)).where(*today_filters)) or 0
+    # Expose only confirmed paid SumUp reservations that Mindbody has not yet
+    # reconciled, and only to authorized finance staff. Never mark them paid
+    # on the provider by changing a local flag.
+    mindbody_payment_attention = []
+    if not coach_scope and can(user, "finance.view"):
+        unresolved = db.execute(
+            select(PaymentOrder, Booking, ClassSession)
+            .join(Booking, Booking.reference == PaymentOrder.booking_reference)
+            .join(ClassSession, ClassSession.id == Booking.class_id)
+            .where(
+                PaymentOrder.status == "paid",
+                PaymentOrder.provider == "sumup",
+                PaymentOrder.provider_payment_id.is_not(None),
+                PaymentOrder.mindbody_sale_status.in_(
+                    ["failed", "pending", "syncing", "manual_review"]
+                ),
+                Booking.payment_status == "paid",
+                Booking.payment_method == "sumup",
+                Booking.status == "reserved",
+                ClassSession.starts_at >= now - timedelta(days=1),
+            )
+            .order_by(ClassSession.starts_at.asc(), PaymentOrder.id.asc())
+            .limit(40)
+        ).all()
+        for order, booking, klass in unresolved:
+            error = str(order.mindbody_sale_error or "")
+            needs_pricing = (
+                "mindbody_single_class_service_ambiguous:0" in error
+                or "pricing_option_not_enabled_for_class" in error
+                or "No provided services can pay for the given visits" in error
+            )
+            mindbody_payment_attention.append({
+                "customer_name": booking.customer_name,
+                "starts_at": klass.starts_at.isoformat(),
+                "status": "pricing_setup" if needs_pricing else "reconciliation_pending",
+                "sumup_paid": True,
+            })
     return {
+        "mindbody_payment_attention": mindbody_payment_attention,
         "upcoming_classes": class_count, "active_bookings": booking_count,
         "imported_bookings": int(imported_booking_count), "live_bookings": int(live_booking_count),
         "coaches": int(coach_count), "revenue_cents": int(paid_cents) + int(pass_cents), "today_bookings": today_bookings,
