@@ -1963,10 +1963,32 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
         if not location_id:
             raise MindbodyError("mindbody_location_mapping_failed")
 
-        service = _pick_single_class_service(
-            client.get_sale_services_for_class(snapshot["class_id"], location_id),
-            amount_cents=snapshot["amount_cents"],
+        # Only pricing options actually permitted for this class may settle a
+        # paid external reservation. The global 28 EUR "1 Class" catalog item
+        # can exist while Mindbody forbids it for a particular class program.
+        # Do NOT fall back to a global item: CheckoutShoppingCart Test=true
+        # rejects it ("No provided services can pay for the given visits").
+        class_services = client.get_sale_services_for_class(
+            snapshot["class_id"], location_id
         )
+        try:
+            service = _pick_single_class_service(
+                class_services, amount_cents=snapshot["amount_cents"]
+            )
+        except MindbodyError as exc:
+            if str(exc) == "mindbody_single_class_service_ambiguous:0":
+                _set_mindbody_sale_state(
+                    order_id,
+                    "manual_review",
+                    error="pricing_option_not_enabled_for_class",
+                )
+                print(
+                    f"Mindbody paid booking requires pricing setup: "
+                    f"order_id={order_id} class_id={snapshot['class_id']}",
+                    flush=True,
+                )
+                return False
+            raise
         service_id = str(_value(service, "Id", "ID", "ProductId", default="") or "").strip()
         if not service_id:
             raise MindbodyError("mindbody_single_class_service_missing_id")
