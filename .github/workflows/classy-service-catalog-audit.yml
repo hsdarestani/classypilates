@@ -30,13 +30,15 @@ jobs:
           cd /opt/classypilates
           docker compose exec -T api python - <<'PY'
           from sqlalchemy import select
+          from datetime import datetime
           import main as core
           from mindbody_sync import WriteClient, _resolve_location, _value, _service_price_cents, _pick_single_class_service
           with core.SessionLocal() as db:
-              matches = list(db.scalars(select(core.ClassSession).where(
+              matches = list(db.scalars(select(core.ClassSession).join(core.Booking, core.Booking.class_id == core.ClassSession.id).where(
                   core.ClassSession.mindbody_class_id.is_not(None),
-                  core.ClassSession.starts_at >= '2026-10-20T16:20:00+00:00',
-                  core.ClassSession.starts_at < '2026-10-20T17:10:00+00:00',
+                  core.Booking.customer_name.ilike('%Olga%'),
+                  core.ClassSession.starts_at >= datetime.fromisoformat('2026-10-20T16:20:00+00:00'),
+                  core.ClassSession.starts_at < datetime.fromisoformat('2026-10-20T17:10:00+00:00'),
               )))
               assert 0 < len(matches) < 20, f'unexpected_target_class_count={len(matches)}'
               target = matches[0]
