@@ -82,5 +82,49 @@ jobs:
           FROM mindbody_paid_sale_recovery
           WHERE last_attempt_at >= date_trunc('day', now());
           SQL
+          echo '=== ROOT CAUSE PRICE AND SERVICE DETAILS (LOCAL ONLY) ==='
+          docker compose exec -T db sh -lc 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT concat_ws(' | ',
+            'customer=' || CASE WHEN lower(b.customer_name) LIKE '%olga%' THEN 'Olga' ELSE 'Arisa' END,
+            'class_date=' || to_char(c.starts_at AT TIME ZONE 'Europe/Berlin','YYYY-MM-DD HH24:MI'),
+            'booking_amount_cents=' || coalesce(b.amount_cents::text,'none'),
+            'order_amount_cents=' || coalesce(po.amount_cents::text,'none'),
+            'service_id_stored=' || (nullif(po.mindbody_service_id,'') IS NOT NULL),
+            'error=' || CASE
+              WHEN lower(po.mindbody_sale_error) LIKE '%mindbody_single_class_service_ambiguous:0%' THEN 'no_matching_1_class_service'
+              WHEN lower(po.mindbody_sale_error) LIKE '%mindbody_single_class_service_ambiguous:%' THEN 'ambiguous_service'
+              WHEN lower(po.mindbody_sale_error) LIKE '%mindbody_location_mapping_failed%' THEN 'location_mapping_failed'
+              WHEN lower(po.mindbody_sale_error) LIKE '%mindbody_single_class_service_missing_id%' THEN 'missing_service_id'
+              WHEN lower(po.mindbody_sale_error) LIKE '%price%' THEN 'price'
+              WHEN lower(po.mindbody_sale_error) LIKE '%service%' THEN 'other_service'
+              ELSE 'other' END
+          )
+          FROM bookings b
+          JOIN classes c ON c.id=b.class_id
+          JOIN payment_orders po ON po.booking_reference=b.reference
+          WHERE (
+            (lower(b.customer_name) LIKE '%olga%' AND lower(b.customer_name) LIKE '%koehlich%')
+            OR (lower(b.customer_name) LIKE '%arisa%' AND lower(b.customer_name) LIKE '%shiba%')
+          )
+          AND c.starts_at AT TIME ZONE 'Europe/Berlin' >= '2026-10-18'
+          AND c.starts_at AT TIME ZONE 'Europe/Berlin' < '2026-10-24'
+          ORDER BY po.created_at DESC LIMIT 5;
+          SELECT concat_ws(' | ',
+            'amount_cents=' || po.amount_cents::text,
+            'orders=' || count(*),
+            'error_kind=' || CASE
+              WHEN lower(po.mindbody_sale_error) LIKE '%mindbody_single_class_service_ambiguous:0%' THEN 'no_match'
+              WHEN lower(po.mindbody_sale_error) LIKE '%service%' THEN 'service'
+              WHEN lower(po.mindbody_sale_error) LIKE '%location%' THEN 'location'
+              ELSE 'other' END
+          )
+          FROM payment_orders po JOIN bookings b ON b.reference=po.booking_reference
+          WHERE po.status='paid' AND po.provider='sumup' AND po.mindbody_sale_status IN ('','pending','failed')
+          GROUP BY po.amount_cents,
+            CASE WHEN lower(po.mindbody_sale_error) LIKE '%mindbody_single_class_service_ambiguous:0%' THEN 'no_match'
+                 WHEN lower(po.mindbody_sale_error) LIKE '%service%' THEN 'service'
+                 WHEN lower(po.mindbody_sale_error) LIKE '%location%' THEN 'location'
+                 ELSE 'other' END;
+          SQL
           echo '=== END READ ONLY ==='
           REMOTE
