@@ -1,5 +1,7 @@
 import os
 import threading
+from fastapi import Depends
+import mindbody_usage
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -570,7 +572,7 @@ mindbody_sync.sync_from_mindbody = _sync_from_mindbody_hardened
 
 _roster_worker_started = False
 _roster_worker_guard = threading.Lock()
-ROSTER_SYNC_INTERVAL = max(900, int(os.getenv("MINDBODY_ROSTER_SYNC_INTERVAL_SECONDS", "3600")))
+ROSTER_SYNC_INTERVAL = max(21600, int(os.getenv("MINDBODY_ROSTER_SYNC_INTERVAL_SECONDS", "86400")))
 ROSTER_INITIAL_DELAY = max(0, int(os.getenv("MINDBODY_ROSTER_INITIAL_DELAY_SECONDS", "0")))
 ROSTER_WINDOW_DAYS = max(1, min(14, int(os.getenv("MINDBODY_ROSTER_WINDOW_DAYS", "7"))))
 
@@ -585,26 +587,38 @@ def _roster_loop() -> None:
     while True:
         acquired = False
         try:
-            full_maintenance = cycle == 0 or cycle % 24 == 0
-            days = ROSTER_WINDOW_DAYS if full_maintenance else 1
+            # One post-class pass per day; broad future roster checks once a week.
+            # Bookings/attendance changes arrive in real time via webhooks.
+            full_maintenance = cycle == 0 or cycle % 7 == 0
             acquired = mindbody_sync.RECONCILE_LOCK.acquire(timeout=30)
             if not acquired:
                 print("Mindbody roster sweep skipped: reconciliation lock busy", flush=True)
             else:
-                result = mindbody_sync.sync_rosters_window(days=days)
-                lifecycle = mindbody_sync.sync_cancelled_classes_window(days=45)
+                completed = mindbody_sync.sync_recent_completed_rosters(lookback_hours=30)
+                future = (
+                    mindbody_sync.sync_rosters_window(days=ROSTER_WINDOW_DAYS)
+                    if full_maintenance else {}
+                )
+                lifecycle = (
+                    mindbody_sync.sync_cancelled_classes_window(days=45)
+                    if full_maintenance else {}
+                )
                 staff = mindbody_sync.sync_staff_and_assignments() if full_maintenance else {}
                 print(
-                    f"Mindbody roster sweep: days={days} classes={result.get('classes_checked', 0)} "
-                    f"visits={result.get('visits', 0)} errors={result.get('errors', 0)} "
-                    f"cancelled_seen={lifecycle.get('cancelled_seen', 0)} "
+                    f"Mindbody roster sweep: completed={completed.get('classes_checked', 0)} "
+                    f"future={future.get('classes_checked', 0)} "
+                    f"completed_errors={completed.get('errors', 0)} "
+                    f"future_errors={future.get('errors', 0)} "
                     f"cancelled_updated={lifecycle.get('cancelled_local_updated', 0)} "
                     f"staff_maintenance={bool(full_maintenance)} "
                     f"staff_errors={staff.get('staff_errors', 0)}",
                     flush=True,
                 )
-                if result.get("errors"):
-                    print(f"Mindbody roster sweep completed with errors: {result}", flush=True)
+                if completed.get("errors") or future.get("errors"):
+                    print(
+                        f"Mindbody roster sweep completed with errors: "
+                        f"completed={completed} future={future}", flush=True
+                    )
         except Exception as exc:
             print(f"Mindbody roster cycle failed: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
         finally:
@@ -685,6 +699,13 @@ def capabilities():
         'mindbody_mirror': mindbody_sync.capability_status(),
         'mindbody_webhook': mindbody_webhooks.webhook_status(),
     }
+
+# Restrict operational API metrics to authorized booking staff. This is a
+# process-local diagnostic, not a substitute for Mindbody partner billing data.
+@app.get("/api/staff/mindbody/api-usage")
+def mindbody_api_usage(user: core.User = Depends(core.require("bookings.view"))):
+    return mindbody_usage.snapshot()
+
 
 # Reconcile only confirmed SumUp-paid orders which are still unresolved in
 # Mindbody. Runs entirely from local SQL when idle and never restarts bulk sync.

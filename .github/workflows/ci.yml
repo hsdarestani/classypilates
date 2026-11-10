@@ -43,6 +43,9 @@ jobs:
           ElementTree.parse(public / "sitemap.xml")
           PY
 
+      - name: Mindbody API low-call regression guard
+        run: python server/mindbody_api_budget_guard.py
+
       - name: Mindbody availability regression guard
         env:
           DATABASE_URL: sqlite:////tmp/classy-availability-guard.db

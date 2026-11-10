@@ -20,13 +20,16 @@ from sqlalchemy.orm import Session, joinedload
 
 import main as core
 from mindbody_api import MindbodyClient, MindbodyConfig, MindbodyError, _extract_list
+from mindbody_usage import record_call
 
 SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 # Cost guard: keep direct booking/cancellation writes and webhook handling enabled,
 # but disable recurring bulk polling unless it is explicitly opted back in.
 BACKGROUND_SYNC_ENABLED = os.getenv("MINDBODY_BACKGROUND_SYNC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
-SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
+SYNC_INTERVAL = max(900, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "28800")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
+# Token caching reduces UserToken/Issue calls; the 401 retry below handles expiry.
+STAFF_TOKEN_CACHE_TTL_SECONDS = max(600, int(os.getenv("MINDBODY_STAFF_TOKEN_CACHE_TTL_SECONDS", "3600")))
 # Mindbody's standard "Other" payment method is exposed to CheckoutShoppingCart
 # as Custom payment metadata ID 9. It was validated against the live Classy site
 # with Test=true before enabling the production write path.
@@ -204,6 +207,7 @@ class WriteClient(MindbodyClient):
                 method="POST",
             )
             try:
+                record_call("POST", path)
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     return json.loads(response.read().decode() or "{}")
             except urllib.error.HTTPError as exc:
@@ -222,7 +226,7 @@ class WriteClient(MindbodyClient):
                 if (
                     authenticated
                     and attempt == 0
-                    and "invalid user token" in message.casefold()
+                    and (exc.code == 401 or "invalid user token" in message.casefold())
                 ):
                     self._invalidate_token()
                     self.issue_token()
@@ -246,7 +250,7 @@ class WriteClient(MindbodyClient):
                 raise MindbodyError("Mindbody did not return a staff token", code="missing_token")
             self.access_token = token
             self.__class__._token_cache = token
-            self.__class__._token_expires_at = now + 600
+            self.__class__._token_expires_at = now + STAFF_TOKEN_CACHE_TTL_SECONDS
             return self.access_token
 
     def get_class_visits(self, class_id: str) -> dict[str, Any]:
@@ -395,6 +399,7 @@ class WriteClient(MindbodyClient):
             },
         )
         try:
+            record_call("GET", path)
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode() or "{}")
         except urllib.error.HTTPError as exc:
@@ -418,6 +423,7 @@ class WriteClient(MindbodyClient):
                 },
             )
             try:
+                record_call("GET", path)
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     return json.loads(response.read().decode() or "{}")
             except urllib.error.HTTPError as exc:
@@ -428,7 +434,7 @@ class WriteClient(MindbodyClient):
                     message = str(error.get("Message") or error.get("Code") or detail)
                 except Exception:
                     pass
-                if attempt == 0 and "invalid user token" in message.casefold():
+                if attempt == 0 and (exc.code == 401 or "invalid user token" in message.casefold()):
                     self._invalidate_token()
                     self.issue_token()
                     continue
@@ -515,6 +521,7 @@ class WriteClient(MindbodyClient):
             },
         )
         try:
+            record_call("POST", "class/removefromwaitlist")
             with urllib.request.urlopen(request, timeout=self.timeout):
                 return
         except urllib.error.HTTPError as exc:
@@ -536,12 +543,14 @@ class WriteClient(MindbodyClient):
         parts = display_name.strip().split(None, 1)
         first_name = parts[0] if parts else "Classy"
         last_name = parts[1] if len(parts) > 1 else first_name
-        return self._write("staff/addstaff", {
+        result = self._write("staff/addstaff", {
             "FirstName": first_name,
             "LastName": last_name,
             "Bio": bio or "",
             "ClassTeacher": True,
         })
+        _invalidate_remote_staff_cache()
+        return result
 
     def update_staff(self, staff_id: str, *, display_name: str, bio: str, active: bool) -> dict[str, Any]:
         parts = display_name.strip().split(None, 1)
@@ -554,7 +563,9 @@ class WriteClient(MindbodyClient):
         if parts:
             payload["FirstName"] = parts[0]
             payload["LastName"] = parts[1] if len(parts) > 1 else parts[0]
-        return self._write("staff/updatestaff", payload)
+        result = self._write("staff/updatestaff", payload)
+        _invalidate_remote_staff_cache()
+        return result
 
     def substitute_class_teacher(self, class_id: str, staff_id: str) -> dict[str, Any]:
         return self._write("class/substituteclassteacher", {
@@ -2287,17 +2298,62 @@ def _staff_result_id(result: dict[str, Any]) -> str:
     return _remote_staff_id(row) or str(result.get("StaffId") or result.get("staffId") or "")
 
 
-def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    offset = 0
-    while True:
-        payload = client.get_staff(limit=200, offset=offset)
-        batch = [x for x in _extract_list(payload, ("StaffMembers", "staffMembers", "Staff", "staff", "Items")) if isinstance(x, dict)]
-        rows.extend(batch)
-        if len(batch) < 200:
-            break
-        offset += len(batch)
-    return rows
+# Cache the slow-changing Mindbody staff directory per process. New class
+# assignments that reference unknown staff IDs force an immediate refresh.
+_STAFF_CACHE_GUARD = threading.RLock()
+_STAFF_CACHE_ROWS: list[dict[str, Any]] | None = None
+_STAFF_CACHE_EXPIRES_AT = 0.0
+_STAFF_CACHE_TTL_SECONDS = max(60, int(os.getenv("MINDBODY_STAFF_CACHE_TTL_SECONDS", "86400")))
+
+
+def _invalidate_remote_staff_cache() -> None:
+    global _STAFF_CACHE_ROWS, _STAFF_CACHE_EXPIRES_AT
+    with _STAFF_CACHE_GUARD:
+        _STAFF_CACHE_ROWS = None
+        _STAFF_CACHE_EXPIRES_AT = 0.0
+
+
+def _load_remote_staff(
+    client: WriteClient,
+    *,
+    required_remote_ids: set[str] | None = None,
+    force_refresh: bool = False,
+) -> list[dict[str, Any]]:
+    import copy
+
+    global _STAFF_CACHE_ROWS, _STAFF_CACHE_EXPIRES_AT
+    with _STAFF_CACHE_GUARD:
+        cached = _STAFF_CACHE_ROWS
+        if (
+            not force_refresh
+            and cached is not None
+            and time.monotonic() < _STAFF_CACHE_EXPIRES_AT
+            and (
+                not required_remote_ids
+                or required_remote_ids.issubset(
+                    {_remote_staff_id(row) for row in cached}
+                )
+            )
+        ):
+            return copy.deepcopy(cached)
+
+        # Serialize pagination: simultaneous webhooks must not each reload staff.
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            payload = client.get_staff(limit=200, offset=offset)
+            batch = [
+                x for x in _extract_list(
+                    payload, ("StaffMembers", "staffMembers", "Staff", "staff", "Items")
+                ) if isinstance(x, dict)
+            ]
+            rows.extend(batch)
+            if len(batch) < 200:
+                break
+            offset += len(batch)
+        _STAFF_CACHE_ROWS = copy.deepcopy(rows)
+        _STAFF_CACHE_EXPIRES_AT = time.monotonic() + _STAFF_CACHE_TTL_SECONDS
+        return rows
 
 
 def _canonical_coach_name(value: str) -> str:
@@ -2637,7 +2693,7 @@ def _sync_staff_profiles(
         "staff_unscheduled_status_updated": 0,
         "staff_remote_aliases_deactivated": 0,
     }
-    all_remote_rows = _load_remote_staff(client)
+    all_remote_rows = _load_remote_staff(client, required_remote_ids=allowed_remote_ids)
     remote_rows = all_remote_rows
 
     # Historical alias cleanup is maintenance, not synchronization. Routine sync
@@ -3715,6 +3771,47 @@ def reconcile_remote_class(
             "waitlist_created": int(wait_counts.get("created", 0)),
             "waitlist_removed": int(wait_counts.get("removed", 0)),
         }
+
+
+def sync_recent_completed_rosters(*, lookback_hours: int = 30, limit: int = 150) -> dict[str, int]:
+    """Reconcile recently finished rosters without polling every future class.
+
+    Webhooks keep active rosters current. This safety net reads local class IDs,
+    avoiding GetClasses; a three-hour buffer excludes in-progress classes.
+    """
+    client = WriteClient.from_env()
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=max(24, min(72, int(lookback_hours))))
+    completed_before = now - timedelta(hours=3)
+    with core.SessionLocal() as db:
+        candidates = db.execute(
+            select(core.ClassSession.id, core.ClassSession.mindbody_class_id)
+            .where(
+                core.ClassSession.mindbody_class_id.is_not(None),
+                core.ClassSession.status == "active",
+                core.ClassSession.starts_at >= since,
+                core.ClassSession.starts_at < completed_before,
+            )
+            .order_by(core.ClassSession.starts_at.desc())
+            .limit(max(1, min(500, int(limit))))
+        ).all()
+
+    result = {"classes_checked": 0, "visits": 0, "created": 0,
+              "cancelled": 0, "unresolved": 0, "errors": 0}
+    for class_id, remote_id in candidates:
+        with core.SessionLocal() as db:
+            klass = db.get(core.ClassSession, class_id)
+            if not klass or not klass.mindbody_class_id:
+                continue
+            try:
+                counts = _reconcile_class_roster(client, db, klass, str(remote_id), now)
+                result["classes_checked"] += 1
+                for key in ("visits", "created", "cancelled", "unresolved"):
+                    result[key] += counts.get(key, 0)
+            except Exception:
+                db.rollback()
+                result["errors"] += 1
+    return result
 
 
 def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
