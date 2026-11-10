@@ -1,0 +1,154 @@
+name: Audit Mindbody pricing and historical paid sales (read-only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-mindbody-pricing-historical.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Run read-only studio pricing and paid-order audit
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=20 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from collections import Counter, defaultdict
+          from datetime import datetime, timedelta, timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+
+          print("MODE: READ-ONLY — no payment, sale, booking or database modifications")
+          now = datetime.now(timezone.utc)
+          studios = ("oval", "bornheim", "sachsen", "bhf1", "ladies", "mid")
+          with core.SessionLocal() as db:
+              classes = db.execute(
+                  select(core.ClassSession.id, core.ClassSession.studio_id,
+                         core.ClassSession.title, core.ClassSession.mindbody_class_id)
+                  .where(
+                      core.ClassSession.studio_id.in_(studios),
+                      core.ClassSession.mindbody_class_id.is_not(None),
+                      core.ClassSession.starts_at >= now - timedelta(hours=12),
+                      core.ClassSession.starts_at < now + timedelta(days=8),
+                      core.ClassSession.status == "active",
+                  ).order_by(core.ClassSession.starts_at.asc())
+              ).all()
+              # Provider-paid SumUp proof, without exposing customer PII in CI.
+              paid = db.execute(
+                  select(core.PaymentOrder.id, core.PaymentOrder.status,
+                         core.PaymentOrder.mindbody_sale_status,
+                         core.PaymentOrder.mindbody_sale_error,
+                         core.PaymentOrder.mindbody_sale_id,
+                         core.Booking.source, core.Booking.status,
+                         core.Booking.payment_status, core.Booking.payment_method,
+                         core.Booking.mindbody_sync_status,
+                         core.Booking.mindbody_client_id,
+                         core.Booking.mindbody_visit_id,
+                         core.Booking.amount_cents, core.Booking.customer_name,
+                         core.ClassSession.studio_id,
+                         core.ClassSession.mindbody_class_id,
+                         core.ClassSession.starts_at)
+                  .join(core.Booking, core.Booking.reference == core.PaymentOrder.booking_reference)
+                  .join(core.ClassSession, core.ClassSession.id == core.Booking.class_id)
+                  .where(core.PaymentOrder.provider == "sumup",
+                         core.PaymentOrder.provider_payment_id.is_not(None),
+                         core.PaymentOrder.status == "paid")
+                  .order_by(core.PaymentOrder.id.desc())
+              ).all()
+
+          choices = defaultdict(list)
+          for row in classes:
+              if len(choices[row.studio_id]) < 3:
+                  choices[row.studio_id].append(row)
+
+          client = mb.WriteClient.from_env(timeout=20.0)
+          for studio in studios:
+              rows = choices.get(studio, [])
+              print(f"STUDIO {studio}: upcoming_samples={len(rows)}")
+              for row in rows:
+                  try:
+                      loc = mb._resolve_location(client, row.studio_id, row.title)
+                      locid = str(mb._value(loc, "Id", "ID", "LocationId", default="") or "")
+                      if not locid:
+                          print(f"  class={row.mindbody_class_id} RESULT=NO_LOCATION")
+                          continue
+                      services = client.get_sale_services_for_class(
+                          str(row.mindbody_class_id), locid
+                      )
+                      allowed = sorted(
+                          {str(mb._value(s, "Id", "ID", "ProductId", default="") or "")
+                           for s in services
+                           if str(mb._value(s, "Name", "name", default="")).strip() == "1 Class"
+                           and mb._service_price_cents(s) == 2800
+                           and int(mb._value(s, "Count", "count", default=0) or 0) == 1}
+                      )
+                      try:
+                          selected = mb._pick_single_class_service(services, amount_cents=2800)
+                          chosen = str(mb._value(selected, "Id", "ID", default="") or "")
+                          print(f"  class={row.mindbody_class_id} RESULT=PASS selected={chosen} eligible={allowed}")
+                      except Exception as exc:
+                          print(f"  class={row.mindbody_class_id} RESULT=FAIL eligible={allowed} reason={type(exc).__name__}:{str(exc)[:100]}")
+                  except Exception as exc:
+                      print(f"  class={row.mindbody_class_id} RESULT=API_ERROR reason={type(exc).__name__}:{str(exc)[:110]}")
+
+          grouped = Counter()
+          reasons = Counter()
+          manual = Counter()
+          recoverable = Counter()
+          birgit = []
+          for (order_id, paid_status, sale_status, sale_error, sale_id,
+               source, booking_status, payment_status, payment_method,
+               sync_status, cid, vid, amount_cents, customer_name,
+               studio_id, class_id, start_at) in paid:
+              state = str(sale_status or "empty")
+              grouped[(studio_id, state)] += 1
+              if state != "synced":
+                  if "pricing_option" in str(sale_error or "") or "No provided services" in str(sale_error or ""):
+                      reason = "pricing_missing"
+                  elif "visit" in str(sale_error or ""):
+                      reason = "visit"
+                  elif str(sale_error or ""):
+                      reason = "other_error"
+                  else:
+                      reason = "no_error"
+                  reasons[(studio_id, reason)] += 1
+                  safe = bool(source == "website" and booking_status == "reserved"
+                              and payment_status == "paid" and payment_method == "sumup"
+                              and cid and vid and class_id and (amount_cents or 0) == 2800
+                              and sync_status == "synced" and not sale_id
+                              and state in {"pending","failed","manual_review","empty"})
+                  recoverable[(studio_id, "candidate" if safe else "needs_manual_check")] += 1
+                  if safe: manual[(studio_id, state)] += 1
+              if str(customer_name or "").casefold().strip() == "birgit entinger":
+                  birgit.append({
+                      "order_id": order_id, "studio": studio_id,
+                      "sale_status": state, "error_category": ("pricing" if "pricing" in str(sale_error or "") else "other"),
+                      "provider_order_paid": paid_status == "paid",
+                      "booking_paid": payment_status == "paid",
+                      "booking_reserved": booking_status == "reserved",
+                      "linked_client": bool(cid), "linked_visit": bool(vid),
+                      "class_linked": bool(class_id),
+                  })
+
+          print("SUMUP_CONFIRMED_ORDERS_TOTAL", len(paid))
+          for (studio, state), count in sorted(grouped.items()):
+              print(f"PAID_ORDER_SUMMARY studio={studio} sale_status={state} count={count}")
+          for (studio, reason), count in sorted(reasons.items()):
+              print(f"UNRESOLVED_REASON studio={studio} category={reason} count={count}")
+          for (studio, state), count in sorted(manual.items()):
+              print(f"RECONCILIATION_CANDIDATE studio={studio} state={state} count={count}")
+          for (studio, state), count in sorted(recoverable.items()):
+              print(f"RECOVERY_SCREENING studio={studio} category={state} count={count}")
+          print("BIRGIT_SUMUP_ORDER_RECORDS", birgit)
+          print("READ_ONLY_AUDIT_COMPLETE")
+          PY
