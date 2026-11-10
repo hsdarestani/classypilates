@@ -538,12 +538,14 @@ class WriteClient(MindbodyClient):
         parts = display_name.strip().split(None, 1)
         first_name = parts[0] if parts else "Classy"
         last_name = parts[1] if len(parts) > 1 else first_name
-        return self._write("staff/addstaff", {
+        result = self._write("staff/addstaff", {
             "FirstName": first_name,
             "LastName": last_name,
             "Bio": bio or "",
             "ClassTeacher": True,
         })
+        _invalidate_remote_staff_cache()
+        return result
 
     def update_staff(self, staff_id: str, *, display_name: str, bio: str, active: bool) -> dict[str, Any]:
         parts = display_name.strip().split(None, 1)
@@ -556,7 +558,9 @@ class WriteClient(MindbodyClient):
         if parts:
             payload["FirstName"] = parts[0]
             payload["LastName"] = parts[1] if len(parts) > 1 else parts[0]
-        return self._write("staff/updatestaff", payload)
+        result = self._write("staff/updatestaff", payload)
+        _invalidate_remote_staff_cache()
+        return result
 
     def substitute_class_teacher(self, class_id: str, staff_id: str) -> dict[str, Any]:
         return self._write("class/substituteclassteacher", {
@@ -2289,17 +2293,62 @@ def _staff_result_id(result: dict[str, Any]) -> str:
     return _remote_staff_id(row) or str(result.get("StaffId") or result.get("staffId") or "")
 
 
-def _load_remote_staff(client: WriteClient) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    offset = 0
-    while True:
-        payload = client.get_staff(limit=200, offset=offset)
-        batch = [x for x in _extract_list(payload, ("StaffMembers", "staffMembers", "Staff", "staff", "Items")) if isinstance(x, dict)]
-        rows.extend(batch)
-        if len(batch) < 200:
-            break
-        offset += len(batch)
-    return rows
+# Cache the slow-changing Mindbody staff directory per process. New class
+# assignments that reference unknown staff IDs force an immediate refresh.
+_STAFF_CACHE_GUARD = threading.RLock()
+_STAFF_CACHE_ROWS: list[dict[str, Any]] | None = None
+_STAFF_CACHE_EXPIRES_AT = 0.0
+_STAFF_CACHE_TTL_SECONDS = max(60, int(os.getenv("MINDBODY_STAFF_CACHE_TTL_SECONDS", "86400")))
+
+
+def _invalidate_remote_staff_cache() -> None:
+    global _STAFF_CACHE_ROWS, _STAFF_CACHE_EXPIRES_AT
+    with _STAFF_CACHE_GUARD:
+        _STAFF_CACHE_ROWS = None
+        _STAFF_CACHE_EXPIRES_AT = 0.0
+
+
+def _load_remote_staff(
+    client: WriteClient,
+    *,
+    required_remote_ids: set[str] | None = None,
+    force_refresh: bool = False,
+) -> list[dict[str, Any]]:
+    import copy
+
+    global _STAFF_CACHE_ROWS, _STAFF_CACHE_EXPIRES_AT
+    with _STAFF_CACHE_GUARD:
+        cached = _STAFF_CACHE_ROWS
+        if (
+            not force_refresh
+            and cached is not None
+            and time.monotonic() < _STAFF_CACHE_EXPIRES_AT
+            and (
+                not required_remote_ids
+                or required_remote_ids.issubset(
+                    {_remote_staff_id(row) for row in cached}
+                )
+            )
+        ):
+            return copy.deepcopy(cached)
+
+        # Serialize pagination: simultaneous webhooks must not each reload staff.
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            payload = client.get_staff(limit=200, offset=offset)
+            batch = [
+                x for x in _extract_list(
+                    payload, ("StaffMembers", "staffMembers", "Staff", "staff", "Items")
+                ) if isinstance(x, dict)
+            ]
+            rows.extend(batch)
+            if len(batch) < 200:
+                break
+            offset += len(batch)
+        _STAFF_CACHE_ROWS = copy.deepcopy(rows)
+        _STAFF_CACHE_EXPIRES_AT = time.monotonic() + _STAFF_CACHE_TTL_SECONDS
+        return rows
 
 
 def _canonical_coach_name(value: str) -> str:
@@ -2639,7 +2688,7 @@ def _sync_staff_profiles(
         "staff_unscheduled_status_updated": 0,
         "staff_remote_aliases_deactivated": 0,
     }
-    all_remote_rows = _load_remote_staff(client)
+    all_remote_rows = _load_remote_staff(client, required_remote_ids=allowed_remote_ids)
     remote_rows = all_remote_rows
 
     # Historical alias cleanup is maintenance, not synchronization. Routine sync
