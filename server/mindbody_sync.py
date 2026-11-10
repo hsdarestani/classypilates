@@ -27,6 +27,8 @@ SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true
 BACKGROUND_SYNC_ENABLED = os.getenv("MINDBODY_BACKGROUND_SYNC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
+# Token caching reduces UserToken/Issue calls; the 401 retry below handles expiry.
+STAFF_TOKEN_CACHE_TTL_SECONDS = max(600, int(os.getenv("MINDBODY_STAFF_TOKEN_CACHE_TTL_SECONDS", "3600")))
 # Mindbody's standard "Other" payment method is exposed to CheckoutShoppingCart
 # as Custom payment metadata ID 9. It was validated against the live Classy site
 # with Test=true before enabling the production write path.
@@ -222,7 +224,7 @@ class WriteClient(MindbodyClient):
                 if (
                     authenticated
                     and attempt == 0
-                    and "invalid user token" in message.casefold()
+                    and (exc.code == 401 or "invalid user token" in message.casefold())
                 ):
                     self._invalidate_token()
                     self.issue_token()
@@ -246,7 +248,7 @@ class WriteClient(MindbodyClient):
                 raise MindbodyError("Mindbody did not return a staff token", code="missing_token")
             self.access_token = token
             self.__class__._token_cache = token
-            self.__class__._token_expires_at = now + 600
+            self.__class__._token_expires_at = now + STAFF_TOKEN_CACHE_TTL_SECONDS
             return self.access_token
 
     def get_class_visits(self, class_id: str) -> dict[str, Any]:
@@ -428,7 +430,7 @@ class WriteClient(MindbodyClient):
                     message = str(error.get("Message") or error.get("Code") or detail)
                 except Exception:
                     pass
-                if attempt == 0 and "invalid user token" in message.casefold():
+                if attempt == 0 and (exc.code == 401 or "invalid user token" in message.casefold()):
                     self._invalidate_token()
                     self.issue_token()
                     continue
