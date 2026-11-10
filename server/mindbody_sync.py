@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import main as core
 from mindbody_api import MindbodyClient, MindbodyConfig, MindbodyError, _extract_list
+from mindbody_usage import record_call
 
 SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 # Cost guard: keep direct booking/cancellation writes and webhook handling enabled,
@@ -206,6 +207,7 @@ class WriteClient(MindbodyClient):
                 method="POST",
             )
             try:
+                record_call("POST", path)
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     return json.loads(response.read().decode() or "{}")
             except urllib.error.HTTPError as exc:
@@ -397,6 +399,7 @@ class WriteClient(MindbodyClient):
             },
         )
         try:
+            record_call("GET", path)
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode() or "{}")
         except urllib.error.HTTPError as exc:
@@ -420,6 +423,7 @@ class WriteClient(MindbodyClient):
                 },
             )
             try:
+                record_call("GET", path)
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     return json.loads(response.read().decode() or "{}")
             except urllib.error.HTTPError as exc:
@@ -517,6 +521,7 @@ class WriteClient(MindbodyClient):
             },
         )
         try:
+            record_call("POST", "class/removefromwaitlist")
             with urllib.request.urlopen(request, timeout=self.timeout):
                 return
         except urllib.error.HTTPError as exc:
