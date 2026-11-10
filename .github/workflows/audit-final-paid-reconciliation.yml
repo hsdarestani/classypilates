@@ -1,0 +1,110 @@
+name: Final Mindbody paid-sale reconciliation audit (read only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-final-paid-reconciliation.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Verify final local payment states and classify exceptions
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=20 -o ServerAliveCountMax=20 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from collections import Counter
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+          print("FINAL_VERIFICATION_MODE READ_ONLY — no transaction writes")
+          with core.SessionLocal() as db:
+              rows = db.execute(
+                  select(
+                      core.PaymentOrder.id,
+                      core.PaymentOrder.mindbody_sale_status,
+                      core.PaymentOrder.mindbody_sale_error,
+                      core.PaymentOrder.mindbody_sale_id,
+                      core.Booking.status, core.Booking.payment_status,
+                      core.Booking.payment_method, core.Booking.source,
+                      core.Booking.mindbody_client_id,
+                      core.Booking.mindbody_visit_id,
+                      core.Booking.amount_cents,
+                      core.ClassSession.studio_id,
+                      core.ClassSession.mindbody_class_id,
+                  )
+                  .join(core.Booking,
+                        core.Booking.reference == core.PaymentOrder.booking_reference)
+                  .join(core.ClassSession,
+                        core.ClassSession.id == core.Booking.class_id)
+                  .where(
+                      core.PaymentOrder.provider == "sumup",
+                      core.PaymentOrder.status == "paid",
+                      core.PaymentOrder.provider_payment_id.is_not(None),
+                  ).order_by(core.PaymentOrder.id.asc())
+              ).all()
+          status_counts = Counter(str(r.mindbody_sale_status or "empty") for r in rows)
+          print("PAID_SUMUP_ORDERS", len(rows))
+          for state, n in sorted(status_counts.items()):
+              print(f"FINAL_SALE_STATUS {state} {n}")
+          remaining = [
+              r for r in rows
+              if str(r.mindbody_sale_status or "empty") not in {"synced", "not_required"}
+          ]
+          print("REQUIRES_REVIEW", len(remaining))
+          categories = [
+              "pricing_option_not_enabled_for_class",
+              "existing_visit_id_mismatch",
+              "existing_visit_payment_not_confirmed",
+              "duplicate_visit_cleanup_incomplete",
+              "visit_already_has_service",
+              "ambiguous_active_unpaid_visits",
+              "no_active_provider_reservation",
+              "mindbody_reservation_not_ready",
+              "mindbody_class_not_linked",
+              "no class visit",
+              "No provided services",
+              "multiple_paid_class_visits",
+          ]
+          client = mb.WriteClient.from_env(timeout=20.0)
+          roster_cache = {}
+          for r in remaining:
+              err = str(r.mindbody_sale_error or "")
+              reason = next((k for k in categories if k.lower() in err.lower()), "other_or_empty")
+              status = str(r.mindbody_sale_status or "empty")
+              provider = "not_checked"
+              if r.mindbody_class_id and r.mindbody_client_id:
+                  clsid = str(r.mindbody_class_id)
+                  try:
+                      if clsid not in roster_cache:
+                          roster_cache[clsid] = mb._extract_class_visits(
+                              client.get_class_visits(clsid)
+                          )
+                      active = [
+                          v for v in roster_cache[clsid]
+                          if not mb._visit_is_cancelled(v)
+                          and mb._visit_client_id(v) == str(r.mindbody_client_id)
+                      ]
+                      if len(active) == 0:
+                          provider = "no_active_visit"
+                      elif len(active) > 1:
+                          provider = "multiple_active_visits"
+                      elif str(r.mindbody_visit_id or "") != mb._visit_id(active[0]):
+                          provider = "visit_id_mismatch"
+                      else:
+                          service, service_id = mb._visit_service_identity(active[0])
+                          provider = "same_visit_service_attached" if service or service_id else "same_visit_unpaid"
+                  except Exception as exc:
+                      provider = "provider_read_error_" + type(exc).__name__
+              print(f"UNRESOLVED_ORDER id={r.id} studio={r.studio_id} local_status={status} reason={reason} remote={provider} sale_id_present={bool(r.mindbody_sale_id)} linked_visit={bool(r.mindbody_visit_id)} booking_status={r.status}")
+          print("FINAL_AUDIT_COMPLETE")
+          PY
