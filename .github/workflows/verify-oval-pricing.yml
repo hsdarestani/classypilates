@@ -1,0 +1,83 @@
+name: Verify Oval 1-Class Pricing (read only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/verify-oval-pricing.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-oval-pricing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Check exact Oval class eligibility in live Mindbody
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=20 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from datetime import datetime, timedelta, timezone
+          from sqlalchemy import select
+          from main import ClassSession, SessionLocal
+          import mindbody_sync as mb
+
+          print("CHECK: read-only; no checkout, customer changes, sale, or booking")
+          now = datetime.now(timezone.utc)
+          with SessionLocal() as db:
+              choices = db.execute(
+                  select(ClassSession.id, ClassSession.mindbody_class_id,
+                         ClassSession.studio_id, ClassSession.title)
+                  .where(
+                      ClassSession.studio_id == "oval",
+                      ClassSession.mindbody_class_id.is_not(None),
+                      ClassSession.starts_at >= now - timedelta(days=1),
+                      ClassSession.starts_at <= now + timedelta(days=14),
+                      ClassSession.status == "active",
+                  )
+                  .order_by(ClassSession.starts_at.asc())
+                  .limit(8)
+              ).all()
+          print("Eligible local Oval class instances:", len(choices))
+          if not choices:
+              raise SystemExit("NO_OVAL_CLASSES_IN_LOCAL_SCHEDULE")
+          client = mb.WriteClient.from_env(timeout=20.0)
+          # Verify the existing 28 EUR price is eligible for at least one actual
+          # class instance. This uses exactly the same read path as reconciliation.
+          for _, remote_id, studio_id, title in choices[:3]:
+              location = mb._resolve_location(client, studio_id, title)
+              location_id = str(mb._value(location, "Id", "ID", "LocationId", default="") or "")
+              if not location_id:
+                  raise SystemExit("OVAL_LOCATION_UNMAPPED")
+              services = client.get_sale_services_for_class(str(remote_id), location_id)
+              candidates = [
+                  (str(mb._value(s, "Id", "ID", "ProductId", default="") or ""),
+                   str(mb._value(s, "Name", "name", default="") or ""),
+                   mb._service_price_cents(s),
+                   mb._value(s, "Count", "count", default=None))
+                  for s in services
+                  if "class" in str(mb._value(s, "Name", "name", default="")).casefold()
+              ]
+              print(f"Oval class {remote_id}: eligible service count={len(services)}, one-class candidates={candidates}")
+              try:
+                  chosen = mb._pick_single_class_service(services, amount_cents=2800)
+              except mb.MindbodyError as exc:
+                  print(f"Oval class {remote_id}: selector failure: {type(exc).__name__}: {str(exc)[:160]}")
+                  continue
+              selected_id = str(mb._value(chosen, "Id", "ID", "ProductId", default="") or "")
+              print("SELECTED_OPTION_ID:", selected_id)
+              print("NEW_OPTION_ID_EXPECTED: 100072")
+              if selected_id == "100072":
+                  print("RESULT: PASS — new 28 EUR Oval option is selectable via live class-filtered API")
+                  break
+              print("RESULT: option selectable but not the new Oval option")
+          else:
+              raise SystemExit("FAIL: no checked Oval class resolves to pricing option 100072")
+          PY
