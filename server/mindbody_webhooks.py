@@ -281,7 +281,11 @@ def _process_batch(rows: list[dict[str, Any]]) -> None:
 
         if class_id:
             event_ids = {str(payload.get("eventId") or "") for payload in payloads}
-            reconcile_roster = any(event_id.startswith("classRosterBooking.") for event_id in event_ids)
+            reconcile_roster = any(
+                event_id.startswith("classRosterBooking.")
+                or event_id == "classRosterBookingStatus.updated"
+                for event_id in event_ids
+            )
             reconcile_waitlist = any(event_id.startswith("classWaitlistRequest.") for event_id in event_ids)
             sync_coach = "class.updated" in event_ids
             start_hint = next(
