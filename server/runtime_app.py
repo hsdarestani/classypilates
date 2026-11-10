@@ -1,5 +1,7 @@
 import os
 import threading
+from fastapi import Depends
+import mindbody_usage
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -685,6 +687,13 @@ def capabilities():
         'mindbody_mirror': mindbody_sync.capability_status(),
         'mindbody_webhook': mindbody_webhooks.webhook_status(),
     }
+
+# Restrict operational API metrics to authorized booking staff. This is a
+# process-local diagnostic, not a substitute for Mindbody partner billing data.
+@app.get("/api/staff/mindbody/api-usage")
+def mindbody_api_usage(user: core.User = Depends(core.require("bookings.view"))):
+    return mindbody_usage.snapshot()
+
 
 # Reconcile only confirmed SumUp-paid orders which are still unresolved in
 # Mindbody. Runs entirely from local SQL when idle and never restarts bulk sync.
