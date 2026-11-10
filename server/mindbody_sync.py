@@ -26,7 +26,7 @@ SYNC_ENABLED = os.getenv("MINDBODY_SYNC_ENABLED", "true").lower() in {"1", "true
 # Cost guard: keep direct booking/cancellation writes and webhook handling enabled,
 # but disable recurring bulk polling unless it is explicitly opted back in.
 BACKGROUND_SYNC_ENABLED = os.getenv("MINDBODY_BACKGROUND_SYNC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
-SYNC_INTERVAL = max(60, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "180")))
+SYNC_INTERVAL = max(900, int(os.getenv("MINDBODY_SYNC_INTERVAL_SECONDS", "28800")))
 INITIAL_SYNC_DELAY = max(0, int(os.getenv("MINDBODY_INITIAL_SYNC_DELAY_SECONDS", "180")))
 # Token caching reduces UserToken/Issue calls; the 401 retry below handles expiry.
 STAFF_TOKEN_CACHE_TTL_SECONDS = max(600, int(os.getenv("MINDBODY_STAFF_TOKEN_CACHE_TTL_SECONDS", "3600")))
@@ -3771,6 +3771,47 @@ def reconcile_remote_class(
             "waitlist_created": int(wait_counts.get("created", 0)),
             "waitlist_removed": int(wait_counts.get("removed", 0)),
         }
+
+
+def sync_recent_completed_rosters(*, lookback_hours: int = 30, limit: int = 150) -> dict[str, int]:
+    """Reconcile recently finished rosters without polling every future class.
+
+    Webhooks keep active rosters current. This safety net reads local class IDs,
+    avoiding GetClasses; a three-hour buffer excludes in-progress classes.
+    """
+    client = WriteClient.from_env()
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=max(24, min(72, int(lookback_hours))))
+    completed_before = now - timedelta(hours=3)
+    with core.SessionLocal() as db:
+        candidates = db.execute(
+            select(core.ClassSession.id, core.ClassSession.mindbody_class_id)
+            .where(
+                core.ClassSession.mindbody_class_id.is_not(None),
+                core.ClassSession.status == "active",
+                core.ClassSession.starts_at >= since,
+                core.ClassSession.starts_at < completed_before,
+            )
+            .order_by(core.ClassSession.starts_at.desc())
+            .limit(max(1, min(500, int(limit))))
+        ).all()
+
+    result = {"classes_checked": 0, "visits": 0, "created": 0,
+              "cancelled": 0, "unresolved": 0, "errors": 0}
+    for class_id, remote_id in candidates:
+        with core.SessionLocal() as db:
+            klass = db.get(core.ClassSession, class_id)
+            if not klass or not klass.mindbody_class_id:
+                continue
+            try:
+                counts = _reconcile_class_roster(client, db, klass, str(remote_id), now)
+                result["classes_checked"] += 1
+                for key in ("visits", "created", "cancelled", "unresolved"):
+                    result[key] += counts.get(key, 0)
+            except Exception:
+                db.rollback()
+                result["errors"] += 1
+    return result
 
 
 def sync_rosters_window(*, days: int = 7) -> dict[str, int]:
