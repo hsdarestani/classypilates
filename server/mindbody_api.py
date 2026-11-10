@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from mindbody_usage import record_call
 from typing import Any
 
 
@@ -72,6 +73,7 @@ class MindbodyClient:
             method="GET",
         )
         try:
+            record_call("GET", path)
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 body = response.read().decode("utf-8")
                 return json.loads(body or "{}")
