@@ -102,7 +102,7 @@ jobs:
                           provider = "visit_id_mismatch"
                       else:
                           service, service_id = mb._visit_service_identity(active[0])
-                          provider = "same_visit_service_attached" if service or service_id else "same_visit_unpaid"
+                          provider = ("service_attached:name=" + str(service)[:60] + ";id=" + str(service_id)[:30]) if service or service_id else "same_visit_unpaid"
                   except Exception as exc:
                       provider = "provider_read_error_" + type(exc).__name__
               print(f"UNRESOLVED_ORDER id={r.id} studio={r.studio_id} local_status={status} reason={reason} remote={provider} sale_id_present={bool(r.mindbody_sale_id)} linked_visit={bool(r.mindbody_visit_id)} booking_status={r.status}")
