@@ -1,0 +1,91 @@
+name: Audit five Classy studio prepaid and direct pricing (read only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-five-studio-pricing-20261113.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Read exactly five local studios and bounded eligible pricing catalog
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime,timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+          from import_mindbody_schedule import studio_id as local_from_remote
+          now=datetime.now(timezone.utc)
+          with core.SessionLocal() as db:
+              rows=db.scalars(select(core.ClassSession).where(
+                  core.ClassSession.mindbody_class_id.is_not(None),
+                  core.ClassSession.starts_at>=now
+              ).order_by(core.ClassSession.starts_at).limit(600)).all()
+              chosen={}
+              for c in rows:
+                  if c.studio_id not in chosen:
+                      chosen[c.studio_id]=(str(c.mindbody_class_id),c.title)
+          studio_names={
+              "oval":"Classy Pilates Oval",
+              "sachsenhausen":"ClassyPilates Sachsenhausen",
+              "mid":"Classy Pilates Mid",
+              "bornheim":"Classy Pilates Bornheim",
+              "bhf1":"Classy Pilates Bahnhofsviertel",
+          }
+          # A single GET of Mindbody locations, then up to 5 x 2 class pricing GETs.
+          client=mb.WriteClient.from_env(timeout=18.0)
+          locations=mb._extract_list(client.get_locations(),("Locations","locations","Items"))
+          print("READ_ONLY_PRICE_AUDIT_5_STUDIOS")
+          for studio,display_name in studio_names.items():
+              row=chosen.get(studio)
+              if not row:
+                  print("STUDIO",studio,"NO_UPCOMING_CLASS")
+                  continue
+              class_id,title=row
+              matched=[x for x in locations if local_from_remote(
+                  str(mb._value(x,"Name","name",default="")).casefold(),title
+              )==studio]
+              if len(matched)!=1:
+                  print("STUDIO",studio,"LOCATION_AMBIGUOUS",len(matched))
+                  continue
+              loc_id=str(mb._value(matched[0],"Id","ID","LocationId",default=""))
+              print("STUDIO",studio,"LOCATION_MATCHED",bool(loc_id))
+              for online in (False,True):
+                  try:
+                      options=client.get_sale_services_for_class(class_id,loc_id,sell_online=online)
+                  except Exception as exc:
+                      print("PRICING_ERROR",studio,"online",online,type(exc).__name__)
+                      continue
+                  found=[]
+                  for option in options:
+                      name=" ".join(str(mb._value(option,"Name","name",default="")).split())
+                      count=mb._value(option,"Count","count",default=None)
+                      value=mb._service_price_cents(option)
+                      service_id=str(mb._value(option,"Id","ID","ProductId",default=""))
+                      typ=str(mb._value(option,"Type","type",default=""))
+                      if name.casefold() in {"classy website prepaid","classy prepaid","1 class"}:
+                          found.append((name,service_id,value,count,typ))
+                  print("CATALOG",studio,"online",online,"eligible_count",len(options),
+                        "relevant_count",len(found))
+                  for name,sid,price,count,typ in found:
+                      print("OPTION",studio,"online",online,
+                            "service_id",sid,"name",repr(name),
+                            "price_cents",price,"units",count,"type",typ[:30])
+          print("FIVE_STUDIO_PRICE_AUDIT_COMPLETE")
+          PY
+          REMOTE
