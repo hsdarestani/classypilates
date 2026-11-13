@@ -96,7 +96,7 @@ assert 'PREPAID_METHODS = {"class_credit", "hour_pass", "class_pack50"}' in sour
 assert 'client.get_sale_services_for_class(' in source
 assert 'sell_online=False' in source
 assert 'and mb._visit_client_id(v) == snapshot["client_id"]' in source
-assert 'and mb._visit_id(v) == snapshot["visit_id"]' in source
+assert 'if mb._visit_id(v) == snapshot["visit_id"]' in source
 assert 'test=True' in source and 'test=False' in source
 assert source.index('test=True') < source.index('_state(booking_id, "posting"') < source.index('test=False')
 assert '"manual_review" if provider_post_started else "blocked"' in source
