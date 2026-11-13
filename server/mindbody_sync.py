@@ -262,14 +262,16 @@ class WriteClient(MindbodyClient):
             {"request.classID": int(class_id)},
         )
 
-    def get_sale_services_for_class(self, class_id: str, location_id: str) -> list[dict[str, Any]]:
+    def get_sale_services_for_class(
+        self, class_id: str, location_id: str, *, sell_online: bool = True
+    ) -> list[dict[str, Any]]:
         """Return active online pricing options that Mindbody allows for one class."""
         payload = self._authorized_get(
             "sale/services",
             {
                 "request.classId": int(class_id),
                 "request.locationId": int(location_id),
-                "request.sellOnline": True,
+                "request.sellOnline": bool(sell_online),
                 "request.includeDiscontinued": False,
                 "request.limit": 200,
                 "request.offset": 0,
@@ -279,6 +281,49 @@ class WriteClient(MindbodyClient):
             row for row in _extract_list(payload, ("Services", "services", "Items"))
             if isinstance(row, dict)
         ]
+
+    def checkout_prepaid_class_service(
+        self,
+        *,
+        client_id: str,
+        visit_id: str,
+        location_id: str,
+        service_id: str,
+        test: bool,
+    ) -> dict[str, Any]:
+        """Reconcile ONE already locally-paid credit with an MB zero-price service.
+
+        The service must be a private, named Classy-prepaid service already
+        configured/eligible in Mindbody. This method NEVER charges money and
+        NEVER books by ClassIds. The caller performs eligibility, per-VisitId
+        checks, TEST validation, idempotency, and a provider readback.
+        """
+        if not (str(visit_id).isdigit() and str(service_id).isdigit()
+                and str(location_id).isdigit()):
+            raise MindbodyError("prepaid_checkout_invalid_provider_identity")
+        return self._write(
+            "sale/checkoutshoppingcart",
+            {
+                "ClientId": int(client_id) if str(client_id).isdigit() else client_id,
+                "LocationId": int(location_id),
+                "InStore": True,
+                "SendEmail": False,
+                "Test": bool(test),
+                "Items": [
+                    {
+                        "Item": {
+                            "Type": "Service",
+                            "Metadata": {"Id": str(service_id)},
+                        },
+                        "Quantity": 1,
+                        "VisitIds": [int(visit_id)],
+                    }
+                ],
+                # Never pretend a credit already sold at Classy is a new
+                # 28 EUR Mindbody sale. Exactly zero money is transferred.
+                "Payments": [],
+            },
+        )
 
     def checkout_external_class_payment(
         self,
@@ -1890,6 +1935,7 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
         return False
 
     client = WriteClient.from_env(timeout=15.0)
+    provider_write_attempted = False
     try:
         # Idempotency guard: CheckoutShoppingCart can create a separate paid visit
         # while the earlier AddClientToClass seat hold remains unpaid. Inspect every
@@ -2026,6 +2072,9 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             order.mindbody_service_id = service_id
             db.commit()
 
+        # If the provider checkout has an unknown outcome, never make it an
+        # automatically retryable failure. A lost response may still be a sale.
+        provider_write_attempted = True
         result = client.checkout_external_class_payment(
             client_id=snapshot["client_id"],
             visit_id=snapshot["visit_id"],
@@ -2070,8 +2119,10 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
     except Exception as exc:
         _set_mindbody_sale_state(
             order_id,
-            "failed",
-            error=f"{type(exc).__name__}: {str(exc)[:1200]}",
+            # An external sale could have succeeded despite a timeout or failed
+            # readback. Require explicit provider verification before any retry.
+            "manual_review" if provider_write_attempted else "failed",
+            error=f"{'provider_write_outcome_unknown:' if provider_write_attempted else ''}{type(exc).__name__}: {str(exc)[:1150]}",
         )
         print(
             f"Mindbody paid booking reconciliation failed: order_id={order_id} "

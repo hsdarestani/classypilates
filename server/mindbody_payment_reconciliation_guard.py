@@ -101,7 +101,7 @@ required_service_fragments = [
     '"sale/services"',
     '"request.classId": int(class_id)',
     '"request.locationId": int(location_id)',
-    '"request.sellOnline": True',
+    '"request.sellOnline": bool(sell_online)',
     '"request.includeDiscontinued": False',
 ]
 for fragment in required_service_fragments:
