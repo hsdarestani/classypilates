@@ -317,6 +317,7 @@ def run_backfill_once() -> dict:
               AND b.mindbody_client_id IS NOT NULL
               AND b.mindbody_visit_id IS NOT NULL
               AND c.mindbody_class_id IS NOT NULL
+              AND c.studio_id IN ('oval','sachsen','mid','bornheim','bhf1')
               AND c.starts_at >= :now
               AND b.created_at < :mature
             ORDER BY c.starts_at, b.id LIMIT 1
