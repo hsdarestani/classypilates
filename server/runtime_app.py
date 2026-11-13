@@ -775,6 +775,48 @@ def verify_classy_prepaid_visit(
 
 
 
+# The prepaid settlement lane is intentionally separate from paid SumUp sales.
+# It is disabled unless a private Classy Prepaid 0 EUR pricing option exists.
+import mindbody_prepaid_settlement as _prepaid_settlement
+app.add_event_handler("startup", _prepaid_settlement.start_worker)
+
+
+@app.get("/api/staff/mindbody/settlement-settings")
+def mindbody_settlement_settings(
+    user: core.User = Depends(core.require("finance.view")),
+):
+    return {
+        "sumup_recovery": os.getenv("MINDBODY_PAYMENT_RECOVERY_ENABLED", "true").lower() in
+            {"true", "1", "yes", "on"},
+        "classy_prepaid_service_configured": _prepaid_settlement.configured(),
+        "classy_prepaid_auto_settlement_enabled": _prepaid_settlement.enabled(),
+        "classy_prepaid_requires_private_zero_eur_service": True,
+    }
+
+
+@app.post("/api/staff/mindbody/reconcile-prepaid/{booking_id}")
+def reconcile_one_prepaid_booking(
+    booking_id: int,
+    user: core.User = Depends(core.require("bookings.manage")),
+):
+    if not core.can(user, "finance.view"):
+        raise HTTPException(403, "finance_permission_required")
+    return _prepaid_settlement.settle_prepaid_visit(booking_id)
+
+
+@app.post("/api/staff/mindbody/verify-prepaid/{booking_id}")
+def verify_one_prepaid_booking(
+    booking_id: int,
+    user: core.User = Depends(core.require("bookings.manage")),
+):
+    if not core.can(user, "finance.view"):
+        raise HTTPException(403, "finance_permission_required")
+    try:
+        return _prepaid_settlement.confirm_existing_prepaid_visit(booking_id)
+    except Exception as exc:
+        raise HTTPException(503, "mindbody_provider_verification_unavailable") from exc
+
+
 # Reconcile only confirmed SumUp-paid orders which are still unresolved in
 # Mindbody. Runs entirely from local SQL when idle and never restarts bulk sync.
 from mindbody_paid_recovery import start_worker as _start_paid_sale_recovery
