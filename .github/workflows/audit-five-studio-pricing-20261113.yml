@@ -42,7 +42,7 @@ jobs:
                       chosen[c.studio_id]=(str(c.mindbody_class_id),c.title)
           studio_names={
               "oval":"Classy Pilates Oval",
-              "sachsenhausen":"ClassyPilates Sachsenhausen",
+              "sachsen":"ClassyPilates Sachsenhausen",
               "mid":"Classy Pilates Mid",
               "bornheim":"Classy Pilates Bornheim",
               "bhf1":"Classy Pilates Bahnhofsviertel",
