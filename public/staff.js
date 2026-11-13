@@ -101,7 +101,7 @@
       <div style="padding:0 18px 15px">${(prepaidAudit.rows||[]).slice(0,12).map(r=>`<p style="margin:8px 0"><b>${esc(r.customer_name)}</b> · ${esc(new Date(r.starts_at).toLocaleString('de-DE',{timeZone:'Europe/Berlin',dateStyle:'short',timeStyle:'short'}))} · ${esc(r.payment_method)} <button type="button" class="secondary" data-verify-prepaid="${Number(r.booking_id)}" ${r.can_verify_provider?'':'disabled'}>Mindbody prüfen</button> ${settlementSettings.classy_prepaid_auto_settlement_enabled&&has('bookings.manage')?'<button type="button" class="secondary" data-settle-prepaid="'+Number(r.booking_id)+'">Mit Classy Prepaid abgleichen</button>':''} <small data-prepaid-result="${Number(r.booking_id)}"></small></p>`).join('')}</div>
     </section>` : '';
     $('#view').innerHTML=`${mindbodyWarning}${prepaidWarning}${hero}<div class="cards"><article class="metric"><span>${isCoach?'MY ACTIVE BOOKINGS':'ACTIVE BOOKINGS'}</span><b>${d.active_bookings}</b><small>${d.imported_bookings} Mindbody · ${d.live_bookings} Website</small></article><article class="metric"><span>${isCoach?'MY UPCOMING CLASSES':'UPCOMING CLASSES'}</span><b>${d.upcoming_classes}</b><small>${isCoach?'assigned to you':'in the system'}</small></article><article class="metric"><span>NEW TODAY</span><b>${d.today_bookings}</b><small>${isCoach?'for your classes':'bookings today'}</small></article>${fourth}</div><section class="panel"><div class="panel-head"><div><p class="kicker">${isCoach?'YOUR CLASSES':'LIVE ACTIVITY'}</p><h2>${isCoach?'Recent attendees':'Recent bookings'}</h2><p>${isCoach?'Only bookings linked to your classes are shown here.':'New website bookings appear here with customer details. Imported Mindbody bookings are mirrored with customer details when Mindbody exposes them, while the original source stays visible.'}</p></div>${has('bookings.view')?'<button class="secondary" id="allBookings">View all</button>':''}</div>${recent.length?bookingTable(recent,false):`<div class="empty">${isCoach?'No attendees for your classes yet.':'No new website bookings yet.'}</div>`}</section>`;
-    $('[data-retry-sumup]').forEach(btn=>btn.addEventListener('click',async()=>{
+    document.querySelectorAll('[data-retry-sumup]').forEach(btn=>btn.addEventListener('click',async()=>{
       const id=Number(btn.dataset.retrySumup);
       if(!window.confirm('Nur den von SumUp bestätigten Auftrag nach erfolgter Mindbody Tarif-Freigabe erneut prüfen? Keinen Kunden nochmals belasten.'))return;
       const output=$('[data-sumup-result="'+id+'"]');
@@ -113,14 +113,14 @@
       }catch(error){if(output)output.textContent='Prüfung fehlgeschlagen – kein automatischer Retry'}
       finally{btn.disabled=false}
     }));
-    $('[data-verify-prepaid]').forEach(btn=>btn.addEventListener('click',async()=>{
+    document.querySelectorAll('[data-verify-prepaid]').forEach(btn=>btn.addEventListener('click',async()=>{
       const id=Number(btn.dataset.verifyPrepaid);const result=$('[data-prepaid-result="'+id+'"]');
       btn.disabled=true;if(result)result.textContent='Lese Mindbody Kursliste…';
       try{const check=await api('/api/staff/mindbody/prepaid-audit/'+id);if(result)result.textContent=String(check.status).replaceAll('_',' ')+(check.service_name?' · '+check.service_name:'')}
       catch(error){if(result)result.textContent='Prüfung nicht verfügbar'}
       finally{btn.disabled=false}
     }));
-    $('[data-settle-prepaid]').forEach(btn=>btn.addEventListener('click',async()=>{
+    document.querySelectorAll('[data-settle-prepaid]').forEach(btn=>btn.addEventListener('click',async()=>{
       const id=Number(btn.dataset.settlePrepaid);
       if(!window.confirm('Nur den bereits bezahlten Classy Credit mit dem bestehenden Mindbody Besuch abgleichen? Es wird keine neue Zahlung eingezogen.'))return;
       const output=$('[data-prepaid-result="'+id+'"]');
