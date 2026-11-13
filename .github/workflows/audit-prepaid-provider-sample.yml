@@ -1,0 +1,75 @@
+name: Classy prepaid exact Mindbody visit sample (read-only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-prepaid-provider-sample.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Check at most two existing provider visits without financial writes
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime,timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+
+          with core.SessionLocal() as db:
+              rows = db.execute(
+                  select(core.Booking,core.ClassSession)
+                  .join(core.ClassSession,core.ClassSession.id==core.Booking.class_id)
+                  .where(core.Booking.source=="website",
+                         core.Booking.status=="reserved",
+                         core.Booking.payment_method=="class_credit",
+                         core.Booking.payment_status=="paid",
+                         core.Booking.mindbody_client_id.is_not(None),
+                         core.Booking.mindbody_visit_id.is_not(None),
+                         core.ClassSession.mindbody_class_id.is_not(None),
+                         core.ClassSession.starts_at>=datetime.now(timezone.utc))
+                  .order_by(core.ClassSession.starts_at.asc())
+                  .limit(30)).all()
+              seen=set()
+              picked=[]
+              for b,c in rows:
+                  cid=str(c.mindbody_class_id)
+                  vid=str(b.mindbody_visit_id)
+                  if cid not in seen and cid.isdigit() and vid.isdigit():
+                      seen.add(cid)
+                      picked.append((cid,str(b.mindbody_client_id),vid))
+                  if len(picked)==2: break
+          print("PREPAID_PROVIDER_SAMPLE_COUNT",len(picked))
+          for i,(cid,clientid,visitid) in enumerate(picked):
+              try:
+                  client=mb.WriteClient.from_env(timeout=16.0)
+                  roster=mb._extract_class_visits(client.get_class_visits(cid))
+                  matches=[v for v in roster
+                           if mb._visit_id(v)==visitid
+                           and mb._visit_client_id(v)==clientid
+                           and not mb._visit_is_cancelled(v)]
+                  if len(matches)!=1:
+                      state="missing_or_ambiguous"
+                  else:
+                      label,service_id=mb._visit_service_identity(matches[0])
+                      state="unpaid" if label.casefold().startswith(("unpaid","unverrechn")) or not(label or service_id) else "service_present"
+                  print("SAMPLE_RESULT",i+1,state)
+              except Exception as exc:
+                  print("SAMPLE_RESULT",i+1,"unavailable",type(exc).__name__)
+          print("PREPAID_PROVIDER_READ_ONLY_SAMPLE_COMPLETE")
+          PY
+          REMOTE
