@@ -112,6 +112,8 @@ assert 'if enabled():' in feedback
 assert 'settle_prepaid_visit(booking_id)' in feedback
 assert 'MINDBODY_CLASSY_PREPAID_SERVICE_ID' in docker_compose
 assert 'MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED' in docker_compose
+dockerfile = (here / "Dockerfile").read_text(encoding="utf-8")
+assert "COPY mindbody_prepaid_settlement.py ." in dockerfile
 
 # SumUp uncertain POST outcomes must NEVER auto-retry creating a sale.
 assert 'provider_write_attempted = True' in sync
