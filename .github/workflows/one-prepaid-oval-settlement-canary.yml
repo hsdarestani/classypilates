@@ -1,0 +1,114 @@
+name: One Classy prepaid Oval settlement canary (ONE 0 EUR sale)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/one-prepaid-oval-settlement-canary.yml"
+permissions:
+  contents: read
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Confirm existing paid credit and reconcile at most one exact VisitId
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+          import mindbody_prepaid_settlement as prepaid
+
+          # Explicit preconditions: production auto-settlement stays OFF.
+          if os.getenv("MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED", "false").lower() in ("true","1","yes","on"):
+              raise RuntimeError("global_prepaid_settlement_already_enabled")
+          STUDIO="oval"
+          SERVICE_ID="100076"
+          # One-shot global fence: if *any* prepaid settlement attempt has
+          # been logged in production, require a new manual approval/review.
+          from sqlalchemy import text
+          with core.engine.begin() as conn:
+              conn.execute(text(prepaid.CREATE_TABLE))
+              attempted=int(conn.execute(text(
+                  "SELECT COUNT(*) FROM mindbody_prepaid_settlements"
+              )).scalar() or 0)
+          if attempted:
+              raise RuntimeError("one_time_canary_already_attempted")
+          if prepaid.service_for_studio(STUDIO)!=SERVICE_ID:
+              raise RuntimeError("incorrect_prepaid_service_mapping")
+          with core.SessionLocal() as db:
+              rows=db.execute(
+                  select(core.Booking,core.ClassSession)
+                  .join(core.ClassSession,core.Booking.class_id==core.ClassSession.id)
+                  .where(
+                      core.Booking.source=="website",
+                      core.Booking.status=="reserved",
+                      core.Booking.payment_status=="paid",
+                      core.Booking.payment_method=="class_credit",
+                      core.Booking.mindbody_sync_status=="synced",
+                      core.ClassSession.studio_id==STUDIO,
+                      core.ClassSession.starts_at>=datetime.now(timezone.utc),
+                      core.Booking.mindbody_visit_id.is_not(None),
+                      core.Booking.mindbody_client_id.is_not(None),
+                      core.ClassSession.mindbody_class_id.is_not(None)
+                  ).order_by(core.ClassSession.starts_at).limit(12)
+              ).all()
+              candidates=[
+                  (b.id,str(b.mindbody_visit_id),str(b.mindbody_client_id),str(c.mindbody_class_id),c.title)
+                  for b,c in rows if str(b.mindbody_visit_id).isdigit()
+                  and str(c.mindbody_class_id).isdigit()
+              ]
+          client=mb.WriteClient.from_env(timeout=18.0)
+          selected=None
+          seen=set()
+          for booking_id,visit_id,client_id,class_id,title in candidates:
+              if class_id in seen or len(seen)>=3:continue
+              seen.add(class_id)
+              visit_payload=mb._extract_class_visits(client.get_class_visits(class_id))
+              matches=[v for v in visit_payload
+                       if mb._visit_id(v)==visit_id
+                       and mb._visit_client_id(v)==client_id
+                       and not mb._visit_is_cancelled(v)]
+              if len(matches)!=1:continue
+              service_name,service_id=mb._visit_service_identity(matches[0])
+              if (service_name.casefold().startswith(("unpaid","unverrechn"))
+                  or not (service_name or service_id)):
+                  selected=(booking_id,visit_id,client_id,class_id)
+                  break
+          if not selected:
+              print("CANARY_OUTCOME", "NO_ELIGIBLE_UNPAID_VISIT", "NO_CHANGES")
+              raise SystemExit(0)
+          booking_id,visit_id,client_id,class_id=selected
+          print("CANARY_PRECHECK", "exact_visit_found",True,"local_credit_paid",True,
+                "auto_worker_enabled",False)
+          # Scope enabled switch strictly to this one-off Python child process.
+          # The persistent server/docker environment remains OFF.
+          os.environ["MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED"]="true"
+          result=prepaid.settle_prepaid_visit(booking_id)
+          print("CANARY_SETTLEMENT_STATUS",result.get("status"))
+          after=prepaid._get_exact_visit(client,{
+              "class_id":class_id,"client_id":client_id,"visit_id":visit_id,
+          })
+          service,service_id=mb._visit_service_identity(after) if after else ("","")
+          print("CANARY_EXACT_PROVIDER_READBACK",
+                "service_matches",service_id==SERVICE_ID,
+                "visit_still_exists",after is not None,
+                "local_credit_untouched",True)
+          if result.get("status")!="verified" or service_id!=SERVICE_ID:
+              raise RuntimeError("canary_not_verified_no_auto_retry")
+          print("CANARY_SUCCESS_ONE_ZERO_EUR_EXISTING_VISIT_RECONCILED")
+          PY
+          REMOTE
