@@ -1300,6 +1300,7 @@ def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Dep
                 or "No provided services can pay for the given visits" in error
             )
             mindbody_payment_attention.append({
+                "order_id": order.id,
                 "customer_name": booking.customer_name,
                 "starts_at": klass.starts_at.isoformat(),
                 "status": "pricing_setup" if needs_pricing else "reconciliation_pending",
