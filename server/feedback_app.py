@@ -1236,6 +1236,25 @@ def _hold_booking_background(booking_id: int) -> None:
         print(f"Mindbody checkout hold logging failed: {type(exc).__name__}", flush=True)
     if email_job:
         core.send_transactional_email(*email_job)
+        # The seat has been held and the Classy entitlement was already debited.
+        # Only the explicitly configured zero-EUR private provider option may
+        # settle this exact Mindbody VisitId. Never delay the HTTP booking call.
+        try:
+            from mindbody_prepaid_settlement import enabled, settle_prepaid_visit
+            if enabled():
+                outcome = settle_prepaid_visit(booking_id)
+                print(
+                    "Prepaid Mindbody visit settlement:",
+                    outcome.get("status", "unknown"),
+                    flush=True,
+                )
+        except Exception as exc:
+            # A provider rejection must not consume another Classy credit or
+            # cancel a genuine paid local booking. It stays flagged for review.
+            print(
+                "Prepaid Mindbody visit settlement background error:",
+                type(exc).__name__, flush=True,
+            )
 
 
 @app.get("/api/bookings/sync-status")
