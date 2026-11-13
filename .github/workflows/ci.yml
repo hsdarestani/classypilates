@@ -67,6 +67,9 @@ jobs:
       - name: Classy prepaid financial integrity read-only regression guard
         run: python server/mindbody_prepaid_integrity_guard.py
 
+      - name: Unified Classy prepaid and SumUp settlement guard
+        run: python server/mindbody_unified_settlement_guard.py
+
       - name: Mindbody external payment regression guard
         env:
           DATABASE_URL: sqlite:////tmp/classy-payment-reconciliation-guard.db
