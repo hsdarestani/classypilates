@@ -35,5 +35,5 @@ assert 'profile.credits' not in source
 assert 'booking.payment_status = "paid"' not in source
 assert '"order_id": order.id' in main
 assert "data-retry-sumup" in staff
-assert "$$('[data-verify-prepaid]')" in staff
+assert "document.querySelectorAll('[data-verify-prepaid]')" in staff
 print("Scoped SumUp provider-verified retry contract OK")
