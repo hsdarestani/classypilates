@@ -319,9 +319,18 @@ class WriteClient(MindbodyClient):
                         "VisitIds": [int(visit_id)],
                     }
                 ],
-                # Never pretend a credit already sold at Classy is a new
-                # 28 EUR Mindbody sale. Exactly zero money is transferred.
-                "Payments": [],
+                # Mindbody v6 requires a nonempty Payments array even at
+                # 0 EUR. Use the established non-card external/Other method
+                # with zero value. This NEVER represents a new 28 EUR charge.
+                "Payments": [
+                    {
+                        "Type": "Custom",
+                        "Metadata": {
+                            "Amount": 0.0,
+                            "Id": MINDBODY_EXTERNAL_PAYMENT_METHOD_ID,
+                        },
+                    }
+                ],
             },
         )
 
