@@ -1,0 +1,124 @@
+name: Settle all pre-existing future Classy credit visits (bounded one-shot)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/settle-existing-future-credits-once-20261113.yml"
+permissions:
+  contents: read
+
+concurrency:
+  group: classy-existing-future-prepaid-20261113
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Reconcile all existing future credit visits, preserving payment identity
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          import time
+          from datetime import datetime, timezone
+          from sqlalchemy import text
+          import main as core
+          import mindbody_prepaid_settlement as prepaid
+
+          # This is a one-shot request to settle the existing 13 future visits,
+          # not a change to the ordinary maximum-8-per-day background schedule.
+          # Only visit bookings present at the last live audit are in scope.
+          CUTOFF = datetime(2026, 11, 13, 14, 30, tzinfo=timezone.utc)
+          MAX_BATCH = 30
+          assert prepaid.enabled(), "prepaid_lane_not_enabled"
+          assert prepaid.DAILY_LIMIT == 8, "unexpected_global_daily_limit"
+          assert prepaid.STUDIO_SERVICE_IDS == {
+              "oval": "100076", "sachsen": "100077",
+              "mid": "100078", "bornheim": "100079",
+              "bhf1": "100080",
+          }, "pricing_configuration_changed"
+
+          QUERY = text("""
+              SELECT b.id, c.studio_id
+              FROM bookings b
+              JOIN classes c ON c.id=b.class_id
+              LEFT JOIN mindbody_prepaid_settlements s ON s.booking_id=b.id
+              WHERE b.source='website'
+                AND b.status='reserved'
+                AND b.payment_status='paid'
+                AND b.payment_method IN ('class_credit','hour_pass','class_pack50')
+                AND b.mindbody_sync_status='synced'
+                AND b.mindbody_client_id IS NOT NULL
+                AND b.mindbody_visit_id IS NOT NULL
+                AND c.mindbody_class_id IS NOT NULL
+                AND c.studio_id IN ('oval','sachsen','mid','bornheim','bhf1')
+                AND c.starts_at >= :now
+                AND b.created_at < :cutoff
+                AND s.booking_id IS NULL
+              ORDER BY c.starts_at,b.id
+              LIMIT :cap
+          """)
+          params={"now": datetime.now(timezone.utc), "cutoff": CUTOFF, "cap": MAX_BATCH+1}
+          with core.engine.connect() as conn:
+              pending=list(conn.execute(QUERY,params))
+          if len(pending)>MAX_BATCH:
+              raise RuntimeError("unexpected_large_backlog_aborting_all_writes")
+          print("BATCH_INITIAL_PENDING",len(pending))
+          by_studio={}
+          for _,studio in pending:
+              by_studio[studio]=by_studio.get(studio,0)+1
+          for studio,count in sorted(by_studio.items()):
+              print("INITIAL_STUDIO",studio,count)
+
+          outcomes={}
+          attempted=0
+          for bid,studio in pending:
+              # Existing service-specific implementation checks paid local credit,
+              # exact original Mindbody VisitId/ClientId, private 0EUR 1-session
+              # tariff eligibility, Test=true, and provider readback after posting.
+              result=prepaid.settle_prepaid_visit(int(bid))
+              status=str(result.get("status","unknown"))
+              outcomes[status]=outcomes.get(status,0)+1
+              attempted+=1
+              print("BOOKING_SETTLEMENT",int(bid),studio,status,flush=True)
+              if status in {"manual_review","posting","unknown"}:
+                  print("STOPPED_TO_PREVENT_UNCERTAIN_PROVIDER_RETRIES")
+                  break
+              time.sleep(1.5)  # modest provider API pacing
+
+          with core.engine.connect() as conn:
+              remaining=list(conn.execute(QUERY,{
+                  "now":datetime.now(timezone.utc),"cutoff":CUTOFF,"cap":MAX_BATCH+1
+              }))
+              records=conn.execute(text("""
+                  SELECT status,count(*) FROM mindbody_prepaid_settlements
+                  WHERE booking_id IN (
+                      SELECT b.id FROM bookings b JOIN classes c ON c.id=b.class_id
+                      WHERE b.created_at < :cutoff
+                        AND c.starts_at >= :now
+                        AND b.source='website' AND b.payment_status='paid'
+                        AND b.payment_method IN ('class_credit','hour_pass','class_pack50')
+                        AND c.studio_id IN ('oval','sachsen','mid','bornheim','bhf1')
+                  )
+                  GROUP BY status ORDER BY status
+              """),{"cutoff":CUTOFF,"now":datetime.now(timezone.utc)}).all()
+          print("BATCH_ATTEMPTED",attempted)
+          for status,count in sorted(outcomes.items()):
+              print("BATCH_OUTCOME",status,count)
+          print("BATCH_PENDING_REMAINING",len(remaining))
+          for status,count in records:
+              print("FUTURE_SETTLEMENT_LEDGER",status,count)
+          print("BATCH_COMPLETE_NO_EXTRA_CLASSY_CREDIT_DEBITS")
+          PY
+          REMOTE
