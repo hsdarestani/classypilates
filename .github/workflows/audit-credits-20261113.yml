@@ -1,0 +1,132 @@
+name: Targeted Classy credit and Mindbody incident audit (read-only)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/audit-credits-20261113.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Read verified local orders and only bounded SumUp checkouts
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          from datetime import datetime, timezone
+          from sqlalchemy import select, func, or_
+          import main as core
+          import feedback_app as shop
+          import os
+
+          print("INCIDENT_AUDIT_MODE READ_ONLY")
+          target_emails = ("farnaz.hashemi@icloud.com", "farnaz15@icloud.com")
+          with core.SessionLocal() as db:
+              users = db.scalars(select(core.User).where(
+                  func.lower(core.User.email).in_(target_emails)
+              )).all()
+              print("TARGET_ACCOUNT_COUNT", len(users))
+              for user in users:
+                  profile = db.get(core.CustomerProfile, user.id)
+                  print(
+                      "TARGET_ACCOUNT",
+                      "is_farnaz15", user.email.lower() == target_emails[1],
+                      "name_match", user.first_name.strip().lower() == "farnaz"
+                          and user.last_name.strip().lower() == "hashemi",
+                      "credits", int(profile.credits if profile else 0),
+                      "account_id", user.id,
+                  )
+
+              orders = db.scalars(select(core.PaymentOrder).where(
+                  core.PaymentOrder.amount_cents == 21900,
+                  core.PaymentOrder.created_at >= datetime(2026, 11, 7, tzinfo=timezone.utc),
+                  core.PaymentOrder.created_at < datetime(2026, 11, 14, tzinfo=timezone.utc),
+                  or_(
+                      func.lower(core.PaymentOrder.email).in_(target_emails),
+                      func.lower(core.PaymentOrder.first_name).like("farnaz%"),
+                      func.lower(core.PaymentOrder.last_name).like("hashemi%"),
+                  ),
+              ).order_by(core.PaymentOrder.created_at.desc()).limit(8)).all()
+              print("MATCHING_219_EUR_ORDER_COUNT", len(orders))
+              snapshots = [
+                  {
+                      "order_id": o.id,
+                      "created_at": o.created_at,
+                      "email": o.email.lower(),
+                      "name_match": o.first_name.strip().lower() == "farnaz"
+                          and o.last_name.strip().lower() == "hashemi",
+                      "paid": o.status == "paid",
+                      "credited": o.credited,
+                      "credits": o.credits,
+                      "status": o.status,
+                      "provider": o.provider,
+                      "checkout_id": o.provider_payment_id,
+                      "booking_reference": o.booking_reference,
+                  }
+                  for o in orders
+              ]
+              paid_local = db.scalars(select(core.PaymentOrder).where(
+                  core.PaymentOrder.status == "paid",
+                  core.PaymentOrder.credited.is_(False),
+                  core.PaymentOrder.booking_reference.is_(None),
+                  core.PaymentOrder.created_at >= datetime(2026, 11, 1, tzinfo=timezone.utc),
+              )).all()
+              print("UNCLAIMED_PAID_SHOP_ORDERS_SINCE_NOV_1", len(paid_local))
+              affected = db.execute(select(core.Booking, core.ClassSession, core.PaymentOrder)
+                  .join(core.ClassSession, core.ClassSession.id == core.Booking.class_id)
+                  .outerjoin(core.PaymentOrder, core.PaymentOrder.booking_reference == core.Booking.reference)
+                  .where(
+                      func.lower(core.Booking.customer_name).like("%koegel%"),
+                      core.ClassSession.starts_at >= datetime(2026, 11, 8, tzinfo=timezone.utc),
+                      core.ClassSession.starts_at < datetime(2026, 11, 11, tzinfo=timezone.utc),
+                  ).limit(6)).all()
+              print("KOEGEL_LOCAL_BOOKINGS", len(affected))
+              for booking, klass, order in affected:
+                  print("KOEGEL_BOOKING",
+                        "booking_status", booking.status,
+                        "payment_status", booking.payment_status,
+                        "payment_method", booking.payment_method,
+                        "amount_cents", booking.amount_cents,
+                        "class_linked", bool(klass.mindbody_class_id),
+                        "sale_status", order.mindbody_sale_status if order else "no_order",
+                        "date", klass.starts_at.isoformat()[:16])
+
+          # Read-only provider GET requests, capped at four exact local checkouts.
+          # Never create a checkout, issue a provider write or credit an account.
+          for o in snapshots[:4]:
+              print("ORDER", o["order_id"], "created", str(o["created_at"])[:16],
+                    "email_matches_target", o["email"] in target_emails,
+                    "email_is_account", o["email"] == target_emails[1],
+                    "name_match", o["name_match"], "state", o["status"],
+                    "credited", o["credited"], "credits", o["credits"],
+                    "is_shop", not bool(o["booking_reference"]))
+              if o["provider"] != "sumup" or not o["checkout_id"]:
+                  print("PROVIDER_VERIFIED", o["order_id"], False, "missing_provider_checkout")
+                  continue
+              try:
+                  checkout = shop._sumup_request(f'/v0.1/checkouts/{o["checkout_id"]}')
+                  verified = (
+                      str(checkout.get("status", "")).upper() == "PAID"
+                      and str(checkout.get("merchant_code", "")) == os.getenv("SUMUPMERCHANT", "")
+                      and str(checkout.get("currency", "")).upper() == "EUR"
+                      and shop._sumup_amount_cents(checkout) == 21900
+                  )
+                  print("PROVIDER_VERIFIED", o["order_id"], verified,
+                        "provider_state", str(checkout.get("status", ""))[:25])
+              except Exception as exc:
+                  print("PROVIDER_VERIFY_ERROR", o["order_id"], type(exc).__name__)
+          print("INCIDENT_READ_ONLY_AUDIT_COMPLETE")
+          PY
