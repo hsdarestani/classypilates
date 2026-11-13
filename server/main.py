@@ -1313,6 +1313,70 @@ def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Dep
         "scope": "coach" if coach_scope else "admin",
     }
 
+@app.get("/api/staff/mindbody/prepaid-audit")
+def prepaid_booking_audit(
+    limit: int = Query(30, ge=1, le=50),
+    user: User = Depends(require("finance.view")),
+    db: Session = Depends(db_session),
+):
+    """Local-only financial exposure for website bookings settled with Classy credits.
+
+    A locally 'synced' visit means the seat exists in Mindbody; it does not
+    confirm that Mindbody has charged a client service. This endpoint makes
+    that distinction explicit and deliberately does not call the provider.
+    """
+    methods = ("class_credit", "hour_pass", "class_pack50")
+    base = (
+        Booking.source == "website",
+        Booking.payment_status == "paid",
+        Booking.payment_method.in_(methods),
+        Booking.status == "reserved",
+    )
+    totals = dict(db.execute(
+        select(Booking.payment_method, func.count(Booking.id))
+        .where(*base)
+        .group_by(Booking.payment_method)
+    ).all())
+    unlinked = int(db.scalar(
+        select(func.count(Booking.id))
+        .join(ClassSession, ClassSession.id == Booking.class_id)
+        .where(*base,
+               ((Booking.mindbody_visit_id.is_(None)) |
+                (Booking.mindbody_client_id.is_(None)) |
+                (ClassSession.mindbody_class_id.is_(None))))
+    ) or 0)
+    candidates = db.execute(
+        select(Booking, ClassSession)
+        .join(ClassSession, ClassSession.id == Booking.class_id)
+        .where(*base, ClassSession.mindbody_class_id.is_not(None))
+        .order_by(ClassSession.starts_at.desc(), Booking.id.desc())
+        .limit(limit)
+    ).all()
+    return {
+        "provider_payment_verified": False,
+        "explanation": "local_paid_is_not_mindbody_service_settled",
+        "total": sum(int(v) for v in totals.values()),
+        "counts": {method: int(totals.get(method, 0)) for method in methods},
+        "missing_provider_link": unlinked,
+        "rows": [
+            {
+                "booking_id": b.id,
+                "customer_name": b.customer_name,
+                "class_name": c.title,
+                "starts_at": c.starts_at.isoformat(),
+                "payment_method": b.payment_method,
+                "local_payment_status": b.payment_status,
+                "seat_sync_status": b.mindbody_sync_status,
+                "provider_payment_status": "not_verified",
+                "can_verify_provider": bool(
+                    b.mindbody_client_id and b.mindbody_visit_id and c.mindbody_class_id
+                ),
+            }
+            for b, c in candidates
+        ],
+    }
+
+
 @app.get("/api/staff/finance")
 def finance(user: User = Depends(require("finance.view")), db: Session = Depends(db_session)):
     booking_total = int(db.scalar(select(func.coalesce(func.sum(Booking.amount_cents), 0)).where(Booking.payment_status == "paid")) or 0)
