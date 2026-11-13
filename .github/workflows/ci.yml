@@ -61,6 +61,9 @@ jobs:
       - name: 50 course and legacy hour package regression guard
         run: python server/hour_pass_regression_guard.py
 
+      - name: Signed-in shop and historical finance guard
+        run: python server/shop_account_credit_guard.py
+
       - name: Mindbody external payment regression guard
         env:
           DATABASE_URL: sqlite:////tmp/classy-payment-reconciliation-guard.db

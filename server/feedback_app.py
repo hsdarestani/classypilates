@@ -509,7 +509,7 @@ def checkout_capability():
 
 
 @app.post("/api/checkout/create")
-def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depends(core.db_session)):
+def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depends(core.db_session), customer: Optional[core.User] = Depends(core.optional_user)):
     merchant = os.getenv("SUMUPMERCHANT", "").strip()
     if not os.getenv("SUMUPAPIKEY", "").strip() or not merchant:
         raise HTTPException(503, "sumup_not_configured")
@@ -518,6 +518,11 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         raise HTTPException(400, "invalid_checkout")
 
     email = str(data.customer.email).strip().lower()
+    # A logged-in buyer must never accidentally fund an unrelated email address.
+    # Guest purchases remain possible; they are claimable only by that exact email.
+    if customer is not None and core.portal_for(customer) == "/account":
+        if email != customer.email.strip().lower():
+            raise HTTPException(409, "checkout_email_must_match_account")
     booking = None
     booking_reference = (data.bookingReference or "").strip()[:40] or None
     total = 0
@@ -767,6 +772,8 @@ def checkout_status(reference: str, background_tasks: BackgroundTasks, db: Sessi
         "bookingReference": order.booking_reference,
         "status": order.status,
         "paid": order.status == "paid",
+        "credited": bool(order.credited),
+        "credits": int(order.credits or 0),
     }
 
 
