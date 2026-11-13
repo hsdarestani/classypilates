@@ -1,0 +1,119 @@
+name: DRY RUN one existing Oval Classy prepaid VisitId (NO SALE)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/audit-oval-prepaid-dry-checkout.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Test=true only, never checkout Test=false or modify local credits
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime, timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+
+          STUDIO = "oval"
+          SERVICE_ID = "100076"
+          with core.SessionLocal() as db:
+              rows = db.execute(
+                  select(core.Booking, core.ClassSession)
+                  .join(core.ClassSession, core.Booking.class_id == core.ClassSession.id)
+                  .where(
+                      core.Booking.source == "website",
+                      core.Booking.status == "reserved",
+                      core.Booking.payment_status == "paid",
+                      core.Booking.payment_method == "class_credit",
+                      core.Booking.mindbody_sync_status == "synced",
+                      core.ClassSession.studio_id == STUDIO,
+                      core.ClassSession.starts_at >= datetime.now(timezone.utc),
+                      core.Booking.mindbody_visit_id.is_not(None),
+                      core.Booking.mindbody_client_id.is_not(None),
+                      core.ClassSession.mindbody_class_id.is_not(None),
+                  ).order_by(core.ClassSession.starts_at).limit(12)
+              ).all()
+              candidates = [
+                  (str(b.mindbody_visit_id), str(b.mindbody_client_id),
+                   str(c.mindbody_class_id), c.title)
+                  for b, c in rows
+                  if str(b.mindbody_visit_id).isdigit()
+                  and str(c.mindbody_class_id).isdigit()
+              ]
+          print("TEST_MODE", "TEST_TRUE_ONLY", "CANDIDATES", len(candidates))
+          if not candidates:
+              print("TEST_STATUS NO_SAFE_OVAL_CANDIDATE")
+              raise SystemExit(0)
+          client=mb.WriteClient.from_env(timeout=18.0)
+          location=mb._resolve_location(client,STUDIO,candidates[0][3])
+          location_id=str(mb._value(location,"Id","ID","LocationId",default=""))
+          eligible=client.get_sale_services_for_class(
+              candidates[0][2],location_id,sell_online=False)
+          match=[
+              s for s in eligible
+              if str(mb._value(s,"Id","ID","ProductId",default=""))==SERVICE_ID
+              and " ".join(str(mb._value(s,"Name","name",default="")).split()).lower()
+                 =="classy website prepaid"
+              and mb._service_price_cents(s)==0
+              and int(mb._value(s,"Count","count",default=0) or 0)==1
+              and str(mb._value(s,"Type","type",default="")).lower() in ("dropin","")
+          ]
+          if len(match)!=1:
+              print("TEST_STATUS PRICING_NOT_ELIGIBLE", len(match))
+              raise SystemExit(0)
+          print("PRIVATE_TARIFF_VALIDATED",SERVICE_ID,"EUR_0",True)
+          checked_classes=set()
+          chosen=None
+          for visit_id,client_id,class_id,title in candidates:
+              if class_id in checked_classes or len(checked_classes)>=3:
+                  continue
+              checked_classes.add(class_id)
+              visits=mb._extract_class_visits(client.get_class_visits(class_id))
+              exact=[v for v in visits if
+                     mb._visit_id(v)==visit_id
+                     and mb._visit_client_id(v)==client_id
+                     and not mb._visit_is_cancelled(v)]
+              if len(exact)!=1:continue
+              name,service=mb._visit_service_identity(exact[0])
+              if service and not name.casefold().startswith(("unpaid","unverrechn")):
+                  continue
+              if not name or name.casefold().startswith(("unpaid","unverrechn")):
+                  chosen=(visit_id,client_id,class_id)
+                  break
+          if not chosen:
+              print("TEST_STATUS NO_UNPAID_EXACT_VISIT")
+              raise SystemExit(0)
+          print("EXACT_UNPAID_VISIT_FOUND",True)
+          visit_id,client_id,class_id=chosen
+          try:
+              response=client.checkout_prepaid_class_service(
+                  client_id=client_id,visit_id=visit_id,
+                  location_id=location_id,service_id=SERVICE_ID,test=True)
+              if isinstance(response,dict):
+                  print("TEST_RESULT ACCEPTED","keys",sorted(response.keys())[:20])
+              else:
+                  print("TEST_RESULT ACCEPTED","response_type",type(response).__name__)
+          except Exception as exc:
+              # Report concise diagnostics; never log client names or credentials.
+              message=str(exc).replace(client_id,"[client]").replace(visit_id,"[visit]")
+              print("TEST_RESULT REJECTED",type(exc).__name__,message[:700])
+          print("NO_TEST_FALSE_EXECUTED")
+          PY
+          REMOTE
