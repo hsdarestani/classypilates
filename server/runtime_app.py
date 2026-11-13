@@ -817,6 +817,90 @@ def verify_one_prepaid_booking(
         raise HTTPException(503, "mindbody_provider_verification_unavailable") from exc
 
 
+@app.post("/api/staff/mindbody/retry-sumup/{order_id}")
+def retry_verified_sumup_pricing_blocker(
+    order_id: int,
+    user: core.User = Depends(core.require("bookings.manage")),
+):
+    """Finance-approved retry ONLY when the prior attempt never posted a sale.
+
+    In particular an unknown provider response, duplicate visit, or manual
+    accounting issue must not be converted into a fresh checkout attempt.
+    """
+    if not core.can(user, "finance.view"):
+        raise HTTPException(403, "finance_permission_required")
+    from sqlalchemy import select as sa_select
+    with core.SessionLocal() as db:
+        order = db.scalar(
+            sa_select(core.PaymentOrder)
+            .where(core.PaymentOrder.id == order_id).with_for_update()
+        )
+        booking = db.scalar(
+            sa_select(core.Booking)
+            .where(core.Booking.reference == order.booking_reference)
+            .with_for_update()
+        ) if order and order.booking_reference else None
+        if (
+            not order or not booking
+            or order.provider != "sumup"
+            or order.status != "paid"
+            or not order.provider_payment_id
+            or order.mindbody_sale_status != "manual_review"
+            or order.mindbody_sale_error != "pricing_option_not_enabled_for_class"
+            or booking.source != "website"
+            or booking.status != "reserved"
+            or booking.payment_method != "sumup"
+            or booking.payment_status != "paid"
+            or not booking.klass.mindbody_class_id
+            or int(booking.amount_cents or 0) <= 0
+        ):
+            raise HTTPException(409, "sumup_retry_requires_verified_pricing_blocker")
+        checkout_id = str(order.provider_payment_id)
+        amount_cents = int(order.amount_cents or 0)
+
+    # Read the ORIGINAL SumUp checkout again. Never trust a local paid flag alone.
+    # External I/O is outside a DB transaction.
+    try:
+        provider = feedback._sumup_request(f"/v0.1/checkouts/{checkout_id}")
+        verified = (
+            str(provider.get("id") or "") == checkout_id
+            and str(provider.get("status") or "").upper() == "PAID"
+            and str(provider.get("currency") or "").upper() == "EUR"
+            and str(provider.get("merchant_code") or "") == os.getenv("SUMUPMERCHANT", "")
+            and feedback._sumup_amount_cents(provider) == amount_cents
+        )
+    except Exception as exc:
+        print("Finance SumUp provider recheck failed:", type(exc).__name__, flush=True)
+        raise HTTPException(503, "sumup_provider_verification_unavailable") from exc
+    if not verified:
+        raise HTTPException(409, "sumup_original_charge_not_verified")
+
+    # Reset only this uniquely safe pre-check blocker. Unknown provider writes
+    # stay in manual_review and can never be turned into repeatable sales.
+    with core.SessionLocal() as db:
+        order = db.scalar(
+            sa_select(core.PaymentOrder)
+            .where(core.PaymentOrder.id == order_id).with_for_update()
+        )
+        if (not order or order.mindbody_sale_status != "manual_review"
+                or order.mindbody_sale_error != "pricing_option_not_enabled_for_class"):
+            raise HTTPException(409, "sumup_retry_state_changed")
+        order.mindbody_sale_status = "pending"
+        order.mindbody_sale_error = ""
+        db.commit()
+
+    success = mindbody_sync.reconcile_paid_booking_sale(order_id)
+    with core.SessionLocal() as db:
+        order = db.get(core.PaymentOrder, order_id)
+        return {
+            "order_id": order_id,
+            "provider_payment_confirmed": True,
+            "mindbody_sale_verified": bool(success),
+            "mindbody_sale_status": str(order.mindbody_sale_status) if order else "unknown",
+            "financial_review_required": not success,
+        }
+
+
 # Reconcile only confirmed SumUp-paid orders which are still unresolved in
 # Mindbody. Runs entirely from local SQL when idle and never restarts bulk sync.
 from mindbody_paid_recovery import start_worker as _start_paid_sale_recovery
