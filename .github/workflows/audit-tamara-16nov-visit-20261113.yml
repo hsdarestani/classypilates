@@ -1,0 +1,99 @@
+name: Tamara 16 November exact booking payment audit (read only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/audit-tamara-16nov-visit-20261113.yml"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Match local Classy payment and exact Mindbody VisitId
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime,timezone
+          from sqlalchemy import select, text, func
+          import main as core
+          import mindbody_sync as mb
+          import mindbody_prepaid_settlement as prepaid
+          TARGET_ID = "100019134"
+          TARGET_CLASS = "967"
+          TARGET_EMAIL = "tamara_misovic@hotmail.com"
+          with core.SessionLocal() as db:
+              rows=db.execute(
+                  select(core.Booking,core.ClassSession)
+                  .join(core.ClassSession,core.ClassSession.id==core.Booking.class_id)
+                  .where(
+                      core.ClassSession.starts_at>=datetime(2026,11,15,tzinfo=timezone.utc),
+                      core.ClassSession.starts_at<datetime(2026,11,18,tzinfo=timezone.utc),
+                      func.lower(core.Booking.email)==TARGET_EMAIL,
+                  ).order_by(core.ClassSession.starts_at).limit(6)
+              ).all()
+              print("TARGET_MATCHING_BOOKINGS",len(rows))
+              snapshots=[]
+              for b,c in rows:
+                  print("BOOKING_STATUS",
+                        "booking_id",b.id,
+                        "class_studio",c.studio_id,
+                        "class_provider_id_matches",str(c.mindbody_class_id)==TARGET_CLASS,
+                        "provider_client_matches",str(b.mindbody_client_id)==TARGET_ID,
+                        "local_booking_status",b.status,
+                        "local_payment_method",b.payment_method,
+                        "local_payment_status",b.payment_status,
+                        "local_amount_cents",b.amount_cents,
+                        "seat_sync_status",b.mindbody_sync_status,
+                        "provider_visit_present",bool(b.mindbody_visit_id))
+                  snapshots.append((b.id,str(c.mindbody_class_id or ""),
+                                    str(b.mindbody_client_id or ""),
+                                    str(b.mindbody_visit_id or "")))
+              for bid,_,_,_ in snapshots:
+                  status=db.execute(text("""
+                      SELECT status,service_id,error,attempts
+                      FROM mindbody_prepaid_settlements
+                      WHERE booking_id=:id
+                  """),{"id":bid}).first()
+                  if status:
+                      print("SETTLEMENT_STATE","booking_id",bid,"status",status[0],
+                            "service_id",status[1],"error_code",str(status[2])[:180],
+                            "attempts",status[3])
+                  else:
+                      print("SETTLEMENT_STATE","booking_id",bid,"status","never_attempted")
+          print("PREPAID_LANE_ENABLED",prepaid.enabled())
+          matching=[s for s in snapshots
+                    if s[1]==TARGET_CLASS and s[2]==TARGET_ID and s[3].isdigit()]
+          print("EXACT_LINKED_BOOKINGS",len(matching))
+          if len(matching)==1:
+              bid,cid,cl,vid=matching[0]
+              try:
+                  client=mb.WriteClient.from_env(timeout=18.0)
+                  visits=mb._extract_class_visits(client.get_class_visits(cid))
+                  matches=[v for v in visits
+                           if mb._visit_id(v)==vid
+                           and mb._visit_client_id(v)==cl
+                           and not mb._visit_is_cancelled(v)]
+                  print("PROVIDER_EXACT_VISIT_COUNT",len(matches))
+                  if len(matches)==1:
+                      label,serviceid=mb._visit_service_identity(matches[0])
+                      print("PROVIDER_VISIT",
+                            "service_name",repr(label[:100]),
+                            "service_id",serviceid or "none",
+                            "classified_unpaid",label.casefold().startswith(("unpaid","unverrechn")))
+              except Exception as exc:
+                  print("PROVIDER_READ_ERROR",type(exc).__name__)
+          print("TARGET_AUDIT_READ_ONLY_COMPLETE")
+          PY
+          REMOTE
