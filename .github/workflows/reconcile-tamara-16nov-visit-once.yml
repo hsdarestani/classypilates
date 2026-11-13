@@ -1,0 +1,108 @@
+name: Reconcile ONE already-paid Tamara Classy credit VisitId in Mindbody
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/reconcile-tamara-16nov-visit-once.yml"
+permissions:
+  contents: read
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Verify exact existing paid credit and reconcile only that visit
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+          from sqlalchemy import select, text
+          import main as core
+          import mindbody_sync as mb
+          import mindbody_prepaid_settlement as prepaid
+
+          BOOKING_ID = 14550
+          CLIENT_ID = "100019134"
+          SERVICE_ID = "100076"
+          EXPECTED_EMAIL = "tamara_misovic@hotmail.com"
+          tz = ZoneInfo("Europe/Berlin")
+          with core.SessionLocal() as db:
+              b = db.get(core.Booking, BOOKING_ID)
+              if b is None:
+                  raise RuntimeError("target_booking_missing")
+              c = b.klass
+              start = c.starts_at if c.starts_at.tzinfo else c.starts_at.replace(tzinfo=timezone.utc)
+              local = start.astimezone(tz)
+              assert (local.year, local.month, local.day, local.hour, local.minute) == (
+                  2026, 11, 16, 18, 0
+              ), "exact_class_time_mismatch"
+              assert b.email.strip().lower()==EXPECTED_EMAIL, "target_account_mismatch"
+              assert b.source=="website", "unexpected_booking_source"
+              assert b.status=="reserved", "booking_not_active"
+              assert b.payment_method=="class_credit" and b.payment_status=="paid", "credit_not_paid"
+              assert b.mindbody_sync_status=="synced", "seat_not_synced"
+              assert c.studio_id=="oval" and "powerformer" in c.title.lower(), "class_identity_mismatch"
+              assert str(b.mindbody_client_id)==CLIENT_ID, "provider_client_identity_mismatch"
+              class_id=str(c.mindbody_class_id or "")
+              visit_id=str(b.mindbody_visit_id or "")
+              assert class_id.isdigit() and visit_id.isdigit(), "provider_visit_unlinked"
+              before_credit = db.scalar(select(core.CustomerProfile.credits)
+                  .join(core.User, core.User.id==core.CustomerProfile.user_id)
+                  .where(core.User.email==EXPECTED_EMAIL))
+              prior=db.execute(text("""
+                  SELECT status,service_id FROM mindbody_prepaid_settlements
+                  WHERE booking_id=:id
+              """),{"id":BOOKING_ID}).first()
+              if prior is not None and prior[0]!="verified":
+                  raise RuntimeError("prior_settlement_attempt_requires_review")
+          assert prepaid.enabled(), "prepaid_worker_disabled"
+          assert prepaid.service_for_studio("oval")==SERVICE_ID, "incorrect_oval_service"
+          print("TARGET_GUARDS_OK","booking_id",BOOKING_ID,"class_date",local.strftime("%Y-%m-%d %H:%M"),"paid_credit",True)
+          client=mb.WriteClient.from_env(timeout=18.0)
+          before=prepaid._get_exact_visit(client,{
+              "class_id":class_id,"client_id":CLIENT_ID,"visit_id":visit_id,
+          })
+          if before is None:
+              raise RuntimeError("provider_exact_visit_missing")
+          label,service=mb._visit_service_identity(before)
+          print("PRE_PROVIDER_LABEL",repr(label[:80]),"service_id",service or "none")
+          if prior is not None and prior[0]=="verified":
+              if service!=SERVICE_ID:
+                  raise RuntimeError("previously_verified_but_provider_disagrees")
+              print("ALREADY_SETTLED_NO_FINANCIAL_WRITE")
+              raise SystemExit(0)
+          assert label.casefold().startswith(("unpaid","unverrechn")) or not(label or service), (
+              "visit_already_linked_to_another_service"
+          )
+          outcome=prepaid.settle_prepaid_visit(BOOKING_ID)
+          print("SETTLEMENT_RESULT",outcome.get("status"))
+          after=prepaid._get_exact_visit(client,{
+              "class_id":class_id,"client_id":CLIENT_ID,"visit_id":visit_id,
+          })
+          if after is None:
+              raise RuntimeError("provider_visit_disappeared_after_settlement")
+          label_after,service_after=mb._visit_service_identity(after)
+          print("POST_PROVIDER_LABEL",repr(label_after[:80]),"service_matches",service_after==SERVICE_ID)
+          if outcome.get("status")!="verified" or service_after!=SERVICE_ID:
+              raise RuntimeError("provider_payment_not_verified_no_retry")
+          with core.SessionLocal() as db:
+              current=db.get(core.Booking,BOOKING_ID)
+              assert current.status=="reserved" and current.payment_status=="paid"
+              after_credit=db.scalar(select(core.CustomerProfile.credits)
+                  .join(core.User, core.User.id==core.CustomerProfile.user_id)
+                  .where(core.User.email==EXPECTED_EMAIL))
+              assert before_credit==after_credit, "credit_balance_changed"
+          print("TAMARA_FIXED",True,"SAME_VISIT",True,"NO_EXTRA_CREDIT_DEBIT",True)
+          PY
+          REMOTE
