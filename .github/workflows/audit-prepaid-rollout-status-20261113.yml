@@ -1,0 +1,73 @@
+name: Classy prepaid gradual rollout status (aggregate read-only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-prepaid-rollout-status-20261113.yml"]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Confirm effective API settings and count settlements without exposing customer data
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from sqlalchemy import text
+          from datetime import datetime,timezone
+          import main as core
+          import mindbody_prepaid_settlement as p
+          print("ROLLOUT_ENABLED",p.enabled(),"STUDIOS",len(p.STUDIO_SERVICE_IDS),
+                "MAX_HISTORICAL_DAILY",p.DAILY_LIMIT)
+          with core.engine.connect() as conn:
+              rows=conn.execute(text("""
+                  SELECT status,service_id,count(*)
+                  FROM mindbody_prepaid_settlements
+                  GROUP BY status,service_id ORDER BY status,service_id
+              """)).all()
+              for status,service,count in rows:
+                  print("SETTLEMENT_AGGREGATE",status,service,count)
+              pending=conn.execute(text("""
+                  SELECT c.studio_id,count(*)
+                  FROM bookings b
+                  JOIN classes c ON c.id=b.class_id
+                  LEFT JOIN mindbody_prepaid_settlements s ON s.booking_id=b.id
+                  WHERE b.source='website'
+                    AND b.payment_status='paid'
+                    AND b.status='reserved'
+                    AND b.payment_method IN ('class_credit','hour_pass','class_pack50')
+                    AND b.mindbody_visit_id IS NOT NULL
+                    AND b.mindbody_client_id IS NOT NULL
+                    AND c.mindbody_class_id IS NOT NULL
+                    AND c.starts_at >= :now
+                    AND c.studio_id IN ('oval','sachsen','mid','bornheim','bhf1')
+                    AND s.booking_id IS NULL
+                  GROUP BY c.studio_id ORDER BY c.studio_id
+              """),{"now":datetime.now(timezone.utc)}).all()
+              for studio,count in pending:
+                  print("STILL_PENDING_BY_STUDIO",studio,count)
+              direct=conn.execute(text("""
+                  SELECT mindbody_sale_status,count(*)
+                  FROM payment_orders
+                  WHERE status='paid' AND provider='sumup'
+                    AND booking_reference IS NOT NULL
+                    AND mindbody_sale_status IN ('manual_review','pending','failed')
+                  GROUP BY mindbody_sale_status
+                  ORDER BY mindbody_sale_status
+              """)).all()
+              for status,count in direct:
+                  print("SUMUP_UNRESOLVED_ORDER_COUNT",status,count)
+          PY
+          curl -fsS --max-time 10 http://127.0.0.1:8787/api/health
+          REMOTE
