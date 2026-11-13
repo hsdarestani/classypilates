@@ -1890,6 +1890,7 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
         return False
 
     client = WriteClient.from_env(timeout=15.0)
+    provider_write_attempted = False
     try:
         # Idempotency guard: CheckoutShoppingCart can create a separate paid visit
         # while the earlier AddClientToClass seat hold remains unpaid. Inspect every
@@ -2026,6 +2027,9 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
             order.mindbody_service_id = service_id
             db.commit()
 
+        # If the provider checkout has an unknown outcome, never make it an
+        # automatically retryable failure. A lost response may still be a sale.
+        provider_write_attempted = True
         result = client.checkout_external_class_payment(
             client_id=snapshot["client_id"],
             visit_id=snapshot["visit_id"],
@@ -2070,8 +2074,10 @@ def reconcile_paid_booking_sale(order_id: int) -> bool:
     except Exception as exc:
         _set_mindbody_sale_state(
             order_id,
-            "failed",
-            error=f"{type(exc).__name__}: {str(exc)[:1200]}",
+            # An external sale could have succeeded despite a timeout or failed
+            # readback. Require explicit provider verification before any retry.
+            "manual_review" if provider_write_attempted else "failed",
+            error=f"{'provider_write_outcome_unknown:' if provider_write_attempted else ''}{type(exc).__name__}: {str(exc)[:1150]}",
         )
         print(
             f"Mindbody paid booking reconciliation failed: order_id={order_id} "
