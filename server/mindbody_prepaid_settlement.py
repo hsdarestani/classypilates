@@ -23,6 +23,21 @@ import mindbody_sync as mb
 
 PREPAID_METHODS = {"class_credit", "hour_pass", "class_pack50"}
 PRIVATE_SERVICE_NAMES = {"classy prepaid", "classy website prepaid"}
+# Independently validated with the live GET /sale/services pricing catalog.
+# Never reuse partner ClassPass or the paid 28 EUR option as a shortcut.
+STUDIO_SERVICE_IDS = {
+    "oval": "100076",
+    "sachsen": "100077",
+    "mid": "100078",
+    "bornheim": "100079",
+    "bhf1": "100080",
+}
+
+
+def service_for_studio(studio_id: str) -> str:
+    return STUDIO_SERVICE_IDS.get(str(studio_id or "").strip().lower(), "")
+
+
 DAILY_LIMIT = 8
 CHECK_INTERVAL_SECONDS = 900
 _started = False
@@ -42,7 +57,8 @@ CREATE TABLE IF NOT EXISTS mindbody_prepaid_settlements (
 
 def configured() -> bool:
     return bool(
-        os.getenv("MINDBODY_CLASSY_PREPAID_SERVICE_ID", "").strip().isdigit()
+        len(STUDIO_SERVICE_IDS) == 5
+        and all(str(sid).isdigit() for sid in STUDIO_SERVICE_IDS.values())
         and mb.SYNC_ENABLED
         and mb.capability_status()["configured"]
     )
@@ -183,11 +199,13 @@ def settle_prepaid_visit(booking_id: int) -> dict:
     ):
         return {"booking_id": booking_id, "status": "provider_identity_missing"}
 
+    service_id = service_for_studio(snapshot["studio_id"])
+    if not service_id:
+        return {"booking_id": booking_id, "status": "unsupported_studio"}
     claim = _claim(booking_id)
     if claim != "claimed":
         return {"booking_id": booking_id, "status": claim}
 
-    service_id = os.getenv("MINDBODY_CLASSY_PREPAID_SERVICE_ID", "").strip()
     provider_post_started = False
     try:
         client = mb.WriteClient.from_env(timeout=18.0)
@@ -259,7 +277,7 @@ def settle_prepaid_visit(booking_id: int) -> dict:
 def confirm_existing_prepaid_visit(booking_id: int) -> dict:
     """Read-only provider recovery for a previous uncertain checkout result."""
     snapshot = _snapshot(booking_id)
-    service_id = os.getenv("MINDBODY_CLASSY_PREPAID_SERVICE_ID", "").strip()
+    service_id = service_for_studio(snapshot["studio_id"]) if snapshot else ""
     if not snapshot or not service_id.isdigit():
         return {"booking_id": booking_id, "status": "setup_required"}
     if not snapshot["class_id"].isdigit() or not snapshot["visit_id"].isdigit():
