@@ -40,9 +40,9 @@ services:
       MINDBODY_STAFF_USERNAME: ${MINDBODY_STAFF_USERNAME:-}
       MINDBODY_STAFF_PASSWORD: ${MINDBODY_STAFF_PASSWORD:-}
       MINDBODY_SYNC_ENABLED: ${MINDBODY_SYNC_ENABLED:-true}
-      # Private, zero-price Classy prepaid service, restricted to approved classes.
-      # Keep the settlement lane OFF until Mindbody Test=true validates it.
-      MINDBODY_CLASSY_PREPAID_SERVICE_ID: ${MINDBODY_CLASSY_PREPAID_SERVICE_ID:-}
+      # Five vetted Classy Prepaid price IDs are bound by local studio in
+      # mindbody_prepaid_settlement.py; unknown studios are never auto-settled.
+      # Keep OFF until a live TEST=true validates the required zero-EUR payment.
       MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED: ${MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED:-false}
       MINDBODY_BACKGROUND_SYNC_ENABLED: ${MINDBODY_BACKGROUND_SYNC_ENABLED:-false}
       MINDBODY_SYNC_INTERVAL_SECONDS: ${MINDBODY_SYNC_INTERVAL_SECONDS:-28800}
