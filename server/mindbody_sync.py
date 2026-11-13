@@ -262,14 +262,16 @@ class WriteClient(MindbodyClient):
             {"request.classID": int(class_id)},
         )
 
-    def get_sale_services_for_class(self, class_id: str, location_id: str) -> list[dict[str, Any]]:
+    def get_sale_services_for_class(
+        self, class_id: str, location_id: str, *, sell_online: bool = True
+    ) -> list[dict[str, Any]]:
         """Return active online pricing options that Mindbody allows for one class."""
         payload = self._authorized_get(
             "sale/services",
             {
                 "request.classId": int(class_id),
                 "request.locationId": int(location_id),
-                "request.sellOnline": True,
+                "request.sellOnline": bool(sell_online),
                 "request.includeDiscontinued": False,
                 "request.limit": 200,
                 "request.offset": 0,
@@ -279,6 +281,49 @@ class WriteClient(MindbodyClient):
             row for row in _extract_list(payload, ("Services", "services", "Items"))
             if isinstance(row, dict)
         ]
+
+    def checkout_prepaid_class_service(
+        self,
+        *,
+        client_id: str,
+        visit_id: str,
+        location_id: str,
+        service_id: str,
+        test: bool,
+    ) -> dict[str, Any]:
+        """Reconcile ONE already locally-paid credit with an MB zero-price service.
+
+        The service must be a private, named Classy-prepaid service already
+        configured/eligible in Mindbody. This method NEVER charges money and
+        NEVER books by ClassIds. The caller performs eligibility, per-VisitId
+        checks, TEST validation, idempotency, and a provider readback.
+        """
+        if not (str(visit_id).isdigit() and str(service_id).isdigit()
+                and str(location_id).isdigit()):
+            raise MindbodyError("prepaid_checkout_invalid_provider_identity")
+        return self._write(
+            "sale/checkoutshoppingcart",
+            {
+                "ClientId": int(client_id) if str(client_id).isdigit() else client_id,
+                "LocationId": int(location_id),
+                "InStore": True,
+                "SendEmail": False,
+                "Test": bool(test),
+                "Items": [
+                    {
+                        "Item": {
+                            "Type": "Service",
+                            "Metadata": {"Id": str(service_id)},
+                        },
+                        "Quantity": 1,
+                        "VisitIds": [int(visit_id)],
+                    }
+                ],
+                # Never pretend a credit already sold at Classy is a new
+                # 28 EUR Mindbody sale. Exactly zero money is transferred.
+                "Payments": [],
+            },
+        )
 
     def checkout_external_class_payment(
         self,
