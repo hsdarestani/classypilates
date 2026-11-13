@@ -1,0 +1,45 @@
+name: Classy prepaid booking exposure summary (read only)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/audit-prepaid-exposure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Aggregate website credit bookings (no client records or provider calls)
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T db sh -lc '\''psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'\'' ' <<'SQL'
+          SELECT 'CLASSY_PREPAID_EXPOSURE|' ||
+            b.payment_method || '|' ||
+            b.mindbody_sync_status || '|' ||
+            count(*)::text || '|' ||
+            count(*) FILTER(WHERE b.mindbody_visit_id IS NOT NULL)::text
+          FROM bookings b JOIN classes c ON c.id=b.class_id
+          WHERE b.source='website'
+            AND b.status='reserved'
+            AND b.payment_status='paid'
+            AND b.payment_method IN ('class_credit','hour_pass','class_pack50')
+            AND c.mindbody_class_id IS NOT NULL
+          GROUP BY b.payment_method,b.mindbody_sync_status
+          ORDER BY b.payment_method,b.mindbody_sync_status;
+          SELECT 'PAID_SUMUP_ACTIVE|' || count(*)::text
+          FROM bookings b WHERE b.source='website' AND b.status='reserved'
+            AND b.payment_status='paid' AND b.payment_method='sumup';
+          SQL
