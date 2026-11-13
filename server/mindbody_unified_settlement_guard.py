@@ -112,6 +112,7 @@ assert '"status": "setup_required"' in source
 assert 'DAILY_LIMIT = 8' in source
 assert 'LEFT JOIN mindbody_prepaid_settlements s' in source
 assert 's.booking_id IS NULL' in source
+assert "c.studio_id IN ('oval','sachsen','mid','bornheim','bhf1')" in source
 assert "app.add_event_handler(\"startup\", _prepaid_settlement.start_worker)" in runtime
 assert 'core.require("bookings.manage")' in runtime
 assert 'core.can(user, "finance.view")' in runtime
