@@ -21,7 +21,11 @@ assert '"provider_payment_status": "not_verified"' in summary
 assert 'get_class_visits' not in summary
 assert 'profile.credits' not in summary
 
-verify = runtime.split('def verify_classy_prepaid_visit(', 1)[1].split('\n\n# Reconcile only confirmed', 1)[0]
+verify_node = next(
+    node for node in ast.parse(runtime).body
+    if isinstance(node, ast.FunctionDef) and node.name == "verify_classy_prepaid_visit"
+)
+verify = ast.get_source_segment(runtime, verify_node) or ""
 assert 'core.require("finance.view")' in verify
 assert 'mindbody_sync._visit_id(visit) == visit_id' in verify
 assert 'mindbody_sync._visit_client_id(visit) == client_id' in verify
