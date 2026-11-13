@@ -1,0 +1,78 @@
+name: Enable vetted Classy prepaid settlement (gradual, max 8 backfills/day)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/enable-classy-prepaid-gradual-20261113.yml"
+permissions:
+  contents: read
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Verify paid canary; activate limited worker with rollback on health failure
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from sqlalchemy import text
+          import main as core
+          import mindbody_prepaid_settlement as p
+          expected={"oval":"100076","sachsen":"100077","mid":"100078","bornheim":"100079","bhf1":"100080"}
+          if p.STUDIO_SERVICE_IDS!=expected or p.DAILY_LIMIT!=8:
+              raise RuntimeError("prepaid_studio_mapping_or_budget_invalid")
+          if p.enabled():
+              raise RuntimeError("prepaid_worker_already_live")
+          with core.engine.connect() as conn:
+              checked=int(conn.execute(text("""
+                  SELECT count(*) FROM mindbody_prepaid_settlements
+                  WHERE status='verified' AND service_id='100076'
+              """)).scalar() or 0)
+          if checked!=1:
+              raise RuntimeError("expected_one_preverified_real_canary")
+          print("CANARY_VERIFIED",True,"FIVE_STUDIOS_MAPPED",True,"DAILY_BACKFILL_LIMIT",p.DAILY_LIMIT)
+          PY
+          test -f .env
+          cp -p .env /var/backups/classypilates/prepaid-before-enabling-20261113.env
+          chmod 600 /var/backups/classypilates/prepaid-before-enabling-20261113.env
+          rollback() {
+            cp -p /var/backups/classypilates/prepaid-before-enabling-20261113.env .env
+            chmod 600 .env
+            docker compose up -d --force-recreate api >/dev/null || true
+            echo "PREPAID_ACTIVATION_ROLLED_BACK"
+          }
+          trap rollback ERR
+          sed -i '/^MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED=/d' .env
+          printf '%s\n' 'MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED=true' >> .env
+          chmod 600 .env
+          docker compose up -d --force-recreate api
+          ready=0
+          for i in $(seq 1 40); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8787/api/health >/dev/null 2>&1; then
+              ready=1; break
+            fi
+            sleep 2
+          done
+          test "$ready" = "1"
+          docker compose exec -T api python - <<'PY'
+          import mindbody_prepaid_settlement as p
+          assert p.enabled(), "prepaid configuration disabled"
+          assert p.DAILY_LIMIT==8
+          assert len(p.STUDIO_SERVICE_IDS)==5
+          print("ACTIVATION_SUCCESS",True,
+                "new_website_credit_checkout",True,
+                "historical_backfill_max_per_day",p.DAILY_LIMIT)
+          PY
+          curl -fsS --max-time 10 http://127.0.0.1:8787/api/health
+          trap - ERR
+          REMOTE
