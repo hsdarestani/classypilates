@@ -1,0 +1,61 @@
+name: Classy SumUp manual-review root cause audit (local only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-sumup-exceptions-20261113.yml"]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Group manual review reasons without PII or provider requests
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime,timezone
+          from sqlalchemy import text
+          import main as core
+          with core.engine.connect() as conn:
+              rows=conn.execute(text("""
+                SELECT
+                  CASE
+                    WHEN o.mindbody_sale_error = 'pricing_option_not_enabled_for_class'
+                      THEN 'pricing_not_eligible'
+                    WHEN o.mindbody_sale_error LIKE 'provider_write_outcome_unknown:%'
+                      THEN 'provider_write_outcome_unknown'
+                    WHEN o.mindbody_sale_error LIKE 'existing_visit_payment_not_confirmed%'
+                      THEN 'existing_visit_payment_not_confirmed'
+                    WHEN o.mindbody_sale_error = '' THEN 'empty'
+                    ELSE 'other_manual_review'
+                  END as reason,
+                  coalesce(b.status,'no_local_booking') as booking_status,
+                  coalesce(b.payment_method,'unknown') as payment_method,
+                  coalesce(c.studio_id,'unknown') as studio_id,
+                  count(*) as quantity,
+                  count(*) FILTER(WHERE c.starts_at>=:now) as future_classes
+                FROM payment_orders o
+                LEFT JOIN bookings b ON b.reference=o.booking_reference
+                LEFT JOIN classes c ON c.id=b.class_id
+                WHERE o.status='paid' AND o.provider='sumup'
+                  AND o.booking_reference IS NOT NULL
+                  AND o.mindbody_sale_status='manual_review'
+                GROUP BY 1,2,3,4
+                ORDER BY 1,2,4
+              """),{"now":datetime.now(timezone.utc)}).all()
+              for row in rows:
+                  print("SUMUP_EXCEPTION_GROUP",*row)
+          print("AUDIT_COMPLETE_NO_FINANCIAL_WRITES")
+          PY
+          REMOTE
