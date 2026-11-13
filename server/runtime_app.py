@@ -1,6 +1,6 @@
 import os
 import threading
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 import mindbody_usage
 import time
 from collections import defaultdict
@@ -705,6 +705,74 @@ def capabilities():
 @app.get("/api/staff/mindbody/api-usage")
 def mindbody_api_usage(user: core.User = Depends(core.require("bookings.view"))):
     return mindbody_usage.snapshot()
+
+
+
+# A Mindbody seat sync is not proof of payment. Finance staff may explicitly
+# verify one already-booked visit with one scoped GetClassVisits read. We never
+# perform a payment write, class insertion or broad tenant sync from this route.
+@app.get("/api/staff/mindbody/prepaid-audit/{booking_id}")
+def verify_classy_prepaid_visit(
+    booking_id: int,
+    user: core.User = Depends(core.require("finance.view")),
+    db=Depends(core.db_session),
+):
+    booking = db.get(core.Booking, booking_id)
+    methods = {"class_credit", "hour_pass", "class_pack50"}
+    if not booking or booking.source != "website" or booking.payment_method not in methods:
+        raise HTTPException(404, "prepaid_booking_not_found")
+    if booking.payment_status != "paid":
+        return {"booking_id": booking_id, "status": "not_paid_locally"}
+    if booking.status != "reserved":
+        return {"booking_id": booking_id, "status": "not_active"}
+    klass = booking.klass
+    class_id = str(klass.mindbody_class_id or "")
+    client_id = str(booking.mindbody_client_id or "")
+    visit_id = str(booking.mindbody_visit_id or "")
+    if not (class_id.isdigit() and client_id and visit_id.isdigit()):
+        return {"booking_id": booking_id, "status": "missing_provider_identity"}
+
+    try:
+        client = mindbody_sync.WriteClient.from_env(timeout=15.0)
+        visits = mindbody_sync._extract_class_visits(client.get_class_visits(class_id))
+    except Exception as exc:
+        # A read failure is never equivalent to an unpaid provider visit.
+        print("Scoped prepaid visit verification failed:",
+              type(exc).__name__, flush=True)
+        raise HTTPException(503, "mindbody_visit_verification_unavailable") from exc
+
+    matched = [
+        visit for visit in visits
+        if mindbody_sync._visit_id(visit) == visit_id
+        and mindbody_sync._visit_client_id(visit) == client_id
+        and not mindbody_sync._visit_is_cancelled(visit)
+    ]
+    if not matched:
+        return {"booking_id": booking_id, "status": "provider_visit_not_found"}
+    if len(matched) != 1:
+        return {"booking_id": booking_id, "status": "ambiguous_provider_visits"}
+
+    service_name, service_id = mindbody_sync._visit_service_identity(matched[0])
+    is_unpaid = service_name.casefold().startswith(("unpaid", "unverrechn"))
+    if is_unpaid or not (service_name or service_id):
+        status = "provider_unpaid"
+    elif service_name or service_id:
+        # Another named service exists, but we cannot claim its payment belongs
+        # to this Classy credit without a matching purchased entitlement.
+        status = "provider_service_attached_needs_entitlement_match"
+    else:
+        status = "provider_payment_not_verified"
+    return {
+        "booking_id": booking_id,
+        "status": status,
+        "payment_method": booking.payment_method,
+        "service_name": service_name[:120],
+        "service_id_present": bool(service_id),
+        "provider_read_only": True,
+        "financial_write_performed": False,
+    }
+
+
 
 
 # Reconcile only confirmed SumUp-paid orders which are still unresolved in
