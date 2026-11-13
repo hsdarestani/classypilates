@@ -82,7 +82,9 @@ checkout = ast.get_source_segment(
                and n.name == "checkout_prepaid_class_service")
 )
 assert '"VisitIds": [int(visit_id)]' in checkout
-assert '"Payments": []' in checkout
+assert '"Amount": 0.0' in checkout
+assert '"Type": "Custom"' in checkout
+assert '"Id": MINDBODY_EXTERNAL_PAYMENT_METHOD_ID' in checkout
 assert '"Test": bool(test)' in checkout
 assert '"ClassIds"' not in checkout
 assert '"Amount": 28' not in checkout
@@ -91,7 +93,12 @@ assert 'prepaid_checkout_invalid_provider_identity' in checkout
 # Disabled-by-default provider writes, exact VisitId verification, durable
 # write-ahead marker, preflight first, unknown-outcome quarantine.
 assert 'MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED", "false"' in source
-assert 'MINDBODY_CLASSY_PREPAID_SERVICE_ID' in source
+assert 'STUDIO_SERVICE_IDS = {' in source
+for studio, service in (("oval", "100076"), ("sachsen", "100077"),
+                        ("mid", "100078"), ("bornheim", "100079"),
+                        ("bhf1", "100080")):
+    assert f'"{studio}": "{service}"' in source
+assert 'service_for_studio(snapshot["studio_id"])' in source
 assert 'PREPAID_METHODS = {"class_credit", "hour_pass", "class_pack50"}' in source
 assert 'client.get_sale_services_for_class(' in source
 assert 'sell_online=False' in source
@@ -110,7 +117,7 @@ assert 'core.require("bookings.manage")' in runtime
 assert 'core.can(user, "finance.view")' in runtime
 assert 'if enabled():' in feedback
 assert 'settle_prepaid_visit(booking_id)' in feedback
-assert 'MINDBODY_CLASSY_PREPAID_SERVICE_ID' in docker_compose
+assert 'MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED' in docker_compose
 assert 'MINDBODY_CLASSY_PREPAID_SETTLEMENT_ENABLED' in docker_compose
 dockerfile = (here / "Dockerfile").read_text(encoding="utf-8")
 assert "COPY mindbody_prepaid_settlement.py ." in dockerfile
