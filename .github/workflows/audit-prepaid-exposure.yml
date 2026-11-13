@@ -25,7 +25,10 @@ jobs:
           set -euo pipefail
           test -n "$HOST" && test -n "$PASS"
           export SSHPASS="$PASS"
-          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T db sh -lc '\''psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'\'' ' <<'SQL'
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T db sh -lc 'psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
           SELECT 'CLASSY_PREPAID_EXPOSURE|' ||
             b.payment_method || '|' ||
             b.mindbody_sync_status || '|' ||
@@ -43,3 +46,4 @@ jobs:
           FROM bookings b WHERE b.source='website' AND b.status='reserved'
             AND b.payment_status='paid' AND b.payment_method='sumup';
           SQL
+          REMOTE
