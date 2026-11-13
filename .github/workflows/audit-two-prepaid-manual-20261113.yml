@@ -1,0 +1,76 @@
+name: Diagnose two safeguarded Classy credit exceptions (read only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/audit-two-prepaid-manual-20261113.yml"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Read two manual-review booking ledgers and exact Mindbody VisitIds
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from sqlalchemy import text
+          import main as core
+          import mindbody_sync as mb
+          import mindbody_prepaid_settlement as prepaid
+
+          for booking_id in (14289,14433):
+              print("BOOKING_ID",booking_id)
+              with core.engine.connect() as conn:
+                  row=conn.execute(text("""
+                      SELECT status,coalesce(service_id,''),coalesce(error,''),attempts
+                      FROM mindbody_prepaid_settlements
+                      WHERE booking_id=:id
+                  """),{"id":booking_id}).first()
+              if not row:
+                  print("LEDGER", "not_found")
+                  continue
+              status,service_id,error,attempts=row
+              print("LEDGER",status,service_id,error[:230],attempts)
+              snapshot=prepaid._snapshot(booking_id)
+              if not snapshot:
+                  print("LOCAL_BOOKING", "not_eligible")
+                  continue
+              print("LOCAL_BOOKING","method",snapshot["method"],
+                    "studio",snapshot["studio_id"],
+                    "configured_service",prepaid.service_for_studio(snapshot["studio_id"]),
+                    "exact_identity_valid",snapshot["class_id"].isdigit() and snapshot["visit_id"].isdigit())
+              try:
+                  client=mb.WriteClient.from_env(timeout=18.0)
+                  visit=prepaid._get_exact_visit(client,snapshot)
+                  if not visit:
+                      print("PROVIDER_VISIT","not_found_or_ambiguous")
+                      continue
+                  name,provider_service_id=mb._visit_service_identity(visit)
+                  print("PROVIDER_VISIT","attached_service",repr(name[:90]),
+                        "service_id",provider_service_id or "none",
+                        "matches_private_prepaid",provider_service_id==prepaid.service_for_studio(snapshot["studio_id"]))
+                  # Surface only low-risk readback metadata needed to classify
+                  # whether an existing charge/service was already applied.
+                  for field in ("PaymentStatus","Paid","Unpaid","ServiceId",
+                                "ClientServiceId","ClientPassId","ProductId",
+                                "PricingOptionId","IsPaid"):
+                      value=mb._value(visit,field,default=None)
+                      if value is not None and isinstance(value,(str,int,float,bool)):
+                          print("PROVIDER_FIELD",field,str(value)[:72])
+              except Exception as exc:
+                  print("PROVIDER_READ_ERROR",type(exc).__name__)
+          print("MANUAL_REVIEW_AUDIT_COMPLETE_NO_WRITES")
+          PY
+          REMOTE
