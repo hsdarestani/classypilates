@@ -4,7 +4,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/one-prepaid-oval-settlement-canary.yml"
-  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -38,6 +37,16 @@ jobs:
               raise RuntimeError("global_prepaid_settlement_already_enabled")
           STUDIO="oval"
           SERVICE_ID="100076"
+          # One-shot global fence: if *any* prepaid settlement attempt has
+          # been logged in production, require a new manual approval/review.
+          from sqlalchemy import text
+          with core.engine.begin() as conn:
+              conn.execute(text(prepaid.CREATE_TABLE))
+              attempted=int(conn.execute(text(
+                  "SELECT COUNT(*) FROM mindbody_prepaid_settlements"
+              )).scalar() or 0)
+          if attempted:
+              raise RuntimeError("one_time_canary_already_attempted")
           if prepaid.service_for_studio(STUDIO)!=SERVICE_ID:
               raise RuntimeError("incorrect_prepaid_service_mapping")
           with core.SessionLocal() as db:
