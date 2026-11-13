@@ -1287,9 +1287,9 @@ def dashboard(user: User = Depends(require("dashboard.view")), db: Session = Dep
                 Booking.payment_status == "paid",
                 Booking.payment_method == "sumup",
                 Booking.status == "reserved",
-                ClassSession.starts_at >= now - timedelta(days=1),
             )
-            .order_by(ClassSession.starts_at.asc(), PaymentOrder.id.asc())
+            # Financial exceptions must remain visible after the class date.
+            .order_by(PaymentOrder.id.desc())
             .limit(40)
         ).all()
         for order, booking, klass in unresolved:
