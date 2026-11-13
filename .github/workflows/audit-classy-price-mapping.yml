@@ -1,0 +1,70 @@
+name: Mindbody pricing compatibility sample for Classy prepaid (read only)
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-classy-price-mapping.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq sshpass >/dev/null
+      - name: Read eligible pricing options for one future Classy class only
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/classypilates
+          docker compose exec -T api python - <<'PY'
+          from datetime import datetime,timezone
+          from sqlalchemy import select
+          import main as core
+          import mindbody_sync as mb
+          from import_mindbody_schedule import studio_id as local_from_remote
+          with core.SessionLocal() as db:
+              row=db.execute(
+                  select(core.ClassSession).join(core.Booking,core.Booking.class_id==core.ClassSession.id)
+                  .where(core.Booking.source=="website",
+                         core.Booking.payment_method=="class_credit",
+                         core.Booking.payment_status=="paid",
+                         core.Booking.status=="reserved",
+                         core.ClassSession.mindbody_class_id.is_not(None),
+                         core.ClassSession.starts_at>=datetime.now(timezone.utc))
+                  .order_by(core.ClassSession.starts_at).limit(1)).scalar()
+              if not row:
+                  print("CLASS_PRICE_SAMPLE_NONE")
+                  raise SystemExit(0)
+              provider_class_id=str(row.mindbody_class_id)
+              local_studio_id=row.studio_id
+              title=row.title
+          client=mb.WriteClient.from_env(timeout=18.0)
+          location_candidates=[
+              x for x in mb._extract_list(client.get_locations(),("Locations","locations","Items"))
+              if local_from_remote(str(mb._value(x,"Name","name",default="")).casefold(),title)==local_studio_id
+          ]
+          if len(location_candidates)!=1:
+              print("LOCATION_MATCHES",len(location_candidates))
+              raise SystemExit(0)
+          location_id=str(mb._value(location_candidates[0],"Id","ID","LocationId",default=""))
+          options=client.get_sale_services_for_class(provider_class_id,location_id)
+          print("ELIGIBLE_PRICING_OPTIONS",len(options))
+          price_targets={2800,11900,17900,21900,39900,69900}
+          for service in options:
+              name=str(mb._value(service,"Name","name",default="")).strip()
+              price=mb._service_price_cents(service)
+              count=mb._value(service,"Count","count",default=None)
+              if price in price_targets or ("class" in name.casefold() and "pass" in name.casefold()):
+                  print("PRICING_OPTION",repr(name[:90]),"cents",price,"count",count,
+                        "type",str(mb._value(service,"Type","type",default=""))[:30])
+          print("CLASSY_PRICING_READ_ONLY_COMPLETE")
+          PY
+          REMOTE
