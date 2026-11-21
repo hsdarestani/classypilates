@@ -1,0 +1,82 @@
+name: Classy bounded payment audit - no financial writes
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/audit-specific-credit-readonly-20261122.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH utility
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Check local ledger and matching SumUp checkouts (read-only)
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T api python -' <<'PY'
+          import hashlib, re, unicodedata, os
+          from sqlalchemy import select
+          import main as core
+          import feedback_app as shop
+
+          TARGET_HASHES = {
+            "361573e77130317c466635dc0cc52e35df54a04c2f7fca1b0015cf3fec6ede9b",
+            "09e87267fc7a819a326102d47600ef74782e21d3787199697faabca50066be4d",
+          }
+          def name_key(s):
+              raw = unicodedata.normalize("NFKD", str(s or "")).casefold()
+              tokens = [t for t in re.findall(r"[a-z]+", raw) if t not in ("di", "de", "of", "von", "van")]
+              return hashlib.sha256("".join(tokens).encode()).hexdigest()
+          def matches_name(s):
+              return name_key(s) in TARGET_HASHES
+
+          print("AUDIT_MODE READ_ONLY TARGET_HASHED NO_PII")
+          with core.SessionLocal() as db:
+              users = db.scalars(select(core.User)).all()
+              bookings = db.scalars(select(core.Booking)).all()
+              orders = db.scalars(select(core.PaymentOrder)).all()
+              matched_users = [u for u in users if matches_name(u.first_name+" "+u.last_name)]
+              matched_bookings = [b for b in bookings if matches_name(b.customer_name)]
+              matched_orders = [o for o in orders if matches_name(o.first_name+" "+o.last_name)]
+              emails = {str(x.email).strip().lower() for x in matched_users+matched_bookings+matched_orders if x.email}
+              matching_orders = sorted([o for o in orders if matches_name(o.first_name+" "+o.last_name) or str(o.email).strip().lower() in emails],key=lambda o:o.created_at,reverse=True)
+              matching_bookings = sorted([b for b in bookings if matches_name(b.customer_name) or str(b.email).strip().lower() in emails],key=lambda b:b.created_at,reverse=True)
+              print("TARGET_RECORDS account_count=%s local_bookings=%s local_orders=%s" % (len(matched_users),len(matching_bookings),len(matching_orders)))
+              for idx,o in enumerate(matching_orders[:12],1):
+                  state = "not_checked"
+                  if o.provider == "sumup" and o.provider_payment_id and idx <= 6:
+                      try:
+                          ch = shop._sumup_request("/v0.1/checkouts/"+str(o.provider_payment_id))
+                          good = (
+                              str(ch.get("status","")).upper()=="PAID"
+                              and str(ch.get("merchant_code",""))==str(os.getenv("SUMUPMERCHANT",""))
+                              and str(ch.get("currency","")).upper()=="EUR"
+                              and shop._sumup_amount_cents(ch)==o.amount_cents
+                          )
+                          state = "paid_verified" if good else "not_verified_"+str(ch.get("status","")).upper()[:20]
+                      except Exception as e:
+                          state = "provider_unavailable_"+type(e).__name__
+                  print("PAYMENT_ROW index=%s created=%s local_status=%s provider=%s amount_eur=%s credited=%s credits=%s sumup=%s booking_linked=%s" % (
+                      idx, str(o.created_at)[:10], o.status, o.provider, int(o.amount_cents or 0)/100, bool(o.credited), int(o.credits or 0), state, bool(o.booking_reference)
+                  ))
+              for idx,b in enumerate(matching_bookings[:12],1):
+                  linked = next((o for o in matching_orders if o.booking_reference == b.reference),None)
+                  print("BOOKING_ROW index=%s date=%s state=%s payment_status=%s method=%s source=%s linked_order=%s linked_order_paid=%s" % (
+                      idx,str(b.created_at)[:10],b.status,b.payment_status,b.payment_method,b.source,bool(linked),bool(linked and linked.status=="paid")
+                  ))
+              for idx,u in enumerate(matched_users[:5],1):
+                  p=db.get(core.CustomerProfile,u.id)
+                  print("ACCOUNT_ROW index=%s current_credits=%s" % (idx,int(p.credits if p else 0)))
+          print("AUDIT_FINISHED_NO_FINANCIAL_WRITES")
+          PY
