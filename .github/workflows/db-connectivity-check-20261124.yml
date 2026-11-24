@@ -1,0 +1,27 @@
+name: Read-only production DB connectivity
+on:
+  push:
+    branches: [ops/db-connectivity-check-20261124]
+    paths: ['.github/workflows/db-connectivity-check-20261124.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get install -y -qq sshpass
+      - name: Verify database read-only access
+        env:
+          HOST: ${{ secrets.HOST }}
+          PASS: ${{ secrets.PASS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$PASS"
+          export SSHPASS="$PASS"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@"$HOST" 'cd /opt/classypilates && docker compose exec -T db sh -lc '\''psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'\''' <<'SQL'
+          BEGIN READ ONLY;
+          SELECT 'DATABASE_CONNECTION_OK';
+          ROLLBACK;
+          SQL
