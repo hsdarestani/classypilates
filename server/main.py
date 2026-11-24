@@ -1395,6 +1395,98 @@ def finance(user: User = Depends(require("finance.view")), db: Session = Depends
     rows.sort(key=lambda row: row["created_at"], reverse=True)
     return {"revenue_cents": total, "pending_cents": pending, "paid_bookings": int(paid_bookings) + int(paid_passes), "rows": rows[:30]}
 
+
+def _staff_shop_orders(db: Session, q: str = "", email: str = "",
+                       status: str = "", limit: int = 50, offset: int = 0):
+    """Read-only view of online shop purchases; exclude direct booking payments."""
+    from feedback_app import ClassPack, HourPass
+
+    account_exists = select(User.id).where(
+        func.lower(User.email) == func.lower(PaymentOrder.email)
+    ).correlate(PaymentOrder).exists()
+    base = [PaymentOrder.booking_reference.is_(None)]
+    if email:
+        base.append(func.lower(PaymentOrder.email) == email.strip().lower())
+    if q.strip():
+        # Escape SQL wildcards: search for literal customer text.
+        pattern = "%" + q.strip().lower().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        full_name = PaymentOrder.first_name + " " + PaymentOrder.last_name
+        base.append(func.lower(full_name).like(pattern, escape="!") |
+                    func.lower(PaymentOrder.email).like(pattern, escape="!") |
+                    func.lower(PaymentOrder.reference).like(pattern, escape="!"))
+    paid = PaymentOrder.status == "paid"
+    uncredited = PaymentOrder.credited.is_(False)
+    missing = paid & uncredited & account_exists
+    awaiting = paid & uncredited & ~account_exists
+    def count(*extra):
+        return int(db.scalar(select(func.count(PaymentOrder.id)).where(*base, *extra)) or 0)
+    summary = {
+        "total": count(),
+        "paid": count(paid),
+        "paid_uncredited": count(paid, uncredited),
+        "missing_credit": count(missing),
+        "awaiting_account": count(awaiting),
+    }
+    filters = list(base)
+    if status == "missing_credit":
+        filters.append(missing)
+    elif status == "awaiting_account":
+        filters.append(awaiting)
+    elif status == "paid_uncredited":
+        filters.extend([paid, uncredited])
+    elif status:
+        if status not in {"paid", "pending", "failed", "cancelled", "paid_cancelled"}:
+            raise HTTPException(400, "invalid_order_status")
+        filters.append(PaymentOrder.status == status)
+    total = int(db.scalar(select(func.count(PaymentOrder.id)).where(*filters)) or 0)
+    records = db.execute(
+        select(PaymentOrder, account_exists.label("has_account"), ClassPack, HourPass)
+        .outerjoin(ClassPack, ClassPack.order_id == PaymentOrder.id)
+        .outerjoin(HourPass, HourPass.order_id == PaymentOrder.id)
+        .where(*filters)
+        .order_by(PaymentOrder.created_at.desc(), PaymentOrder.id.desc())
+        .offset(offset).limit(limit)
+    ).all()
+    rows = []
+    for order, has_account, pack, hours in records:
+        quantity, unit = (pack.total_classes, "classes") if pack else (
+            (hours.total_minutes, "minutes") if hours else (order.credits, "credits"))
+        allocation = (
+            "credited" if order.credited else
+            "not_paid" if order.status != "paid" else
+            "missing_credit" if has_account else "awaiting_account"
+        )
+        rows.append({
+            "reference": order.reference,
+            "customer_name": " ".join(filter(None, [order.first_name, order.last_name])),
+            "email": order.email,
+            "amount_cents": order.amount_cents,
+            "quantity": int(quantity or 0),
+            "unit": unit,
+            "provider": order.provider,
+            "status": order.status,
+            "credited": bool(order.credited),
+            "allocation": allocation,
+            "has_account": bool(has_account),
+            "created_at": order.created_at.isoformat(),
+            "updated_at": order.updated_at.isoformat(),
+        })
+    return {"orders": rows, "total": total, "summary": summary, "limit": limit, "offset": offset}
+
+
+@app.get("/api/staff/shop-orders")
+def staff_shop_orders(
+    q: str = Query("", max_length=255),
+    email: str = Query("", max_length=255),
+    status: str = Query("", max_length=32),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(require("finance.view")),
+    db: Session = Depends(db_session),
+):
+    return _staff_shop_orders(db, q=q, email=email, status=status, limit=limit, offset=offset)
+
+
 @app.get("/api/staff/roles")
 def list_roles(user: User = Depends(current_user), db: Session = Depends(db_session)):
     if not (can(user, "roles.manage") or can(user, "users.manage")):
@@ -1757,7 +1849,10 @@ def staff_customer_profile(
         "amount_cents": b.amount_cents,
         "source": b.source,
     } for b in bookings]
-    return {"customer": unified, "bookings": history}
+    result = {"customer": unified, "bookings": history}
+    if can(user, "finance.view") and customer_email:
+        result["shop_orders"] = _staff_shop_orders(db, email=customer_email, limit=10)
+    return result
 
 
 @app.patch("/api/staff/customers/{customer_id}")

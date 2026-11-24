@@ -41,3 +41,7 @@ assert '"manual_review"' in alert
 assert 'ClassSession.starts_at >= now - timedelta(days=1)' not in alert
 assert '.order_by(PaymentOrder.id.desc())' in alert
 print("Shop credit identity and Mindbody visibility guard OK")
+
+# Exercise the staff shop-order regression assertions in existing CI.
+import runpy
+runpy.run_path(str(root / "staff_shop_orders_guard.py"), run_name="__main__")
