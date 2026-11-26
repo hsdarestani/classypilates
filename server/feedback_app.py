@@ -1,4 +1,5 @@
 import os
+import re
 import smtplib
 import ssl
 import json
@@ -303,6 +304,7 @@ class CheckoutIn(BaseModel):
     items: list[CheckoutItem] = []
     bookingReference: Optional[str] = None
     fitnessPresaleConsent: bool = False
+    fitnessTermsConsent: bool = False
 
 
 def _sumup_request(path: str, *, method: str = "GET", payload: Optional[dict] = None) -> dict:
@@ -555,10 +557,12 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
     if has_fitness:
         if booking_reference or len(data.items) != 1 or data.items[0].quantity != 1:
             raise HTTPException(400, "fitness_presale_one_per_order")
-        if not data.fitnessPresaleConsent:
+        if not data.fitnessPresaleConsent or not data.fitnessTermsConsent:
             raise HTTPException(400, "fitness_presale_consent_required")
         if not data.customer.firstName.strip() or not data.customer.lastName.strip():
             raise HTTPException(400, "name_required")
+        if not re.fullmatch(r"CF-[0-9a-fA-F-]{36}", reference):
+            raise HTTPException(400, "invalid_fitness_reference")
         fitness_product = FITNESS_PRODUCTS[data.items[0].id]
 
     if booking_reference:
