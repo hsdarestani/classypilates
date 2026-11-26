@@ -133,7 +133,7 @@
   };
 
   gate.querySelector('[data-enter-pilates]')?.addEventListener('click',()=>{remember('pilates');close()});
-  gate.querySelector('[data-enter-fit]')?.addEventListener('click',e=>{e.preventDefault();showComingSoon()});
+  gate.querySelector('[data-enter-fit]')?.addEventListener('click',e=>{e.preventDefault();location.href='/classfit'+(document.documentElement.lang==='en'?'?lang=en':'')});
   comingSoon.querySelector('.classfit-coming-soon-close')?.addEventListener('click',hideComingSoon);
   comingSoon.querySelector('.classfit-coming-soon-back')?.addEventListener('click',hideComingSoon);
 
