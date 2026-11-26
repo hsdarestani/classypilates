@@ -1,4 +1,5 @@
 import os
+import re
 import smtplib
 import ssl
 import json
@@ -38,6 +39,13 @@ SHOP_PRODUCTS = {
     "twenty": {"name": "20 Classes", "price": 39900, "credits": 20},
     "hour50": {"name": "50 Stunden · 12 Monate", "price": 69900, "credits": 0, "minutes": 3000},
     "class50": {"name": "50 Kurse · 12 Monate", "price": 69900, "credits": 0, "classes": 50},
+}
+
+FITNESS_PRODUCTS = {
+    "fitness_single": {"name": "Fitness · 1 Kurs", "price": 2800, "classes": 1, "credits": 0},
+    "fitness_five": {"name": "Fitness · 5 Kurse", "price": 11900, "classes": 5, "credits": 0},
+    "fitness_ten": {"name": "Fitness · 10 Kurse", "price": 21900, "classes": 10, "credits": 0},
+    "fitness_twenty": {"name": "Fitness · 20 Kurse · Black Week", "price": 29900, "classes": 20, "credits": 0},
 }
 
 
@@ -295,6 +303,8 @@ class CheckoutIn(BaseModel):
     customer: CheckoutCustomer
     items: list[CheckoutItem] = []
     bookingReference: Optional[str] = None
+    fitnessPresaleConsent: bool = False
+    fitnessTermsConsent: bool = False
 
 
 def _sumup_request(path: str, *, method: str = "GET", payload: Optional[dict] = None) -> dict:
@@ -340,6 +350,16 @@ def _sumup_amount_cents(checkout: dict) -> int:
 
 
 def _shop_purchase_email_data(order: core.PaymentOrder, db: Session) -> tuple[str, str, str, list[str]]:
+    fitness = db.get(core.FitnessPresale, order.id)
+    if fitness:
+        amount = f"{int(order.amount_cents or 0) / 100:.2f}".replace(".", ",") + " €"
+        return (order.email, "Kaufbestätigung · Classy Fitness Vorverkauf", "Dein Fitness Kurspaket ist gesichert", [
+            f"Hallo {order.first_name or ''},",
+            f"Deine Zahlung über {amount} für {fitness.total_classes} Fitness Kurse wurde bestätigt.",
+            "Dein Fitness Guthaben ist separat hinterlegt und kann erst nach der Studioeröffnung genutzt werden. Es ist kein Pilates Guthaben.",
+            f"Bestellnummer: {order.reference}",
+            "Die Informationen zum Eröffnungstermin und zur Nutzung folgen.",
+        ])
     credits = max(0, int(order.credits or 0))
     class_purchase = db.scalar(select(ClassPack.id).where(ClassPack.order_id == order.id)) is not None
     hour_purchase = order.amount_cents == 69900 and credits == 0 and not class_purchase
@@ -436,6 +456,10 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
             if first_paid_transition:
                 email_job = core.booking_email_data(booking)
                 booking_id_to_sync = booking.id
+        elif not order.credited and db.get(core.FitnessPresale, order.id) is not None:
+            fitness = db.get(core.FitnessPresale, order.id)
+            fitness.paid_at = fitness.paid_at or datetime.now(timezone.utc)
+            order.credited = True
         elif not order.credited:
             class_pack = db.scalar(select(ClassPack).where(ClassPack.order_id == order.id).with_for_update())
             if class_pack:
@@ -505,7 +529,7 @@ def _sync_sumup_order(checkout: dict, db: Session, background_tasks: Optional[Ba
 
 @app.get("/api/checkout/create")
 def checkout_capability():
-    return {"ok": True, "provider": "sumup", "flow": "hosted_checkout"}
+    return {"ok": True, "provider": "sumup", "flow": "hosted_checkout", "fitness_presale": bool(os.getenv("SUMUPAPIKEY", "").strip() and os.getenv("SUMUPMERCHANT", "").strip())}
 
 
 @app.post("/api/checkout/create")
@@ -528,6 +552,18 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
     total = 0
     credits = 0
     names = []
+    fitness_product = None
+    has_fitness = any(item.id in FITNESS_PRODUCTS for item in data.items)
+    if has_fitness:
+        if booking_reference or len(data.items) != 1 or data.items[0].quantity != 1:
+            raise HTTPException(400, "fitness_presale_one_per_order")
+        if not data.fitnessPresaleConsent or not data.fitnessTermsConsent:
+            raise HTTPException(400, "fitness_presale_consent_required")
+        if not data.customer.firstName.strip() or not data.customer.lastName.strip():
+            raise HTTPException(400, "name_required")
+        if not re.fullmatch(r"CF-[0-9a-fA-F-]{36}", reference):
+            raise HTTPException(400, "invalid_fitness_reference")
+        fitness_product = FITNESS_PRODUCTS[data.items[0].id]
 
     if booking_reference:
         booking = db.scalar(select(core.Booking).where(core.Booking.reference == booking_reference).with_for_update())
@@ -547,7 +583,7 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
         ):
             raise HTTPException(400, "hour_pass_one_per_order")
         for item in data.items:
-            product = SHOP_PRODUCTS.get(item.id)
+            product = FITNESS_PRODUCTS.get(item.id) or SHOP_PRODUCTS.get(item.id)
             quantity = min(10, max(1, item.quantity))
             if not product:
                 raise HTTPException(400, "unknown_product")
@@ -620,6 +656,8 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
     db.add(order)
     try:
         db.flush()
+        if fitness_product:
+            db.add(core.FitnessPresale(order_id=order.id, product_id=data.items[0].id, total_classes=fitness_product["classes"]))
         if not booking_reference and data.items and data.items[0].id == "hour50":
             db.add(HourPass(order_id=order.id, email=email, total_minutes=3000, used_minutes=0))
         if not booking_reference and data.items and data.items[0].id == "class50":
@@ -666,7 +704,7 @@ def create_sumup_checkout(data: CheckoutIn, request: Request, db: Session = Depe
             "amount": float(Decimal(total) / Decimal(100)),
             "currency": "EUR",
             "merchant_code": merchant,
-            "description": ("Classy Pilates · " + ", ".join(names))[:255],
+            "description": (("Classy Fitness Vorverkauf · " if fitness_product else "Classy Pilates · ") + ", ".join(names))[:255],
             "return_url": f"{origin}/api/checkout/sumup-return",
             "redirect_url": f"{origin}/api/checkout/sumup-return?reference={reference}",
             "valid_until": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
@@ -749,6 +787,8 @@ def sumup_return(reference: str, request: Request, background_tasks: BackgroundT
         return RedirectResponse(
             f"{origin}/?payment={payment}&provider=sumup&flow=booking&bookingReference={order.booking_reference}&reference={order.reference}#schedule"
         )
+    if db.get(core.FitnessPresale, order.id) is not None:
+        return RedirectResponse(f"{origin}/classfit?payment={payment}&provider=sumup&reference={order.reference}")
     return RedirectResponse(f"{origin}/shop?payment={payment}&provider=sumup&reference={order.reference}")
 
 
@@ -765,11 +805,14 @@ def checkout_status(reference: str, background_tasks: BackgroundTasks, db: Sessi
         synced = _sync_sumup_order(checkout, db, background_tasks)
         if synced:
             order = synced
+    fitness = db.get(core.FitnessPresale, order.id)
     return {
         "ok": True,
         "provider": "sumup",
         "reference": order.reference,
         "bookingReference": order.booking_reference,
+        "fitness_presale": bool(fitness),
+        "fitness_courses": fitness.total_classes if fitness and order.status == "paid" and fitness.paid_at else 0,
         "status": order.status,
         "paid": order.status == "paid",
         "credited": bool(order.credited),
