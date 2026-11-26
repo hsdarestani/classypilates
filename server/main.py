@@ -348,6 +348,16 @@ class PaymentOrder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+
+class FitnessPresale(Base):
+    """Paid Fitness entitlement, never spendable as Pilates credit."""
+    __tablename__ = "fitness_presales"
+    order_id: Mapped[int] = mapped_column(ForeignKey("payment_orders.id", ondelete="RESTRICT"), primary_key=True)
+    product_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    total_classes: Mapped[int] = mapped_column(Integer, nullable=False)
+    consented_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
 Base.metadata.create_all(engine)
 
 
@@ -949,6 +959,7 @@ def register(data: RegisterIn, response: Response, background_tasks: BackgroundT
         func.lower(PaymentOrder.email) == email,
         PaymentOrder.status == "paid",
         PaymentOrder.credited.is_(False),
+        ~select(FitnessPresale.order_id).where(FitnessPresale.order_id == PaymentOrder.id).exists(),
     ).with_for_update()).all()
     if paid_orders:
         profile.credits += sum(order.credits for order in paid_orders)
@@ -1028,11 +1039,13 @@ def customer_dashboard(user: User = Depends(customer_only), db: Session = Depend
     upcoming = [b for b in booking_rows if as_utc(date_parser.parse(b["starts_at"])) >= now and b["status"] == "reserved"]
     waitlist_count = db.scalar(select(func.count(CustomerWaitlistLink.waitlist_id)).where(CustomerWaitlistLink.user_id == user.id)) or 0
     from feedback_app import active_hour_minutes, active_class_pack_credits
+    fitness_courses = db.scalar(select(func.coalesce(func.sum(FitnessPresale.total_classes), 0)).join(PaymentOrder, PaymentOrder.id == FitnessPresale.order_id).where(func.lower(PaymentOrder.email) == user.email.lower(), PaymentOrder.status == "paid", FitnessPresale.paid_at.is_not(None))) or 0
     return {
         "profile": {"first_name": user.first_name, "last_name": user.last_name, "email": user.email},
         "credits": profile.credits,
         "hour_pass_minutes": active_hour_minutes(user.email, db),
         "class_pack_credits": active_class_pack_credits(user.email, db),
+        "fitness_presale_courses": int(fitness_courses),
         "upcoming_count": len(upcoming),
         "total_bookings": len(booking_rows),
         "waitlist_count": waitlist_count,
@@ -1187,12 +1200,14 @@ def customer_leave_waitlist(waitlist_id: int, user: User = Depends(customer_only
 def customer_profile(user: User = Depends(customer_only), db: Session = Depends(db_session)):
     profile = get_customer_profile(user, db)
     from feedback_app import active_hour_minutes, active_class_pack_credits
+    fitness_courses = db.scalar(select(func.coalesce(func.sum(FitnessPresale.total_classes), 0)).join(PaymentOrder, PaymentOrder.id == FitnessPresale.order_id).where(func.lower(PaymentOrder.email) == user.email.lower(), PaymentOrder.status == "paid", FitnessPresale.paid_at.is_not(None))) or 0
     return {
         "first_name": user.first_name,
         "last_name": user.last_name,
         "email": user.email,
         "hour_pass_minutes": active_hour_minutes(user.email, db),
         "class_pack_credits": active_class_pack_credits(user.email, db),
+        "fitness_presale_courses": int(fitness_courses),
         "phone": profile.phone,
         "birth_date": profile.birth_date,
         "emergency_contact": profile.emergency_contact,
@@ -1440,19 +1455,20 @@ def _staff_shop_orders(db: Session, q: str = "", email: str = "",
         filters.append(PaymentOrder.status == status)
     total = int(db.scalar(select(func.count(PaymentOrder.id)).where(*filters)) or 0)
     records = db.execute(
-        select(PaymentOrder, account_exists.label("has_account"), ClassPack, HourPass)
+        select(PaymentOrder, account_exists.label("has_account"), ClassPack, HourPass, FitnessPresale)
         .outerjoin(ClassPack, ClassPack.order_id == PaymentOrder.id)
         .outerjoin(HourPass, HourPass.order_id == PaymentOrder.id)
+        .outerjoin(FitnessPresale, FitnessPresale.order_id == PaymentOrder.id)
         .where(*filters)
         .order_by(PaymentOrder.created_at.desc(), PaymentOrder.id.desc())
         .offset(offset).limit(limit)
     ).all()
     rows = []
-    for order, has_account, pack, hours in records:
-        quantity, unit = (pack.total_classes, "classes") if pack else (
-            (hours.total_minutes, "minutes") if hours else (order.credits, "credits"))
+    for order, has_account, pack, hours, fitness in records:
+        quantity, unit = (fitness.total_classes, "Fitness courses") if fitness else ((pack.total_classes, "classes") if pack else (
+            (hours.total_minutes, "minutes") if hours else (order.credits, "credits")))
         allocation = (
-            "credited" if order.credited else
+            ("fitness_reserved" if fitness else "credited") if order.credited else
             "not_paid" if order.status != "paid" else
             "missing_credit" if has_account else "awaiting_account"
         )
@@ -1463,6 +1479,7 @@ def _staff_shop_orders(db: Session, q: str = "", email: str = "",
             "amount_cents": order.amount_cents,
             "quantity": int(quantity or 0),
             "unit": unit,
+            "product": fitness.product_id if fitness else None,
             "provider": order.provider,
             "status": order.status,
             "credited": bool(order.credited),
